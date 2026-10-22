@@ -14,6 +14,16 @@
 - Distinguish assignment requirements, team interpretations, proposed design, accepted decisions, implementation, and verified results. Do not silently resolve ambiguities or invent agreements, tests, measurements, or guarantees.
 - The assignment PDF is excluded locally from Git. If unavailable, ask for its location or contents before making claims about its requirements.
 
+### Design readiness before implementation
+
+- Before implementing application behavior or schema migrations, substantially prepare `docs/design.md`, `docs/data-dictionary.md`, and `docs/design-decisions.md`. These must contain an agreed initial design, not just headings or placeholders.
+- The initial design must identify scope, domain rules, components and interfaces, the ER model, critical flows, and the chosen approaches to tenant isolation, concurrency, identity, security, and caching.
+- The initial dictionary must describe the proposed tables, field meanings, agreed types, keys, relationships, and constraints. Record significant structural choices and unresolved questions in the decision log.
+- Detail each component before implementing it. The documents need not be final, but decisions that determine the upcoming implementation must be resolved; unrelated details may remain pending.
+- If this preparation is missing, explicitly identify the gaps and recommend documenting and reviewing them before dependent code. Revisit unresolved gaps at the next related milestone; do not silently skip preparation or write documents without authorization.
+- Respect an explicit human instruction to proceed despite a documented gap. Do not treat that instruction as acceptance of unspecified design choices. Limited experiments may inform a decision without becoming the accepted implementation.
+- Keep the documents current when implementation or tests reveal necessary changes. Do not rewrite them for every function or routine code edit.
+
 ### Style and consistency
 
 - Use direct sentences, short paragraphs, and precise technical vocabulary. Preserve technical identifiers and format them as inline code where appropriate.
@@ -26,7 +36,7 @@
 
 ### Human authorization and review
 
-This workflow applies to `docs/design.md`, `docs/data-dictionary.md`, `docs/test-report.md`, and `docs/ai-usage.md`:
+This workflow applies to `docs/design.md`, `docs/design-decisions.md`, `docs/data-dictionary.md`, `docs/test-report.md`, and `docs/ai-usage.md`:
 
 1. When documentation is due, identify what needs recording, the affected section, and why.
 2. Do not edit automatically. Present the proposed text and request authorization unless the human has already explicitly requested that edit. Do not request permission again for authorized work.
@@ -55,7 +65,7 @@ Do not modify the README during implementation unless explicitly instructed by t
 
 ### When to document
 
-- Write incrementally throughout development; do not reconstruct the design at the end.
+- Establish the initial design before implementation according to the readiness rules above, then maintain it throughout development.
 - Propose an update whenever a domain rule, assignment interpretation, data model, isolation strategy, transactional flow, security mechanism, or cache mechanism is agreed upon or changed.
 - Also propose an update when the implementation, a test, or a measurement contradicts the documented design or reveals a relevant limitation.
 - Before implementing a part of the system, check whether its design is documented. If it is missing, identify what needs to be recorded; do not invent decisions to fill the section.
@@ -88,6 +98,35 @@ Do not add, remove, or reorder these sections without an explicit human instruct
 
 - The API route contract and execution instructions belong in the README; column details belong in the data dictionary; results, measurements, and execution plans belong in the test report. Link to them from the design without maintaining complete copies across files.
 - The design must contain enough rationale to understand the current solution, even when a separate decision log exists.
+
+## docs/design-decisions.md
+
+### Purpose and recording criteria
+
+- Keep short Architecture Decision Records (ADRs) explaining significant choices and their consequences. This single-file decision log is a team convention, not an additional deliverable required by the assignment.
+- Propose an ADR when a choice materially affects system boundaries, data integrity, tenant isolation, transactions, security, caching, or interpretation of a requirement. Do not create records for every class, field, or routine implementation detail.
+- Record structural choices before their dependent implementation. Use `Proposed` while discussion remains open; do not reconstruct a favorable justification after implementation or infer agreement from an assistant recommendation.
+- Apply the shared authorization, review tracking, and writing rules. Acceptance of a decision and approval of its written record remain separate.
+
+### Structure and formatting
+
+- Use `# Design Decisions` as the title. Follow the shared review table with a compact index using `ID | Decision | Status`; link each decision title to its record.
+- Use a stable heading such as `## ADR-001: <decision title>` for each record. Assign sequential IDs; do not reuse or renumber them.
+- State `Status` beneath the record heading using `Proposed`, `Accepted`, `Rejected`, or `Superseded`. Include replacement references only when applicable.
+- Use these baseline subsections within each record:
+  - `### Context`: the concrete problem, relevant requirements or invariants, and constraints that make the choice necessary.
+  - `### Alternatives`: the options actually considered and their relevant differences. Use a comparison table when useful; do not invent options to fill the template.
+  - `### Decision`: the selected approach and the reasons for choosing it, or the specific choice awaiting agreement if still proposed.
+  - `### Consequences`: benefits, costs, limitations, risks, and follow-up work that result from the choice. Distinguish expected consequences from measured outcomes.
+- Keep the same subsection order and comparable detail across records. Adapt internal formatting only when the content requires it; avoid transcripts, repeated introductions, and generic advantages.
+
+### Lifecycle and document boundaries
+
+- Mark a decision `Accepted` only after explicit human agreement on the choice. Rejection of a proposal changes its status to `Rejected`; it does not become an accepted alternative.
+- Preserve the substance and original rationale of accepted records. When a decision is materially replaced, add a new ADR, mark the previous one `Superseded`, and link both records. Editorial corrections do not require a new ADR.
+- Keep the current design in `docs/design.md` and field definitions in `docs/data-dictionary.md`. Link ADRs from affected sections instead of copying entire discussions or comparison tables between documents.
+- Keep assignment-required explanations in the design document, including the multi-tenancy comparison and isolation rationale. An ADR must not replace those required contents.
+- Before presenting an edit, check stable IDs, decision and review statuses, links to affected design sections, and consistency with accepted choices. Reference supporting implementation or test evidence when available; do not imply that acceptance proves implementation or correctness.
 
 ## docs/data-dictionary.md
 
