@@ -1,0 +1,20 @@
+{
+	"name": "medical-data-hub",
+	"private": true,
+	"scripts": {
+		"format": "prettier --write \"**/*.{ts,mts,cts,js,mjs,cjs,json}\"",
+		"format:check": "prettier --check \"**/*.{ts,mts,cts,js,mjs,cjs,json}\"",
+		"lint": "eslint .",
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"devDependencies": {
+		"@types/node": "24.19.2",
+		"eslint": "10.13.0",
+		"prettier": "3.9.10",
+		"tsx": "4.23.15",
+		"typescript": "6.0.3",
+		"typescript-eslint": "8.72.0",
+		"vitest": "5.0.5"
+	}
+}
