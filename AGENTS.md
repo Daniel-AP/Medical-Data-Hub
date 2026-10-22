@@ -120,12 +120,10 @@ Do not add, remove, or reorder these sections without an explicit human instruct
 - Use `# Design Decisions` as the title. Follow it with a compact index using `ID | Decision | Status`; link each decision title to its record.
 - Use a stable heading such as `## ADR-001: <decision title>` for each record. Assign sequential IDs; do not reuse or renumber them.
 - State `Status` beneath the record heading using `Proposed`, `Accepted`, `Rejected`, or `Superseded`. Include replacement references only when applicable.
-- Use these baseline subsections within each record:
-  - `### Context`: the concrete problem, relevant requirements or invariants, and constraints that make the choice necessary.
-  - `### Alternatives`: the options actually considered and their relevant differences. Use a comparison table when useful; do not invent options to fill the template.
-  - `### Decision`: the selected approach and the reasons for choosing it, or the specific choice awaiting agreement if still proposed.
-  - `### Consequences`: benefits, costs, limitations, risks, and follow-up work that result from the choice. Distinguish expected consequences from measured outcomes.
-- Keep the same subsection order and comparable detail across records. Adapt internal formatting only when the content requires it; avoid transcripts, repeated introductions, and generic advantages.
+- Use only two subsections within each record:
+  - `### Decision`: state the solution and its essential rationale in a short paragraph, referencing relevant requirements or invariants.
+  - `### Consequences`: list concrete benefits, costs, limitations, and unresolved follow-up work. Distinguish expected consequences from measured outcomes.
+- Keep records concise. Link supporting analysis when needed rather than adding separate context or alternatives sections. Keep the same subsection order across records; avoid transcripts, repeated explanations, and generic advantages.
 
 ### Lifecycle and document boundaries
 
