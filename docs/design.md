@@ -14,7 +14,7 @@ Only reserved appointments are considered active. A reserved appointment may bec
 
 Rescheduling preserves the patient and service but may change the date, time, or professional within the same clinic, provided the professional is authorized to provide that service.
 
-Booking and rescheduling allow any future start time aligned to a whole minute.
+Booking and rescheduling allow any future start time aligned to a whole minute. Appointment intervals use `[start, end)`, so consecutive appointments do not overlap (`I1`, `I2`).
 
 ### Schedule Changes and Appointment Conflicts
 
