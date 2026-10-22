@@ -1,9 +1,5 @@
 # System Design
 
-| Section | Review Status | Confirmation |
-| --- | --- | --- |
-| Section headings and technology stack | Approved | 2026-10-21: Explicit human approval. |
-
 ## 1. Scope and Domain
 
 ## 2. Architecture

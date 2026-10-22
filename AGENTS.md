@@ -46,11 +46,9 @@ This workflow applies to `docs/design.md`, `docs/design-decisions.md`, `docs/dat
 6. Raise outstanding writing or review needs at the next related milestone and before closing the affected work. Do not repeat requests in every message or create automatic reminders.
 7. Respect an explicit postponement. Continue only with work that does not depend on an unresolved design decision or on treating the revised text as approved.
 
-### Review tracking and checks
+### Review checks
 
-- In the documents covered by this workflow, keep a compact table immediately below the title: `Section | Review Status | Confirmation`. Use `Pending` or `Approved` for each reviewed scope. A whole-document review may use a single row; split rows only when review scopes differ.
-- Include review tracking in the authorized edit. Mark changed entries `Pending`. After explicit approval, update their status and record the confirmation date and reviewed scope; this status update is part of the review workflow and needs no separate approval.
-- Preserve approvals for unchanged content. A confirmation must identify the scope reviewed; if unclear, leave the affected entries pending and ask for clarification. Never invent approval evidence.
+- Preserve approvals for unchanged content. A confirmation must identify the scope reviewed; if unclear, ask for clarification. Never invent approval evidence.
 - Before presenting an edit, check assignment coverage, accepted decisions, implementation differences, links, diagrams, formatting, duplication, and unsupported claims. Report discrepancies instead of silently changing the implementation or the accepted design.
 
 ## README.md
@@ -106,11 +104,11 @@ Do not add, remove, or reorder these sections without an explicit human instruct
 - Keep short Architecture Decision Records (ADRs) explaining significant choices and their consequences. This single-file decision log is a team convention, not an additional deliverable required by the assignment.
 - Propose an ADR when a choice materially affects system boundaries, data integrity, tenant isolation, transactions, security, caching, or interpretation of a requirement. Do not create records for every class, field, or routine implementation detail.
 - Record structural choices before their dependent implementation. Use `Proposed` while discussion remains open; do not reconstruct a favorable justification after implementation or infer agreement from an assistant recommendation.
-- Apply the shared authorization, review tracking, and writing rules. Acceptance of a decision and approval of its written record remain separate.
+- Apply the shared authorization, review, and writing rules. Acceptance of a decision and approval of its written record remain separate.
 
 ### Structure and formatting
 
-- Use `# Design Decisions` as the title. Follow the shared review table with a compact index using `ID | Decision | Status`; link each decision title to its record.
+- Use `# Design Decisions` as the title. Follow it with a compact index using `ID | Decision | Status`; link each decision title to its record.
 - Use a stable heading such as `## ADR-001: <decision title>` for each record. Assign sequential IDs; do not reuse or renumber them.
 - State `Status` beneath the record heading using `Proposed`, `Accepted`, `Rejected`, or `Superseded`. Include replacement references only when applicable.
 - Use these baseline subsections within each record:
@@ -126,7 +124,7 @@ Do not add, remove, or reorder these sections without an explicit human instruct
 - Preserve the substance and original rationale of accepted records. When a decision is materially replaced, add a new ADR, mark the previous one `Superseded`, and link both records. Editorial corrections do not require a new ADR.
 - Keep the current design in `docs/design.md` and field definitions in `docs/data-dictionary.md`. Link ADRs from affected sections instead of copying entire discussions or comparison tables between documents.
 - Keep assignment-required explanations in the design document, including the multi-tenancy comparison and isolation rationale. An ADR must not replace those required contents.
-- Before presenting an edit, check stable IDs, decision and review statuses, links to affected design sections, and consistency with accepted choices. Reference supporting implementation or test evidence when available; do not imply that acceptance proves implementation or correctness.
+- Before presenting an edit, check stable IDs, decision statuses, links to affected design sections, and consistency with accepted choices. Reference supporting implementation or test evidence when available; do not imply that acceptance proves implementation or correctness.
 
 ## docs/data-dictionary.md
 
@@ -145,7 +143,7 @@ Use `# Data Dictionary` as the document title and the following baseline structu
 2. `## 2. Shared Domains`: allowed values and their meanings, shared units, and date and time conventions. Define shared information once and reference it from field entries.
 3. `## 3. Table Catalog`: a linked inventory of physical table names, purposes, and global or clinic-specific scope.
 4. `## 4. Table Definitions`: one entry per table using the pattern below.
-5. `## 5. Pending Items`: unresolved definitions and schema discrepancies, with references to the affected entries. Track editorial approvals in the shared review table.
+5. `## 5. Pending Items`: unresolved definitions and schema discrepancies, with references to the affected entries.
 
 - Adapt the internal structure only when the information requires it. Preserve comparable headings, terminology, column order, and detail across equivalent entries. Consistency must not force unrelated content into identical layouts.
 - Split a table or add a focused subsection when needed for readability. Do not add empty subsections or generic text to imitate symmetry.
@@ -177,7 +175,7 @@ Use `# Data Dictionary` as the document title and the following baseline structu
 - Build the report incrementally. Propose updates when tests or requirement mappings change, a relevant run completes, a defect is found or resolved, or cache measurements and execution plans become available.
 - Keep planned checks separate from observed results. Before execution, record coverage intentions and gaps without invented counts, timings, commands, or successful outcomes.
 - Link results to their tested revision, including relevant uncommitted changes. If code, schema, configuration, or tests change, identify affected evidence as stale until rerun; do not overwrite historical results as though they tested the new version.
-- Apply the shared human authorization, review tracking, and writing rules. Editorial approval does not make a test pass or establish acceptance of the system.
+- Apply the shared human authorization, review, and writing rules. Editorial approval does not make a test pass or establish acceptance of the system.
 
 ### Structure and consistent formatting
 
