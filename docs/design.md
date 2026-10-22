@@ -14,6 +14,8 @@ Only reserved appointments are considered active. A reserved appointment may bec
 
 Rescheduling preserves the patient and service but may change the date, time, or professional within the same clinic, provided the professional is authorized to provide that service.
 
+Booking and rescheduling require a start time in the future.
+
 ### Schedule Changes and Appointment Conflicts
 
 A schedule block is created only if its interval does not overlap any appointment in the reserved state for the same professional. Otherwise, the request is rejected, the conflicting appointments are reported, and no block record is created. The actor may retry after resolving the conflicts.
