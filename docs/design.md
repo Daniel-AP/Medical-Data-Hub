@@ -2,6 +2,10 @@
 
 ## 1. Scope and Domain
 
+### Service Catalog Updates
+
+A service's name, duration, and required specialty may be edited while it has no associated appointments. Once any appointment references it, regardless of state, changing its duration or specialty requires a new service to preserve existing appointments and history (`RF3`, `I4`). Name changes remain permitted for corrections, with an administrative rule against redefining the consultation type.
+
 ### Appointment States and Rescheduling
 
 Only reserved appointments are considered active. A reserved appointment may become attended, absent, cancelled, or rescheduled. These four states are final (`RF13`). Rescheduling atomically marks the original appointment as rescheduled and creates a linked reserved appointment, preserving the history (`RF10`). Each replacement has a new appointment identifier and may itself be rescheduled.
@@ -33,7 +37,7 @@ Constraints for the appointment replacement relationship remain pending.
 
 ## 5. Transactions and Concurrency
 
-Concurrency control for booking, rescheduling, and schedule block creation remains pending.
+Concurrency control for booking, rescheduling, schedule block creation, and service updates remains pending.
 
 ## 6. Identity, Security, and Auditing
 
