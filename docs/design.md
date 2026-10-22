@@ -14,11 +14,13 @@ Only reserved appointments are considered active. A reserved appointment may bec
 
 Rescheduling preserves the patient and service but may change the date, time, or professional within the same clinic, provided the professional is authorized to provide that service.
 
-### Schedule Blocks and Appointment Conflicts
+### Schedule Changes and Appointment Conflicts
 
 A schedule block is created only if its interval does not overlap any appointment in the reserved state for the same professional. Otherwise, the request is rejected, the conflicting appointments are reported, and no block record is created. The actor may retry after resolving the conflicts.
 
-This decision preserves `I3` without adding appointment states or pending block records. It departs from `RF6`, which describes creating a block before resolving affected appointments. New bookings may enter before a successful retry.
+Weekly schedule changes that leave reserved appointments outside the proposed hours are also rejected, with conflicts reported and no changes applied (`RF5`, `I3`). The affected appointments must first be rescheduled or cancelled.
+
+These rules preserve `I3` without adding appointment states or pending block records. Rejecting conflicting blocks departs from `RF6`, which describes creating a block before resolving affected appointments. New bookings may enter before a successful retry.
 
 ## 2. Architecture
 
@@ -39,7 +41,7 @@ Constraints for the appointment replacement relationship remain pending.
 
 ## 5. Transactions and Concurrency
 
-Concurrency control for booking, rescheduling, schedule block creation, and service updates remains pending.
+Concurrency control for booking, rescheduling, weekly schedule changes, schedule block creation, and service updates remains pending.
 
 ## 6. Identity, Security, and Auditing
 
