@@ -1,3 +1,12 @@
+# Code Conventions
+
+- Write code identifiers and comments in English.
+- Use `camelCase` for variables, functions, and properties.
+- Use `PascalCase` for classes, types, and interfaces.
+- Use `kebab-case` for application filenames and directories.
+- Use `snake_case` for SQL table and column names.
+- Follow [Prettier](.prettierrc.json), [TypeScript](tsconfig.json), and [ESLint](eslint.config.mjs) configuration for formatting, type checking, and lint rules.
+
 # Documentation
 
 ## Language
