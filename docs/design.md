@@ -22,16 +22,17 @@ Weekly schedule changes that leave reserved appointments outside the proposed ho
 
 These rules preserve `I3` without adding appointment states or pending block records. Rejecting conflicting blocks departs from `RF6`, which describes creating a block before resolving affected appointments. New bookings may enter before a successful retry.
 
-# 2. Architecture
-
-## Technology Stack
+# 2. Tech Stack
 
 | Technology | Role |
 | --- | --- |
-| TypeScript | Application language. |
-| Express | REST API framework. |
-| PostgreSQL | Relational database. |
-| Prisma ORM | Data access and migrations. |
+| TypeScript | Application language |
+| Express | REST API framework |
+| PostgreSQL | Relational database and domain source of truth |
+| Prisma ORM | Data access and migrations |
+| Keycloak | Identity and credential management |
+| Redis | Availability cache |
+| Docker Compose | Service orchestration and networking |
 
 # 3. Data Model
 
