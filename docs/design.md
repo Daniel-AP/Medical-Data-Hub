@@ -208,6 +208,24 @@ These rules preserve `I3` without adding appointment states or pending block rec
 - UNIQUE clinical_notes_clinic_appointment_key: (clinic_id, appointment_id)
 - CHECK clinical_notes_content_check: content <> ''
 
+## audit_records
+
+### Fields
+
+- audit_record_id UUID NOT NULL DEFAULT gen_random_uuid() (PK)
+- clinic_id UUID NOT NULL (FK->clinics.clinic_id)
+- user_id UUID NOT NULL (FK: (clinic_id, user_id) -> users(clinic_id, user_id)) -- Acting user
+- patient_id UUID NOT NULL (FK: (clinic_id, patient_id) -> patients(clinic_id, patient_id)) -- Affected patient
+- resource audit_resource NOT NULL -- Enum: patient_contact, clinical_note
+- appointment_id UUID NULL (FK: (clinic_id, appointment_id) -> clinical_notes(clinic_id, appointment_id)) -- Clinical note identifier, NULL for patient_contact
+- action audit_action NOT NULL -- Enum: read, write
+- occurred_at TIMESTAMPTZ(3) NOT NULL DEFAULT clock_timestamp() -- Absolute event instant, no sensitive payload copies
+
+### Constraints
+
+- CHECK audit_records_resource_check: appointment_id is required for clinical_note and must be NULL for patient_contact
+- TRIGGER audit_records_append_only_guard: Reject every UPDATE, DELETE, or TRUNCATE statement before execution
+
 # 4. Multi-tenancy
 
 All three strategies would require reviewing access permissions for the future OLAP layer. Existing identities, roles, and clinic access rules could be reused. Consolidating data means copying records from several clinics into a common OLAP store. Permissions on the source OLTP data would not automatically protect copies in another store, so access would need to be configured and verified there. The extent of additional authorization work would depend on the OLAP architecture and access requirements.
