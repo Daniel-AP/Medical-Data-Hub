@@ -195,6 +195,19 @@ These rules preserve `I3` without adding appointment states or pending block rec
 - CHECK appointments_previous_check: previous_appointment_id must differ from appointment_id when provided
 - CHECK appointments_cancellation_check: Cancelled appointments must have cancelled_by_user_id and a nonempty cancellation_reason, all other states must have both fields NULL
 
+## clinical_notes
+
+### Fields
+
+- appointment_id UUID NOT NULL (PK, FK: (clinic_id, appointment_id) -> appointments(clinic_id, appointment_id))
+- clinic_id UUID NOT NULL (FK->clinics.clinic_id)
+- content TEXT NOT NULL -- Sensitive clinical content, treating professional derived from the appointment
+
+### Constraints
+
+- UNIQUE clinical_notes_clinic_appointment_key: (clinic_id, appointment_id)
+- CHECK clinical_notes_content_check: content <> ''
+
 # 4. Multi-tenancy
 
 All three strategies would require reviewing access permissions for the future OLAP layer. Existing identities, roles, and clinic access rules could be reused. Consolidating data means copying records from several clinics into a common OLAP store. Permissions on the source OLTP data would not automatically protect copies in another store, so access would need to be configured and verified there. The extent of additional authorization work would depend on the OLAP architecture and access requirements.
