@@ -424,6 +424,40 @@ erDiagram
 
 - clinical_notes to audit_records (**1:N**): Clinical-note events identify the note through appointment_id, contact-data events have no note reference
 
+## Normalization
+
+### First Normal Form (1NF)
+
+- All tables: Individual field values and declared PKs, with no embedded lists or repeating column groups
+- professional_services: One professional-service assignment per row
+- professional_schedules and professional_blocks: One working or blocked interval per row
+
+### Second Normal Form (2NF)
+
+Non-key fields must not depend on only part of a composite candidate key
+
+- patients: name, date_of_birth, email, and phone depend on both clinic_id and identification, neither field alone determines those values
+- professional_services: An assignment is identified by (professional_id, service_id), service name and duration depend only on service_id and remain in services
+- Retained exception: professional_services.clinic_id depends on professional_id alone or service_id alone, retaining it is a deliberate 2NF exception
+
+### Third Normal Form (3NF)
+
+After satisfying 2NF, non-key fields must not depend on another non-key field
+
+- specialties: Clinic name and time zone depend on non-key clinic_id, so they stay in clinics
+- professionals and services: Specialty name depends on non-key specialty_id, so it stays in specialties
+- professional_schedules and professional_blocks: Professional specialty depends on non-key professional_id, so it stays in professionals
+- appointments: Patient details depend on non-key patient_id and service details depend on non-key service_id, so they stay in patients and services
+- audit_records: Note content depends on non-key appointment_id, so it stays in clinical_notes
+- Retained exceptions: services.clinic_id depends on non-key specialty_id, professional_schedules.clinic_id and professional_blocks.clinic_id depend on non-key professional_id, these retained redundancies and the derived fields are justified below
+
+### Deliberate Denormalizations
+
+- Clinic ownership: Repeated clinic_id supports direct RLS checks and clinic-consistent references, composite FKs prevent disagreement, at the cost of redundant values and additional composite indexes
+- Appointment end: Stored end_at provides interval endpoints without joining services, the backend must derive it from start_at and service duration and prevent changes to appointment timing or referenced service durations, at the cost of stored derived data and coordinated validation
+- Audit patient: For clinical note events, patient_id allows direct patient filters. It repeats the patient linked to the appointment, so the backend must verify that both references match
+- Audit resource: resource explicitly names the data accessed. This repeats information already available from whether appointment_id is NULL, so the CHECK must keep both fields consistent
+
 # 4. Multi-tenancy
 
 All three strategies would require reviewing access permissions for the future OLAP layer. Existing identities, roles, and clinic access rules could be reused. Consolidating data means copying records from several clinics into a common OLAP store. Permissions on the source OLTP data would not automatically protect copies in another store, so access would need to be configured and verified there. The extent of additional authorization work would depend on the OLAP architecture and access requirements.
