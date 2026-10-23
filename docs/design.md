@@ -226,6 +226,68 @@ These rules preserve `I3` without adding appointment states or pending block rec
 - CHECK audit_records_resource_check: appointment_id is required for clinical_note and must be NULL for patient_contact
 - TRIGGER audit_records_append_only_guard: Reject every UPDATE, DELETE, or TRUNCATE statement before execution
 
+## Relationships
+
+- clinics to users (**1:N**): Each clinic user belongs to one clinic, platform administrators belong to none
+
+- clinics to specialties (**1:N**): Each specialty belongs to one clinic
+
+- clinics to professionals (**1:N**): Each professional belongs to one clinic
+
+- users to professionals (**1:1**, optional): Each professional requires one same-clinic user, a user may have no professional profile
+
+- specialties to professionals (**1:N**): Each professional has one specialty
+
+- clinics to services (**1:N**): Each service belongs to one clinic
+
+- specialties to services (**1:N**): Each service requires one specialty
+
+- professionals to services (**N:M**): professional_services stores distinct authorized pairs within one clinic
+
+- professionals to professional_services (**1:N**): Each authorization belongs to one professional
+
+- services to professional_services (**1:N**): Each authorization belongs to one service
+
+- clinics to professional_services (**1:N**): Each authorization belongs to one clinic
+
+- clinics to professional_schedules (**1:N**): Each weekly interval belongs to one clinic
+
+- professionals to professional_schedules (**1:N**): Each interval belongs to one professional
+
+- clinics to professional_blocks (**1:N**): Each block belongs to one clinic
+
+- professionals to professional_blocks (**1:N**): Each block belongs to one professional
+
+- clinics to patients (**1:N**): Patient records and identification uniqueness are independent between clinics
+
+- clinics to appointments (**1:N**): Each appointment belongs to one clinic
+
+- patients to appointments (**1:N**): Each appointment has one same-clinic patient
+
+- professionals to appointments (**1:N**): Each appointment has one same-clinic professional
+
+- services to appointments (**1:N**): Each appointment uses one same-clinic service
+
+- professional_services to appointments (**1:N**): Each appointment references an explicit professional-service authorization
+
+- users to appointments (**1:N**): A cancelling user is required only for cancelled appointments
+
+- appointments to appointments (**1:1**, optional): Each replacement has one predecessor, each rescheduled appointment has exactly one replacement, clinic, patient, and service are preserved
+
+- clinics to clinical_notes (**1:N**): Each note belongs to one clinic
+
+- appointments to clinical_notes (**1:1**, optional): An attended appointment may have one note, other states have none
+
+- professionals to clinical_notes (**1:N**): The treating professional is derived through appointments
+
+- clinics to audit_records (**1:N**): Each event belongs to one clinic
+
+- users to audit_records (**1:N**): Each event identifies one acting clinic user
+
+- patients to audit_records (**1:N**): Each event identifies one affected patient
+
+- clinical_notes to audit_records (**1:N**): Clinical-note events identify the note through appointment_id, contact-data events have no note reference
+
 # 4. Multi-tenancy
 
 All three strategies would require reviewing access permissions for the future OLAP layer. Existing identities, roles, and clinic access rules could be reused. Consolidating data means copying records from several clinics into a common OLAP store. Permissions on the source OLTP data would not automatically protect copies in another store, so access would need to be configured and verified there. The extent of additional authorization work would depend on the OLAP architecture and access requirements.
