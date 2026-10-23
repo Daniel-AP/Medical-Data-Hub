@@ -149,6 +149,26 @@ These rules preserve `I3` without adding appointment states or pending block rec
 
 - CHECK professional_blocks_interval_check: start_at and end_at must be finite, and start_at must be earlier than end_at
 
+## patients
+
+### Fields
+
+- patient_id UUID NOT NULL DEFAULT gen_random_uuid() (PK)
+- clinic_id UUID NOT NULL (FK->clinics.clinic_id)
+- identification VARCHAR(50) NOT NULL
+- name VARCHAR(200) NOT NULL
+- date_of_birth DATE NOT NULL
+- email VARCHAR(320) NULL -- Sensitive contact data, NULL means not provided
+- phone VARCHAR(32) NULL -- Sensitive contact data, preserve country prefix and leading zeros, NULL means not provided
+
+### Constraints
+
+- UNIQUE patients_clinic_patient_key: (clinic_id, patient_id)
+- UNIQUE patients_identification_key: (clinic_id, identification)
+- CHECK patients_identification_check: identification <> ''
+- CHECK patients_name_check: name <> ''
+- CHECK patients_contact_check: At least one of email or phone must be provided, and neither may be an empty string when provided
+
 # 4. Multi-tenancy
 
 All three strategies would require reviewing access permissions for the future OLAP layer. Existing identities, roles, and clinic access rules could be reused. Consolidating data means copying records from several clinics into a common OLAP store. Permissions on the source OLTP data would not automatically protect copies in another store, so access would need to be configured and verified there. The extent of additional authorization work would depend on the OLAP architecture and access requirements.
