@@ -107,6 +107,18 @@ These rules preserve `I3` without adding appointment states or pending block rec
 - CHECK services_name_check: name <> ''
 - CHECK services_duration_check: duration_minutes > 0
 
+## professional_services
+
+### Fields
+
+- PK: (clinic_id, professional_id, service_id)
+- clinic_id UUID NOT NULL (FK->clinics.clinic_id)
+- professional_id UUID NOT NULL (FK: (clinic_id, professional_id) -> professionals(clinic_id, professional_id))
+- service_id UUID NOT NULL (FK: (clinic_id, service_id) -> services(clinic_id, service_id))
+
+### Constraints
+
+
 # 4. Multi-tenancy
 
 All three strategies would require reviewing access permissions for the future OLAP layer. Existing identities, roles, and clinic access rules could be reused. Consolidating data means copying records from several clinics into a common OLAP store. Permissions on the source OLTP data would not automatically protect copies in another store, so access would need to be configured and verified there. The extent of additional authorization work would depend on the OLAP architecture and access requirements.
