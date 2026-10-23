@@ -226,6 +226,142 @@ These rules preserve `I3` without adding appointment states or pending block rec
 - CHECK audit_records_resource_check: appointment_id is required for clinical_note and must be NULL for patient_contact
 - TRIGGER audit_records_append_only_guard: Reject every UPDATE, DELETE, or TRUNCATE statement before execution
 
+## Entity-Relationship Diagram
+
+```mermaid
+erDiagram
+    direction TB
+
+    clinics |o..o{ users : contains
+    clinics ||..o{ specialties : owns
+    clinics ||..o{ professionals : owns
+    users ||..o| professionals : has_profile
+    specialties ||..o{ professionals : classifies
+    clinics ||..o{ services : owns
+    specialties ||..o{ services : required_by
+    clinics ||--o{ professional_services : owns
+    professionals ||--o{ professional_services : authorized_for
+    services ||--o{ professional_services : assigned_to
+    clinics ||..o{ professional_schedules : owns
+    professionals ||..o{ professional_schedules : works
+    clinics ||..o{ professional_blocks : owns
+    professionals ||..o{ professional_blocks : unavailable
+    clinics ||..o{ patients : owns
+    clinics ||..o{ appointments : owns
+    patients ||..o{ appointments : books
+    professionals ||..o{ appointments : attends
+    services ||..o{ appointments : determines_duration
+    professional_services ||..o{ appointments : authorizes
+    users |o..o{ appointments : cancels
+    appointments |o..o| appointments : replaced_by
+    clinics ||..o{ clinical_notes : owns
+    appointments ||--o| clinical_notes : has_note
+    clinics ||..o{ audit_records : owns
+    users ||..o{ audit_records : acts
+    patients ||..o{ audit_records : affected_by
+    clinical_notes |o..o{ audit_records : accessed_by
+
+    clinics {
+        UUID clinic_id PK
+        VARCHAR(200) name
+        VARCHAR(64) time_zone
+    }
+
+    users {
+        UUID user_id PK
+        VARCHAR(255) identity_id UK
+        UUID clinic_id FK
+        user_role role
+        BOOLEAN is_active
+    }
+
+    specialties {
+        UUID specialty_id PK
+        UUID clinic_id FK
+        VARCHAR(100) name
+    }
+
+    professionals {
+        UUID professional_id PK
+        UUID clinic_id FK
+        UUID user_id FK
+        UUID specialty_id FK
+    }
+
+    services {
+        UUID service_id PK
+        UUID clinic_id FK
+        VARCHAR(200) name
+        INTEGER duration_minutes
+        UUID specialty_id FK
+        BOOLEAN is_active
+    }
+
+    professional_services {
+        UUID clinic_id PK, FK
+        UUID professional_id PK, FK
+        UUID service_id PK, FK
+    }
+
+    professional_schedules {
+        UUID professional_schedule_id PK
+        UUID clinic_id FK
+        UUID professional_id FK
+        SMALLINT weekday
+        SMALLINT start_minute
+        SMALLINT end_minute
+    }
+
+    professional_blocks {
+        UUID professional_block_id PK
+        UUID clinic_id FK
+        UUID professional_id FK
+        TIMESTAMPTZ(3) start_at
+        TIMESTAMPTZ(3) end_at
+    }
+
+    patients {
+        UUID patient_id PK
+        UUID clinic_id FK
+        VARCHAR(50) identification
+        VARCHAR(200) name
+        DATE date_of_birth
+        VARCHAR(320) email
+        VARCHAR(32) phone
+    }
+
+    appointments {
+        UUID appointment_id PK
+        UUID clinic_id FK
+        UUID patient_id FK
+        UUID professional_id FK
+        UUID service_id FK
+        TIMESTAMPTZ(3) start_at
+        TIMESTAMPTZ(3) end_at
+        appointment_state state
+        UUID previous_appointment_id FK
+        UUID cancelled_by_user_id FK
+        VARCHAR(500) cancellation_reason
+    }
+
+    clinical_notes {
+        UUID appointment_id PK, FK
+        UUID clinic_id FK
+        TEXT content
+    }
+
+    audit_records {
+        UUID audit_record_id PK
+        UUID clinic_id FK
+        UUID user_id FK
+        UUID patient_id FK
+        audit_resource resource
+        UUID appointment_id FK
+        audit_action action
+        TIMESTAMPTZ(3) occurred_at
+    }
+```
+
 ## Relationships
 
 - clinics to users (**1:N**): Each clinic user belongs to one clinic, platform administrators belong to none
