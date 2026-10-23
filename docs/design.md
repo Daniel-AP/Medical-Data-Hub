@@ -135,6 +135,20 @@ These rules preserve `I3` without adding appointment states or pending block rec
 - CHECK professional_schedules_weekday_check: weekday must be between 1 (Monday) and 7 (Sunday)
 - CHECK professional_schedules_interval_check: start_minute must be at least 0, end_minute must not exceed 1440, and start_minute must be less than end_minute
 
+## professional_blocks
+
+### Fields
+
+- professional_block_id UUID NOT NULL DEFAULT gen_random_uuid() (PK)
+- clinic_id UUID NOT NULL (FK->clinics.clinic_id)
+- professional_id UUID NOT NULL (FK: (clinic_id, professional_id) -> professionals(clinic_id, professional_id))
+- start_at TIMESTAMPTZ(3) NOT NULL -- Absolute instant, inclusive endpoint
+- end_at TIMESTAMPTZ(3) NOT NULL -- Absolute instant, exclusive endpoint
+
+### Constraints
+
+- CHECK professional_blocks_interval_check: start_at and end_at must be finite, and start_at must be earlier than end_at
+
 # 4. Multi-tenancy
 
 All three strategies would require reviewing access permissions for the future OLAP layer. Existing identities, roles, and clinic access rules could be reused. Consolidating data means copying records from several clinics into a common OLAP store. Permissions on the source OLTP data would not automatically protect copies in another store, so access would need to be configured and verified there. The extent of additional authorization work would depend on the OLAP architecture and access requirements.
