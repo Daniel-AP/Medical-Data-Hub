@@ -1,14 +1,12 @@
-# System Design
+# 1. Business Rules
 
-## 1. Scope and Domain
-
-### Service Catalog Updates
+## Service Catalog Updates
 
 A service's name, duration, and required specialty may be edited while it has no associated appointments. Once any appointment references it, regardless of state, changing its duration or specialty requires a new service to preserve existing appointments and history (`RF3`, `I4`). Name changes remain permitted for corrections, with an administrative rule against redefining the consultation type.
 
 Only the clinic administrator may deactivate a service in their clinic as part of catalog maintenance (`RF3`). Deactivation blocks new bookings and preserves existing appointments and history. Reserved appointments may still be rescheduled with an inactive service to honor existing commitments.
 
-### Appointment States and Rescheduling
+## Appointment States and Rescheduling
 
 Only reserved appointments are considered active. A reserved appointment may become attended, absent, cancelled, or rescheduled. These four states are final (`RF13`). Rescheduling atomically marks the original appointment as rescheduled and creates a linked reserved appointment, preserving the history (`RF10`). Each replacement has a new appointment identifier and may itself be rescheduled.
 
@@ -16,7 +14,7 @@ Rescheduling preserves the patient and service but may change the date, time, or
 
 Booking and rescheduling allow any future start time aligned to a whole minute. Appointment intervals use `[start, end)`, so consecutive appointments do not overlap (`I1`, `I2`).
 
-### Schedule Changes and Appointment Conflicts
+## Schedule Changes and Appointment Conflicts
 
 A schedule block is created only if its interval does not overlap any appointment in the reserved state for the same professional. Otherwise, the request is rejected, the conflicting appointments are reported, and no block record is created. The actor may retry after resolving the conflicts.
 
@@ -24,9 +22,9 @@ Weekly schedule changes that leave reserved appointments outside the proposed ho
 
 These rules preserve `I3` without adding appointment states or pending block records. Rejecting conflicting blocks departs from `RF6`, which describes creating a block before resolving affected appointments. New bookings may enter before a successful retry.
 
-## 2. Architecture
+# 2. Architecture
 
-### Technology Stack
+## Technology Stack
 
 | Technology | Role |
 | --- | --- |
@@ -35,19 +33,29 @@ These rules preserve `I3` without adding appointment states or pending block rec
 | PostgreSQL | Relational database. |
 | Prisma ORM | Data access and migrations. |
 
-## 3. Data Model
+# 3. Data Model
 
-Constraints for the appointment replacement relationship remain pending.
+## clinics
 
-## 4. Multi-tenancy
+### Fields
+
+- clinic_id UUID NOT NULL DEFAULT gen_random_uuid() (PK)
+- name VARCHAR(200) NOT NULL
+- time_zone VARCHAR(64) NOT NULL -- Named time zone, Ex: America/Costa_Rica, America/Bogota
+
+### Constraints
+
+- CHECK clinics_name_check: name <> ''
+
+# 4. Multi-tenancy
 
 All three strategies would require reviewing access permissions for the future OLAP layer. Existing identities, roles, and clinic access rules could be reused. Consolidating data means copying records from several clinics into a common OLAP store. Permissions on the source OLTP data would not automatically protect copies in another store, so access would need to be configured and verified there. The extent of additional authorization work would depend on the OLAP architecture and access requirements.
 
-### Database per Clinic
+## Database per Clinic
 
 This comparison considers a separate database for each clinic within a single PostgreSQL instance. Deployments across multiple PostgreSQL instances are outside the scope of this comparison. They would require separate management of server configuration, startup, updates, and recovery.
 
-#### Data Isolation
+### Data Isolation
 
 Each clinic would have a separate database containing its patients, appointments, and clinical notes. A PostgreSQL connection selects one database when it opens. Ordinary SQL queries on that connection cannot directly access tables in another database. For example, omitting a clinic filter while querying clinic A's patients would not include patients stored in clinic B's database.
 
@@ -55,7 +63,7 @@ Access would also require restricted database roles. In PostgreSQL, a role is an
 
 The backend would still need to select the database from the authenticated user's clinic association. If it holds credentials for multiple clinics and selects clinic B's connection for a request from clinic A, database separation alone would not prevent the resulting disclosure.
 
-#### Implementation Complexity
+### Implementation Complexity
 
 The application could reuse the same data model and appointment logic across clinics, but it would need to manage connections to different databases. PostgreSQL has a supervisor process that listens for incoming connections and starts a dedicated server process for each connection. During connection startup, the application sends the database name and database user, and PostgreSQL checks authentication and access before accepting queries. The resulting session, meaning the interaction over that connection, stays associated with the selected database. Its server process executes SQL commands and returns results over the same connection. It can serve many successive queries, but the session cannot switch to another database.
 
@@ -65,7 +73,7 @@ Registering a clinic would require an automated setup process that creates its d
 
 The setup process would also need to handle partial failures. PostgreSQL does not allow `CREATE DATABASE` inside a transaction block, so database creation and the subsequent setup cannot be rolled back together as one operation. For example, if creating the tables fails after the database has been created, the database remains. The application would need a defined way to retry or clean up incomplete setup without reporting the clinic as ready.
 
-#### Operations and Maintenance
+### Operations and Maintenance
 
 Changes to tables, constraints, and indexes would need to be applied to every clinic's database. The same migration scripts could be reused, but their execution and results would need to be tracked separately for each database. If a migration succeeds for clinic A and fails for clinic B, the databases could temporarily have different structures. Deployments would therefore need to account for incomplete migrations before application code starts relying on the new structure.
 
@@ -73,7 +81,7 @@ Separate databases would allow a clinic's data to be exported and restored indiv
 
 Database separation would not make server maintenance independent for each clinic within the shared PostgreSQL instance. Restarting that instance would interrupt connections for all clinics. Recovery from physical backups also has a shared scope. Restoring a physical backup and replaying the WAL to a selected point in time restores the whole instance, rather than only one clinic's database.
 
-#### Resource Usage and Performance
+### Resource Usage and Performance
 
 Keeping connections open for several clinics would consume resources even when some clinics have no active requests. Each connection retains a PostgreSQL server process with its own memory and occupies a slot within `max_connections`. Connection pools would therefore need to be sized against the shared instance's capacity.
 
@@ -81,15 +89,15 @@ Each database would have its own tables, indexes, and system catalogs, which are
 
 All clinic databases would still compete for the instance's CPU, memory, and storage throughput. PostgreSQL's `shared_buffers`, the memory area that caches recently accessed blocks of table and index data, is shared across the instance rather than reserved separately for each clinic. A resource-intensive query in clinic A could therefore slow availability queries in clinic B. Database separation would provide separate data structures without guaranteeing independent performance or a reserved share of server resources.
 
-#### Implications for OLAP
+### Implications for OLAP
 
 A future OLAP layer would need to treat each clinic's OLTP database as a separate data source. An extraction process, which reads data from the OLTP databases and transfers it to an OLAP store, could reuse the same logic across databases with matching structures. However, it would need to connect to each database and track extraction results separately. Adding a clinic would also require including its database among the sources. This allows extraction to be scheduled or retried per clinic, but adds coordination as the number of databases grows.
 
 Extracted records would need to retain their clinic of origin. Inside the OLTP system, the database itself identifies which clinic owns the data. That context would need to become explicit when records are copied into a common OLAP store. Identifiers cannot be assumed to be unique across independent databases unless the identifier design guarantees it. The OLAP model would therefore need to preserve clinic ownership and distinguish records from different sources without treating independent patient records as one shared clinical history.
 
-### Schema per Clinic
+## Schema per Clinic
 
-#### Data Isolation
+### Data Isolation
 
 Each clinic would have a separate schema within the same PostgreSQL database. A schema groups named objects such as tables, indexes, and functions. For example, `clinic_a.patients` and `clinic_b.patients` would be independent tables. Querying `clinic_a.patients` would return only A's patients, even without a clinic filter, because B's patients would be stored in another table.
 
@@ -97,7 +105,7 @@ Database-enforced isolation would depend on restricted access permissions. Postg
 
 If the backend instead uses a role with access to every clinic's schema, PostgreSQL would permit queries against any of them. Selecting B's schema for a request from A could then expose B's patients. A missing tenant check or a manipulated clinic parameter could cause this error if the backend accepts the client's choice without verifying it against the authenticated user's clinic. Separate schemas alone would not block that access.
 
-#### Implementation Complexity
+### Implementation Complexity
 
 The application could reuse the same domain logic across clinics, but its data access code would need to target different schemas. For example, booking an appointment for clinic A would require every query involving the patient, professional, service, and appointment to use A's tables. Reusing that booking operation for clinic B would require directing those queries to B's tables without duplicating the booking logic.
 
@@ -105,7 +113,7 @@ Registering a clinic would require an automated routine to create its schema, ta
 
 These PostgreSQL setup steps could run inside one transaction, allowing their changes to be committed together or undone together if a step fails. For example, a failure while creating the appointment table could roll back the new schema and the tables already created within that transaction. This would simplify recovery from incomplete database setup compared with creating a separate database, although the setup routine would still need to handle errors and retries.
 
-#### Operations and Maintenance
+### Operations and Maintenance
 
 Changes to tables, constraints, and indexes would need to be applied to each clinic's schema. Adding a column to `clinic_a.patients`, for example, would not add it to `clinic_b.patients`. The same migration scripts could be reused, but their progress and results would need to be tracked per schema. If an update fails for one clinic, deployments would need to account for the resulting differences before relying on the new structure.
 
@@ -113,7 +121,7 @@ PostgreSQL's `pg_dump` can export a clinic's schema, including its tables and da
 
 All schemas would share the same database and PostgreSQL instance, so server maintenance would affect every clinic. Restarting PostgreSQL would interrupt their connections regardless of which schema they use. Physical backups and recovery through WAL would also operate on the instance as a whole. Separate schemas would therefore support selective logical exports, but would not provide independent server maintenance or direct recovery of one schema to a selected point in time.
 
-#### Resource Usage and Performance
+### Resource Usage and Performance
 
 Creating a schema would not by itself allocate a connection or a dedicated PostgreSQL server process. Those resources are associated with open connections. Because all schemas reside in one database, connections could be reused across clinics when the permissions design allows it. This could reduce the need to keep separate connections idle for each clinic.
 
@@ -121,7 +129,7 @@ Each clinic would require its own tables and indexes, adding another set of stru
 
 All schemas would compete for the same CPU, memory, and storage throughput. PostgreSQL's `shared_buffers`, which caches blocks of table and index data in memory, would serve the entire instance. A query reading a large appointment history in clinic A could consume resources needed by availability queries in clinic B. Separate schemas would therefore provide independent tables and indexes without reserving processing capacity or memory for each clinic.
 
-#### Implications for OLAP
+### Implications for OLAP
 
 A future OLAP extraction process could read several clinics' schemas through one database connection, provided its role has permission to access them. For example, it could combine appointments from `clinic_a.appointments` and `clinic_b.appointments` using `UNION ALL`, which appends the results of separate queries. This would simplify collecting data across clinics compared with connecting to a separate database for each one.
 
@@ -129,9 +137,9 @@ The extraction process would still need to include each clinic's schema. A query
 
 Each extracted record would need to retain its clinic of origin. Once records from several schemas are combined in shared OLAP tables, the source schemas would no longer separate them. Identifiers could also overlap between schemas unless their design guarantees uniqueness across clinics. The OLAP model would therefore need to distinguish each clinic's records.
 
-### Shared Tables with Row-Level Security
+## Shared Tables with Row-Level Security
 
-#### Data Isolation
+### Data Isolation
 
 Clinics would share the same tables, with `clinic_id` identifying the clinic that owns each record. For example, the `patients` table would contain patients from clinics A and B. The column records ownership but does not restrict access by itself. Isolation would require PostgreSQL policies that use that ownership information to control access to individual rows.
 
@@ -145,7 +153,7 @@ Application connections would need database roles subject to RLS. PostgreSQL sup
 
 Relationships would also need constraints that prevent references between clinics. For example, an appointment belonging to A must not reference a patient belonging to B. RLS does not automatically enforce that rule, because PostgreSQL's foreign key checks operate independently of row visibility. The relationship constraints would need to account for clinic ownership.
 
-#### Implementation Complexity
+### Implementation Complexity
 
 The application would use one shared set of tables and queries for all clinics. Registering a clinic would add its record and initial application data without creating another database, schema, or set of tables. Policies that compare each row's `clinic_id` with the current clinic context could also be reused without defining a separate policy for every new clinic.
 
@@ -153,7 +161,7 @@ Database setup would need to enable RLS and define policies separately for every
 
 The data access layer would need a common mechanism to establish the authenticated clinic before executing protected queries. If the context is stored in a connection setting, the context assignment and all queries for the operation would need to execute on the same connection. One option would be a transaction-local setting, whose override ends when the transaction is committed or rolled back. Implementing that option would require wrapping protected operations in transactions, including operations that only read data.
 
-#### Operations and Maintenance
+### Operations and Maintenance
 
 Changes to tables, constraints, indexes, and shared RLS policies would be maintained in one place. Adding a column to `patients`, for example, would change the structure used by every clinic without running a separate migration for each tenant.
 
@@ -161,7 +169,7 @@ A full logical export of the database would contain records from all clinics. Re
 
 All clinics would share the same PostgreSQL instance, so server restarts and maintenance interruptions would affect them together. Physical backups and recovery through WAL would also operate on the instance as a whole. RLS controls access to rows, but does not provide independent server maintenance or direct recovery of one clinic's records to a selected point in time.
 
-#### Resource Usage and Performance
+### Resource Usage and Performance
 
 All clinics would share the same tables and indexes. Adding a clinic would add records rather than another set of database objects, while the shared indexes would grow with the combined data volume. An index containing `clinic_id` together with the columns used to search appointments could help PostgreSQL locate one clinic's records without scanning the entire table. The appropriate columns and their order would need to be justified through execution plans.
 
@@ -169,7 +177,7 @@ RLS adds policy conditions that PostgreSQL must evaluate when accessing protecte
 
 All clinics would compete for the same CPU, memory, storage throughput, and PostgreSQL buffer cache. RLS limits which records a request may access, but does not reserve resources for each clinic. A demanding query or a large number of requests from clinic A could therefore slow clinic B's operations. Sharing tables would reduce the number of separate structures maintained, without establishing a measured performance advantage over the other strategies.
 
-#### Implications for OLAP
+### Implications for OLAP
 
 A future OLAP extraction process could read authorized data from the shared OLTP tables without combining separate databases or schemas for each clinic. New clinics' records would enter those same tables, so adding a clinic would not require defining another extraction source. This would simplify source management compared with maintaining a separate set of tables for every clinic.
 
@@ -177,34 +185,32 @@ RLS would still determine which records an extraction job may read when its data
 
 The existing `clinic_id` would identify each record's clinic of origin and would need to be preserved when copying data into OLAP. This would avoid deriving ownership from a source database or schema name.
 
-### Selected Strategy
+## Selected Strategy
 
 The system will use shared tables with `clinic_id` and PostgreSQL RLS.
 
-#### Data Isolation
+### Data Isolation
 
 Database per clinic provides a separate database connection boundary. Schema per clinic separates tables within one database, while RLS keeps clinics' rows together and controls their visibility through policies. RLS does not provide the same separation of data objects. This tradeoff is accepted for simpler clinic registration and shared maintenance.
 
-#### Implementation Complexity
+### Implementation Complexity
 
 Database per clinic requires database provisioning and connection selection. Schema per clinic requires creating table sets and directing queries to the correct schema. Shared tables require RLS policies and clinic-context handling, but no new structures for each clinic. This makes the selected strategy preferable for dynamic clinic registration.
 
-#### Operations and Maintenance
+### Operations and Maintenance
 
 Separate databases and schemas allow exports to target one clinic, but require structural changes across every clinic's objects. Shared tables centralize those changes, while recovering one clinic requires selecting related rows. The project prioritizes shared maintenance over simpler recovery of an individual clinic, favoring the selected strategy in this criterion.
 
-#### Resource Usage and Performance
+### Resource Usage and Performance
 
 Separate databases and schemas maintain table and index sets per clinic. Shared tables maintain fewer separate structures, but their indexes cover all clinics and RLS adds policy evaluation work. All three alternatives share instance resources. No performance winner has been established, so the selected strategy is favored for fewer structures, with query performance still requiring execution plans and measurements.
 
-#### Implications for OLAP
+### Implications for OLAP
 
 Database per clinic requires coordinating separate database sources, and schema per clinic requires collecting records from separate table sets. Shared tables provide a common source with clinic ownership already recorded in `clinic_id`. The selected strategy is preferable for extraction source management, while OLAP authorization remains a consideration for all three alternatives.
 
-## 5. Transactions and Concurrency
+# 5. Transactions and Concurrency
 
-Concurrency control for booking, rescheduling, weekly schedule changes, schedule block creation, and service updates remains pending.
+# 6. Identity, Security, and Auditing
 
-## 6. Identity, Security, and Auditing
-
-## 7. Availability, Caching, and Indexes
+# 7. Availability, Caching, and Indexes
