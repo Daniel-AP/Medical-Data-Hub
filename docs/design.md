@@ -169,6 +169,32 @@ These rules preserve `I3` without adding appointment states or pending block rec
 - CHECK patients_name_check: name <> ''
 - CHECK patients_contact_check: At least one of email or phone must be provided, and neither may be an empty string when provided
 
+## appointments
+
+### Fields
+
+- appointment_id UUID NOT NULL DEFAULT gen_random_uuid() (PK)
+- clinic_id UUID NOT NULL (FK->clinics.clinic_id)
+- patient_id UUID NOT NULL (FK: (clinic_id, patient_id) -> patients(clinic_id, patient_id))
+- professional_id UUID NOT NULL (FK: (clinic_id, professional_id) -> professionals(clinic_id, professional_id))
+- service_id UUID NOT NULL (FK: (clinic_id, service_id) -> services(clinic_id, service_id), FK: (clinic_id, professional_id, service_id) -> professional_services(clinic_id, professional_id, service_id))
+- start_at TIMESTAMPTZ(3) NOT NULL -- Absolute instant aligned to a whole UTC minute
+- end_at TIMESTAMPTZ(3) NOT NULL -- Computed by the backend from start_at and service duration, exclusive endpoint
+- state appointment_state NOT NULL DEFAULT 'reserved' -- Enum: reserved, attended, absent, cancelled, rescheduled
+- previous_appointment_id UUID NULL (FK: (clinic_id, previous_appointment_id, patient_id, service_id) -> appointments(clinic_id, appointment_id, patient_id, service_id)) -- NULL for first appointments
+- cancelled_by_user_id UUID NULL (FK: (clinic_id, cancelled_by_user_id) -> users(clinic_id, user_id)) -- Required only when cancelled
+- cancellation_reason VARCHAR(500) NULL -- Required only when cancelled
+
+### Constraints
+
+- UNIQUE appointments_clinic_appointment_key: (clinic_id, appointment_id)
+- UNIQUE appointments_replacement_target_key: (clinic_id, appointment_id, patient_id, service_id)
+- UNIQUE appointments_previous_key: (clinic_id, previous_appointment_id) -- NULL predecessors remain distinct
+- CHECK appointments_interval_check: start_at must be earlier than end_at
+- CHECK appointments_minute_check: start_at must be aligned to a whole UTC minute
+- CHECK appointments_previous_check: previous_appointment_id must differ from appointment_id when provided
+- CHECK appointments_cancellation_check: Cancelled appointments must have cancelled_by_user_id and a nonempty cancellation_reason, all other states must have both fields NULL
+
 # 4. Multi-tenancy
 
 All three strategies would require reviewing access permissions for the future OLAP layer. Existing identities, roles, and clinic access rules could be reused. Consolidating data means copying records from several clinics into a common OLAP store. Permissions on the source OLTP data would not automatically protect copies in another store, so access would need to be configured and verified there. The extent of additional authorization work would depend on the OLAP architecture and access requirements.
