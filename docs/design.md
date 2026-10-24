@@ -845,6 +845,36 @@ Explicit locking permits complete validation before writing. Conditional updates
 
 Exact baseline comparison avoids version counters but conservatively rejects some edits to different fields. Selecting the lock mode by the intended changes avoids using `FOR UPDATE` for every edit while acquiring the stronger mode before identification changes.
 
+## Concurrent Clinical Note Creation
+
+### Concurrency Risk
+
+Concurrent requests can attempt to create different clinical notes for the same appointment (`RF15`). Both can find no existing note before either inserts, so a preliminary lookup cannot guarantee uniqueness.
+
+Ex: the treating professional submits two requests from separate sessions. The second creation must not overwrite the content committed by the first.
+
+Creation must also verify that the appointment is `attended` and belongs to the authenticated professional. The note and its audit event must commit together to prevent persisted clinical content without its required write record (`RF18`).
+
+### Transaction Design
+
+1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context. Require permission to create clinical notes and resolve the professional through the authenticated user's association. Do not accept a client-supplied author as proof of ownership. Use the same transaction connection throughout
+
+2. Select the same-clinic appointment by `appointment_id` with `FOR SHARE`, without filtering by state before acquiring the lock. Retain the lock until commit or rollback. Reject a missing or inaccessible appointment and roll back. If an outcome update is already in progress, the locking read can wait before checking the resulting row
+
+3. After acquiring the lock, require `state = 'attended'` and require the appointment's `professional_id` to match the authenticated professional. Validate that the supplied `content` is nonempty text. Reject a failed validation and roll back. Derive the note's clinic and appointment identifiers from the protected appointment
+
+4. Insert the note normally. Use the PK on `clinical_notes.appointment_id` as the definitive guarantee of at most one note per appointment, including when no note row exists to lock. Reject a duplicate creation without updating the existing note or automatically returning its content. Do not use an upsert that replaces clinical content
+
+5. Insert the write audit event in the same PostgreSQL transaction. Derive `patient_id` from the protected appointment and the acting user from the authenticated context. Identify the created note, use `resource = 'clinical_note'` and `action = 'write'`, and do not copy clinical content into the event. The shared audit protocol belongs to Sensitive Data Access and Audit Consistency
+
+6. Commit the note and event together and report success only after confirmation. If either insertion or commit fails, do not report a successful creation. A failed transaction rolls back both writes and releases its locks. Duplicate creation is a business conflict. Common waiting, deadlock, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
+
+The shared appointment lock was selected over an ordinary read to wait for an outcome update already in progress and retain protected appointment values through creation. It does not serialize competing note creators, whose uniqueness is enforced by the note's PK.
+
+The treating professional is derived from the appointment. Current service activation or an active professional-service association is not an additional condition for documenting a historical attended appointment. Stability of the authenticated identity, professional association, and permissions follows Clinic and User Management Consistency and Transactional Clinic and Permission Context.
+
+Separate note and audit transactions were considered but would lose their atomicity and require an additional recovery protocol. The selected transaction preserves both writes as one operation.
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
