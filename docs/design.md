@@ -623,6 +623,36 @@ Database per clinic requires coordinating separate database sources, and schema 
 
 # 5. Transactions and Concurrency
 
+## Overlapping Bookings
+
+### Concurrency Risk
+
+Concurrent bookings can both find an interval available and insert overlapping appointments. Different patients competing for the same professional can violate `I1`. The same patient booking different professionals within one clinic can violate `I2` (`RF9`).
+
+Ex: two receptionists check tomorrow's `[10:00, 10:30)` interval before either booking commits. Both checks return no conflicts, so an uncoordinated insertion could grant both requests.
+
+Locking matching appointments does not protect an empty interval because the query may return no rows. A transaction alone does not prevent this race under `READ COMMITTED`.
+
+### Transaction Design
+
+1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context. All database operations must use the same transaction connection. The context mechanism remains pending under Transactional Clinic and Permission Context
+
+2. Acquire `FOR NO KEY UPDATE` locks on the same-clinic professional and patient rows, professionals first and patients second. When multiple rows of one type are required, acquire them in ascending identifier order. Keep the locks until commit or rollback. If a required row is missing or inaccessible, reject the request and roll back
+
+3. Validate the service, its activation, and the professional's authorization, then calculate `end_at` from `start_at` and the service duration. Concurrent Service and Professional Authorization Changes must define how these facts remain valid through commit. This overlap protocol alone does not protect them
+
+4. After acquiring the locks, execute fresh PostgreSQL queries to validate the complete appointment interval against the professional's weekly schedule and blocks. Schedule changes and block creation must acquire the same professional lock before their definitive checks and writes. Their detailed protocols are covered in their respective topics
+
+5. Check same-clinic appointments in state `reserved` for either the professional or the patient. An existing interval conflicts when `existing.start_at < requested.end_at` and `requested.start_at < existing.end_at`. This preserves `[start, end)` semantics and permits adjacency. Reject any conflict and roll back. An empty result permits continuation because competing bookings must first acquire the already-held entity locks
+
+6. Validate whole-minute alignment and perform the final future-start check immediately before insertion, requiring `start_at > clock_timestamp()`. Reject an invalid start and roll back. This establishes that the start is future at validation time, without guaranteeing that commit finishes before that start
+
+7. Insert the appointment as `reserved` and commit. Report success only after commit succeeds. Any failure rolls back the operation. Common waiting, deadlock, and retry policies belong to Conflicts, Deadlocks, and Retries. Redis coordination belongs to Transaction and Cache Coordination
+
+The entity locks serialize competing operations even when no appointments exist. They also make operations on different dates wait when they share a professional or patient. Ordinary reads remain possible.
+
+`SERIALIZABLE` with complete transaction retries was considered but would add dependency monitoring and discarded work after serialization failures. Transaction-level advisory locks were also considered but would require application-defined keys and a separate locking convention. The selected row-lock protocol uses existing entities and requires every participating booking or rescheduling path to follow it.
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
