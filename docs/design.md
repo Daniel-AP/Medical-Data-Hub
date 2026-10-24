@@ -743,6 +743,36 @@ Appointment locks were considered but are unnecessary for this check. While the 
 
 Availability cache coordination remains dependent on Transaction and Cache Coordination.
 
+## Concurrent Schedule Block Creation
+
+### Concurrency Risk
+
+Schedule block creation can race with booking or rescheduling. Both operations could find an interval available before either commits, leaving a reserved appointment inside a block and violating `I3`.
+
+Ex: one request finds no appointments in `[10:00, 11:00)` while another finds no blocks and reserves `[10:15, 10:45)`. Independent checks do not prevent both writes from succeeding.
+
+The selected business rule rejects conflicting blocks, reports the appointments, and creates no block record. This preserves the documented deviation from `RF6`, which describes creating the block before resolving affected appointments. New bookings may enter before a later retry succeeds.
+
+### Transaction Design
+
+1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context. All queries must use the same transaction connection. Context handling remains dependent on Transactional Clinic and Permission Context
+
+2. Acquire `FOR NO KEY UPDATE` on the same-clinic professional and retain it until commit or rollback. Reject a missing or inaccessible professional and roll back. Validate the actor's permission to create a block for that professional. This lock remains the coordination resource even when no appointments or blocks exist
+
+3. Validate that the requested `start_at` and `end_at` are finite and that `start_at < end_at`, using the `[start, end)` semantics in the [data model](#3-data-model). The proposed `professional_blocks_interval_check` remains unimplemented
+
+4. After acquiring the professional lock, execute a fresh PostgreSQL query for same-clinic `reserved` appointments belonging to that professional. An appointment conflicts when `appointment.start_at < block.end_at` and `block.start_at < appointment.end_at`. Adjacent endpoints do not conflict. Do not acquire appointment or patient row locks
+
+5. If the query returns conflicts, report them and roll back without inserting the block or changing appointments. If it returns none, insert the block with the authenticated clinic, the locked professional, and the validated endpoints. The empty result permits insertion because competing bookings and rescheduling must acquire the same professional lock before their definitive checks and writes
+
+6. Commit the block and report success only after confirmation. A validation failure or database error rolls back the operation. Release the professional lock on completion. Common waiting, deadlock, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
+
+[Overlapping Bookings](#overlapping-bookings) and [Atomic Rescheduling](#atomic-rescheduling) must check blocks after acquiring the shared professional lock. This orders competing block creation and appointment creation without relying on cached availability.
+
+Additional appointment locks were considered but would increase contention without adding protection against new bookings. Concurrent cancellations and outcomes can only remove appointments from the reserved set. A conflict query may conservatively reject a block while a cancellation remains uncommitted. The actor may retry after resolving the conflict.
+
+The professional lock also serializes block creation with other participating operations for that professional, including operations on different dates. Availability cache coordination remains dependent on Transaction and Cache Coordination.
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
