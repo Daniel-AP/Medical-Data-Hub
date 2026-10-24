@@ -811,6 +811,40 @@ Logical deactivation preserves the FK from appointments to their professional-se
 
 Exact baseline comparisons avoid adding version counters, at the cost of rejecting some independent edits to different service fields. Changes affecting availability must follow Transaction and Cache Coordination. Concurrent user deactivation and role changes remain within Clinic and User Management Consistency.
 
+## Concurrent Patient Registration and Updates
+
+### Concurrency Risk
+
+Concurrent registrations can both find no patient with an identification and attempt to create duplicate records within one clinic (`RF14`). A preliminary lookup does not protect an absent row.
+
+Concurrent updates can overwrite values changed after an editor read the patient. Contact changes must also preserve at least one contact method and must not store empty strings as provided contact values.
+
+Ex: one receptionist corrects a patient's phone while another edits the name using an earlier copy of the record. Saving that copy could restore the old phone.
+
+Contact reads and writes also require audit coordination (`RF18`), including reads used to compare an update's starting state.
+
+### Transaction Design
+
+1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context. Validate the actor's permission and use the same transaction connection throughout. Updates must supply the original `identification`, `name`, `date_of_birth`, `email`, and `phone` received when the patient was read. Context handling belongs to Transactional Clinic and Permission Context
+
+2. For registration, validate the complete proposed record and execute a normal insert. Use `patients_identification_key` on `(clinic_id, identification)` as the definitive uniqueness guarantee. A preliminary lookup cannot replace it, and an empty lookup result does not provide a row lock. Reject a conflict on this constraint without modifying or automatically reusing the existing patient. Roll back the attempted registration before reporting the business conflict
+
+3. For an update that changes `identification` relative to its supplied baseline, acquire `FOR UPDATE` on the same-clinic patient from the start. Otherwise, acquire `FOR NO KEY UPDATE` and omit `identification` from the subsequent `UPDATE`. Retain the lock until commit or rollback. Reject a missing or inaccessible patient and roll back
+
+4. After acquiring the lock, compare all baseline fields with the protected current values, treating `NULL` as matching `NULL`. Reject a missing or mismatching baseline without updating the patient and require a fresh read before another edit. Do not use a reading made before the lock as the definitive comparison
+
+5. Construct and validate the complete resulting record before writing. Require nonempty identification and name, valid field types and lengths, and at least one of `email` or `phone`. Neither contact field may be an empty string when provided. Preserve phone values as strings, including country prefixes and leading zeros. Keep `clinic_id` and `patient_id` unchanged. Apply these rules to registration as well, following the [data model](#3-data-model)
+
+6. For an update, write the validated changes together while retaining the patient lock. If `identification` changes, the same uniqueness constraint must reject an identification already used within that clinic. Do not merge patients or overwrite the conflicting record. The database constraints remain an additional guard on the resulting row
+
+7. Coordinate contact access and audit persistence through Sensitive Data Access and Audit Consistency before reporting success, then commit. Failed validations or database errors roll back patient writes. Audit treatment for contact reads already performed, including reads during rejected edits, follows that shared protocol. Release patient locks on completion. Duplicate identifications and stale baselines are business conflicts. Common waiting, deadlock, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
+
+Patient-only updates do not acquire explicit service, professional, or appointment row locks. Operations requiring additional domain resources must preserve the order in [Concurrent Service and Professional Authorization Changes](#concurrent-service-and-professional-authorization-changes).
+
+Explicit locking permits complete validation before writing. Conditional updates using baseline values were considered, but the selected protocol keeps comparison and validation together under the patient lock.
+
+Exact baseline comparison avoids version counters but conservatively rejects some edits to different fields. Selecting the lock mode by the intended changes avoids using `FOR UPDATE` for every edit while acquiring the stronger mode before identification changes.
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
