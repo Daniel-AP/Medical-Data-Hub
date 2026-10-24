@@ -773,6 +773,44 @@ Additional appointment locks were considered but would increase contention witho
 
 The professional lock also serializes block creation with other participating operations for that professional, including operations on different dates. Availability cache coordination remains dependent on Transaction and Cache Coordination.
 
+## Concurrent Service and Professional Authorization Changes
+
+### Concurrency Risk
+
+Bookings and rescheduling can use service data while another operation changes its duration, required specialty, or activation. A duration change racing with the first booking could leave the stored appointment interval inconsistent with its service (`RF3`, `I4`).
+
+Ex: a booking reads a duration of 30 minutes. Another transaction finds no associated appointments and changes the duration to 45 minutes. Without coordination, the booking could then insert the earlier duration.
+
+Authorization changes also compete with appointment creation and specialty changes (`RF4`). A booking must not use an association that becomes inactive before its transaction completes. An active association must connect a professional and service with matching specialties within the same clinic.
+
+Administrative edits prepared from outdated values can overwrite newer changes, including unintentionally reactivating a service or association.
+
+### Transaction Design
+
+1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context. Validate the actor's permission for the operation and use the same connection throughout. Context handling belongs to Transactional Clinic and Permission Context
+
+2. Acquire the required locks in the order services, professionals, patients, then appointments, sorting multiple rows of each type by identifier. Bookings and rescheduling acquire `FOR SHARE` on their service before the locks in [Overlapping Bookings](#overlapping-bookings) and [Atomic Rescheduling](#atomic-rescheduling). Service catalog edits acquire `FOR NO KEY UPDATE` on the service. Association creation, reactivation, and deactivation acquire `FOR SHARE` on the service followed by `FOR NO KEY UPDATE` on the professional. Professional specialty edits acquire `FOR NO KEY UPDATE` on the professional. Retain every lock until commit or rollback. Reject missing or inaccessible required entities and roll back
+
+3. For administrative edits, compare the locked current state with the original values supplied by the request. Service edits compare `name`, `duration_minutes`, `specialty_id`, and `is_active`. Professional specialty edits compare the original `specialty_id`. Association reactivation or deactivation compares the original `is_active`. Association creation requires the pair to remain absent. Reject missing or mismatching baselines without writing and require a fresh read before another edit
+
+4. For booking or rescheduling, read and validate the service and association after acquiring their required locks. Require `professional_services.is_active` and matching professional and service specialties. New bookings additionally require `services.is_active`. Rescheduling may retain an inactive service to honor an existing commitment, but its destination association must remain active. Calculate `end_at` from the protected service duration and reuse the remaining appointment protocol
+
+5. For service catalog edits, validate the requested values. Before changing duration or specialty, execute a fresh query for any appointment referencing the service, regardless of state. Reject either change if any appointment exists, requiring a new service instead. An actual specialty change additionally requires no active professional-service associations, which must first be disabled explicitly. The service lock coordinates these checks with first bookings and association writers even when the queries return no rows. Name corrections remain permitted under [Service Catalog Updates](#service-catalog-updates). Service deactivation prevents subsequent new bookings without changing existing appointments or disabling their associations
+
+6. For an actual professional specialty change, require no active service associations before updating the specialty. Every active association must match the current specialty and would become incompatible with a different one. The professional lock prevents association creation or reactivation during this check. Preserve inactive associations and historical appointments
+
+7. For association creation or reactivation, require `professionals.specialty_id = services.specialty_id` within the same clinic. Insert the association or set `professional_services.is_active` to `TRUE` as applicable. Before deactivation, execute a fresh query for `reserved` appointments referencing that professional and service. Reject deactivation while any remain, requiring their cancellation or rescheduling to another authorized professional first. Otherwise, set `is_active` to `FALSE`, retaining the association and its appointment references. Appointment row locks are unnecessary because concurrent cancellations and outcomes can only remove reserved appointments, while new bookings and rescheduling require the held professional lock
+
+8. Apply only the validated operation's writes and commit. Report success only after confirmation. A failed validation or database error rolls back the entire operation and releases its locks. Stale baselines, incompatible specialties, and prohibited changes are business rejections. Common waiting, deadlock, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
+
+Shared service locks allow independent bookings to use stable catalog data concurrently. Using `FOR NO KEY UPDATE` for every service reader was considered but would unnecessarily serialize those operations.
+
+The common professional lock also protects association creation when no association row exists. More specific association locking was considered but would require additional handling for creation and coordination with specialty changes.
+
+Logical deactivation preserves the FK from appointments to their professional-service association. Removing that FK to permit physical deletion was considered but would weaken that relationship. The FK preserves existence, while the transaction protocol checks current activation and specialty compatibility.
+
+Exact baseline comparisons avoid adding version counters, at the cost of rejecting some independent edits to different service fields. Changes affecting availability must follow Transaction and Cache Coordination. Concurrent user deactivation and role changes remain within Clinic and User Management Consistency.
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
