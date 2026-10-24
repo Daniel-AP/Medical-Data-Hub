@@ -653,6 +653,36 @@ The entity locks serialize competing operations even when no appointments exist.
 
 `SERIALIZABLE` with complete transaction retries was considered but would add dependency monitoring and discarded work after serialization failures. Transaction-level advisory locks were also considered but would require application-defined keys and a separate locking convention. The selected row-lock protocol uses existing entities and requires every participating booking or rescheduling path to follow it.
 
+## Atomic Rescheduling
+
+### Concurrency Risk
+
+Rescheduling must change the original appointment to `rescheduled` and create its `reserved` replacement within one transaction (`RF10`). Committing these writes separately could leave the original without a replacement or leave both appointments active.
+
+Concurrent requests can compete for the destination or attempt to replace the same original. Cancellation and outcome registration can also change the original's state while rescheduling is being validated. Acting on an earlier `reserved` reading could permit a transition from a final state (`RF13`).
+
+Ex: one receptionist moves an appointment to 11:00 while another moves the same original to 14:00. Different destinations do not justify creating two replacements.
+
+### Transaction Design
+
+1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation and the clinic and permission context required by [Overlapping Bookings](#overlapping-bookings). Read the same-clinic original to identify its professional, patient, and service. Reject a missing or inaccessible original and roll back. This preliminary reading does not establish that rescheduling is still permitted
+
+2. Acquire `FOR NO KEY UPDATE` locks on the source and destination professionals in ascending identifier order, locking a shared professional only once. Then acquire the same lock on the patient. Keep these locks until commit or rollback. Reject any missing or inaccessible required entity and roll back
+
+3. Acquire `FOR NO KEY UPDATE` on the original appointment. Confirm that it remains `reserved` and that its clinic, professional, patient, and service match the preliminary reading. Otherwise, reject the operation and roll back. Concurrent Appointment State Transitions must use compatible state protection and preserve this acquisition order whenever both agenda resources and appointment rows are needed
+
+4. Derive the replacement's clinic, patient, and service from the locked original. Validate the destination using [Overlapping Bookings](#overlapping-bookings), excluding only the original's `appointment_id` from both professional and patient overlap checks. All other reserved appointments remain conflicts. Preserve the existing rule allowing rescheduling with an inactive service, while requiring destination professional authorization and calculating the end from the service duration. Protection of service and authorization data remains dependent on Concurrent Service and Professional Authorization Changes
+
+5. After the destination validations succeed, change the original's state to `rescheduled`. Preserve its identifiers, timing, and existing predecessor link
+
+6. Immediately before inserting the replacement, require its whole-minute-aligned `start_at` to remain greater than `clock_timestamp()`. Insert it with a new `appointment_id`, state `reserved`, and `previous_appointment_id` referencing the original. The proposed `appointments_previous_key` provides an additional database constraint against multiple direct replacements. These schema constraints remain unimplemented
+
+7. Commit both writes together and report success only after confirmation. A destination conflict, failed validation, or database error rolls back the entire operation, including any change to the original. Release all transaction locks on completion. A later attempt against an original that is no longer `reserved` must not create another replacement. Recovery when a previous commit's outcome is unknown belongs to Conflicts, Deadlocks, and Retries
+
+The explicit original-row lock permits state validation before either write, at the cost of another locking read and possible waits. A conditional state update was considered as an alternative, but the selected protocol protects the original throughout destination validation.
+
+The original transition and replacement become visible together at commit. Coordinating availability cache entries for both source and destination, including immediate visibility required by `I7`, remains dependent on Transaction and Cache Coordination.
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
