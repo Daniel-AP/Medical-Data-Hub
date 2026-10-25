@@ -913,6 +913,60 @@ The selected read protocol adds a transaction and may retain events for authoriz
 
 Application-generated write events keep the transaction flow and its authenticated metadata explicit. Database triggers were considered as an alternative for write generation, but would require supplying that actor context inside their execution. Every sensitive write path must use the common application protocol. PostgreSQL remains responsible for protecting committed audit records from modification.
 
+## Clinic and User Management Consistency
+
+### Concurrency Risk
+
+Creating a clinic separately from its first administrator can leave an incomplete registration (`RF1`). Concurrent registrations can also attempt to associate the same Keycloak identity with different local users or clinics (`RF2`, `I5`). A preliminary lookup does not protect an identity that has no local row.
+
+Deactivation and role changes can race with operations that already checked permissions. Booking can also use a professional whose associated user becomes inactive or loses the professional role before the operation completes. Administrative edits based on earlier values can unintentionally overwrite a newer role or reactivate a user.
+
+Changing identity, clinic, or professional-user associations could alter the ownership used to authorize operations on historical appointments and clinical notes (`RF15`, `RF17`). User and professional registration can also occur separately, so a professional role alone does not establish that its required profile exists.
+
+PostgreSQL and Keycloak changes do not share one transaction. A process can stop after the local commit but before synchronizing the role. Workers and delayed external requests can apply changes out of order.
+
+Ex: an earlier synchronization request completes after a later role change and leaves Keycloak with an outdated assignment. A session lock cannot cancel a request already sent to the external service.
+
+### Transaction Design
+
+1. Authenticate the caller and perform preliminary permission checks. For user creation, verify the supplied `identity_id` against an existing identity in the configured Keycloak realm before opening the management transaction. This workflow does not create provider identities or store credentials. Identity verification is a point-in-time check and does not lock the external account
+
+2. Use explicit `READ COMMITTED` isolation for management transactions and the worker's short SQL phases. Establish the applicable clinic and permission context and use the same transaction connection throughout each phase. Other domain operations retain their documented isolation. Query isolation remains a separate decision under Consistent Concurrent Queries
+
+3. Identify the required users through metadata, then acquire their row locks before domain locks. Preserve the order `users -> services -> professionals -> patients -> appointments`, sorting multiple rows of each type by identifier and avoiding duplicates. Include the actor, an administrative target, and a destination professional's user when applicable. Use `FOR SHARE` for permission and eligibility checks and `FOR NO KEY UPDATE` for a user whose role or activity will change. Acquire the stronger mode initially when one row serves both purposes. Select by identity or identifier without filtering out inactive users before locking. Retain row locks until commit or rollback and reject missing or inaccessible required users
+
+4. After locking, require the actor to be active, require their current `users.role` to be included in the validated token's mapped domain roles, and require that role to permit the operation (`RF17`). Derive clinic access from the protected local association. An older token role cannot restore permissions withdrawn locally. Apply this protection independently to the audit and data phases in [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency), checking current permissions again in each phase
+
+5. For clinic registration, insert the clinic and its first active `clinic_administrator` in the same PostgreSQL transaction (`RF1`). For ordinary user registration, insert the user within the authorized clinic (`RF2`). Record durable work for the initial role synchronization in that transaction. Use normal inserts and the PKs and `users_identity_id_key` as definitive uniqueness guards. An empty preliminary lookup provides no row lock. A uniqueness conflict rolls back the complete registration, including any new clinic and synchronization work, without reassigning or automatically returning an existing user. Recognizing a repetition of an earlier request belongs to Conflicts, Deadlocks, and Retries
+
+6. For a role or activity edit, require the original `role` and `is_active` values read when editing began, separately from the requested changes. Compare both with the locked current values, even when editing only one field. Reject a missing or mismatching baseline without writing and require a fresh read. Validate the resulting role and clinic relationship before updating. Every actual role change records durable synchronization work in the same transaction. An activity-only change updates `users.is_active` without changing Keycloak `enabled` or creating role synchronization work
+
+7. Keep `users.identity_id`, `users.clinic_id`, `professionals.user_id`, and `professionals.clinic_id` unchanged. Preserve logically inactive users and historical professional profiles. A different identity or clinic requires another local account and, when needed, another professional profile. Because the previous user retains its unique identity association, the same Keycloak identity cannot be reused for that new account
+
+8. Permit user and professional profile registration as separate operations (`RF2`, `RF4`). Profile registration protects the target user's clinic and role through the common user-lock protocol, requires `healthcare_professional`, and performs a normal profile insertion. Use `professionals_user_key` to reject duplicate profiles without overwriting an existing association. Operations requiring the authenticated user's professional profile must resolve that stable association and reject the operation while the profile is absent
+
+9. New bookings and rescheduling destinations require the professional's protected user to be active with role `healthcare_professional`, in addition to the service and association conditions in [Concurrent Service and Professional Authorization Changes](#concurrent-service-and-professional-authorization-changes). Deactivation or removal of that role waits for transactions holding conflicting user locks but does not require resolving all reserved appointments first. Preserve those appointments. Reception or the clinic administrator can explicitly move them to another eligible professional through [Atomic Rescheduling](#atomic-rescheduling). An inactive source user does not prevent that move, and existing cancellation and outcome operations retain their applicable permissions
+
+10. Commit each management operation's validated local writes and durable synchronization work together. A validation or SQL failure rolls back the complete transaction. Begin external synchronization only after the local commit is confirmed. A later Keycloak failure preserves the committed local change and its recoverable work. Distinguish confirmed local completion from pending or failed external synchronization rather than reporting complete cross-service success. Local reactivation does not enable a provider account that was disabled independently
+
+11. Process synchronization sequentially per user, allowing different users to proceed concurrently. Every worker acquires the same exclusive session-level advisory lock for that user through a dedicated PostgreSQL connection. Retain it across the synchronization run, without holding a SQL transaction open during Keycloak calls. Management transactions do not wait for this worker lock while holding their row locks. Release it before returning a connection for reuse, or close the connection if cleanup cannot be confirmed. Loss of the session releases its lock but does not establish that an external request was cancelled
+
+12. Under the advisory lock, open a short `READ COMMITTED` transaction, acquire `FOR SHARE` on the user, read the stable identity and current role, and capture the identifiers of the pending tasks included in this attempt. Commit that phase before contacting Keycloak. Tasks signal a need to reconcile the current local role rather than requiring replay of each historical role. Administrative changes may continue after the short transaction releases its user lock
+
+13. Synchronize the application's domain-role assignment in Keycloak outside SQL transactions, preserving credentials, unrelated roles, and the provider account's `enabled` state. Require confirmation of the external synchronization before completing work. Failed or uncertain external results leave the attempt unresolved. A missing provider identity requires recovery rather than automatic creation of another identity
+
+14. After confirmed synchronization, begin another short `READ COMMITTED` transaction and acquire `FOR SHARE` on the user. Require its current role to match the role applied by the attempt before completing only the captured task identifiers. Keep the user lock until that acknowledgement commits. Tasks created during the external call remain pending. If the role changed, preserve the work and reconcile the current state in another attempt. Do not complete every task for the user merely because one external call succeeded
+
+15. Recover pending work after interruption and periodically compare local role assignments with Keycloak, including users without pending tasks. Persist new reconciliation work for observed differences and process it through the same per-user protocol. This detects drift caused by delayed external requests that finish after a worker loses its session. Convergence depends on changes ceasing, earlier requests finishing, and the services allowing reconciliation to complete. The protocol does not promise permanent cross-service equality or a maximum recovery time
+
+16. Preserve current local authorization checks throughout temporary discordance. Deactivation and role changes wait for already protected transactions, allowing those transactions to finish before the administrative change commits. This does not undo content already retrieved or guarantee when a response reaches its client. Connection and permission context handling belongs to Transactional Clinic and Permission Context. Waiting, deadlocks, retries, and unknown commit outcomes belong to Conflicts, Deadlocks, and Retries
+
+Existing identities were selected over identity creation within the registration workflow. Shared user locks permit concurrent operations by the same user while stabilizing their local permissions. Checking permissions without retaining a lock would allow an administrative change to commit while an operation continued under its earlier authorization.
+
+Exact baseline comparisons were selected over version counters, accepting conservative rejection of independent edits. Separate profile registration avoids requiring specialty data during every professional-role assignment, at the cost of temporarily rejecting operations that need a missing profile.
+
+Durable work and periodic reconciliation were selected over manual recovery. Reconciling the current role avoids applying unnecessary historical states. Per-user processing permits unrelated users to progress independently. Session advisory locks avoid lease renewal and expiry coordination, at the cost of a dedicated connection per active synchronization and additional provider queries for reconciliation.
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
