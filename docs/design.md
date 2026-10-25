@@ -967,6 +967,44 @@ Exact baseline comparisons were selected over version counters, accepting conser
 
 Durable work and periodic reconciliation were selected over manual recovery. Reconciling the current role avoids applying unnecessary historical states. Per-user processing permits unrelated users to progress independently. Session advisory locks avoid lease renewal and expiry coordination, at the cost of a dedicated connection per active synchronization and additional provider queries for reconciliation.
 
+## Consistent Concurrent Queries
+
+### Concurrency Risk
+
+Availability, agendas, patient history, and appointment counts can combine data from different committed states when a response uses several queries under `READ COMMITTED` (`RF7`, `RF8`, `RF16`, `RF20`, `RF21`). Each query has its own snapshot, so a transaction alone does not make their combined results consistent.
+
+Ex: an agenda query returns a reserved appointment. A concurrent cancellation commits before a second query counts reserved appointments. The response can contain that appointment alongside a total of zero without either query reading uncommitted data.
+
+A database snapshot does not fix a changing wall-clock reference or preserve values across the independent audit and data phases. Sending results before all queries finish can also expose an incomplete response that cannot be withdrawn after a later failure.
+
+### Transaction Design
+
+1. Validate the request parameters and retain the same scope throughout response construction. Components describing the same population must use matching clinic, date bounds, filters, and applicable resource restrictions. Do not independently recalculate their scope between queries
+
+2. Before retrieving patient contact or clinical note content, complete the independently committed audit preparation in [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency) (`RF18`). Begin the subsequent data phase only after that confirmation. Restrict sensitive retrievals to the previously audited resource set. The audit phase does not freeze resource values or supply the data phase's snapshot. Additional resources require another authorized attempt after ending the current phase
+
+3. Begin a short PostgreSQL transaction with explicit isolation selected before its first query. Use `READ COMMITTED` when one SQL statement retrieves all related domain facts needed for the response. Use `REPEATABLE READ` when several statements must share a snapshot. Base this choice on actual SQL statement boundaries rather than the number of application or ORM calls. Establish the clinic and permission context and use the same transaction connection throughout. Connection context handling belongs to Transactional Clinic and Permission Context
+
+4. Acquire and retain the actor's `FOR SHARE` user lock and validate current authorization through [Clinic and User Management Consistency](#clinic-and-user-management-consistency). Reject a missing, inaccessible, inactive, or unauthorized actor and roll back. The phase must permit that row lock rather than declaring PostgreSQL `READ ONLY`. Database privilege handling belongs to Transactional Clinic and Permission Context. Read domain resources through ordinary snapshot queries without adding professional, patient, or appointment row locks solely for consultation
+
+5. Under `READ COMMITTED`, the domain statement supplies the common snapshot for its related results. Under `REPEATABLE READ`, the snapshot is established by the transaction's first non-transaction-control statement and retained across its queries, which can include authorization preparation. A locking read can fail if the user changed after that snapshot was established. Abort and discard that attempt rather than continuing with stale authorization. Common retry handling belongs to Conflicts, Deadlocks, and Retries
+
+6. After obtaining authorization locks and before time-dependent calculations, capture `clock_timestamp()` once when the response needs a current-time reference. Reuse the captured value across all related SQL queries and application calculations. Do not invoke a changing clock independently for each professional, date, or result fragment. Interpret clinic-local dates and weekly schedules using `clinics.time_zone` from the applicable data snapshot
+
+7. Retrieve the complete related dataset through the selected snapshot strategy. Availability calculations must combine schedules, blocks, appointments, service data, and professional eligibility under their existing rules. Agenda and history components must use consistent appointment states and related values. Counts describing the same population must apply the corresponding scope, using one aggregate statement when sufficient. Apply audited-resource restrictions consistently to components describing that restricted population. An empty result remains a snapshot result and does not lock an interval or authorize a booking
+
+8. Materialize all database results required for the response before committing. Keep the phase short and perform no client transmission while its transaction remains open. After commit is confirmed, release the connection and transaction locks, then construct and send the complete response from those materialized values. Do not issue later queries to fill missing response components from another snapshot
+
+9. If a query or validation fails, roll back the phase and discard its accumulated results. If commit is not confirmed, do not report a successful complete response. Do not combine fragments from failed and subsequent attempts. Previously confirmed read audit events remain intact. A further sensitive retrieval follows a new authorized and audited attempt. Error, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
+
+10. Limit snapshot consistency to the response being constructed. Later requests may observe newer committed states, and concurrent changes may commit while the materialized response is being sent. Availability consultation does not reserve a slot. Booking and rescheduling retain their protected PostgreSQL checks and final future-start validation. Coordinating cached availability with PostgreSQL and meeting `I7` and `I8` belong to Transaction and Cache Coordination
+
+The mixed isolation strategy uses a single statement when it expresses the response clearly and retains a shared snapshot when multiple statements are necessary. It avoids forcing every response into one complex statement or using `REPEATABLE READ` for every query. Multi-statement phases retain their snapshot and connection until their reads finish.
+
+Additional agenda locks were considered but would make participating writers wait without being necessary for snapshot consistency. The actor lock remains necessary to stabilize authorization. Capturing the clock after authorization waits provides a common calculation reference without using the earlier transaction start time.
+
+Materializing results was selected over streaming while the transaction remains open. It requires memory for the response dataset but releases database resources before transmission and prevents a later query failure from producing a partially delivered result.
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
