@@ -875,6 +875,44 @@ The treating professional is derived from the appointment. Current service activ
 
 Separate note and audit transactions were considered but would lose their atomicity and require an additional recovery protocol. The selected transaction preserves both writes as one operation.
 
+## Sensitive Data Access and Audit Consistency
+
+### Concurrency Risk
+
+Returning sensitive content before confirming its audit event can expose clinical notes or patient contact data without a persistent access record (`RF18`). Recording a write separately from its audit event can also leave either an unaudited modification or an event describing a modification that never committed.
+
+Internal reads require the same consideration. Rolling back an unsuccessful patient update cannot undo contact values already read by the backend, but it removes audit events inserted within that transaction.
+
+Ex: an update reads the current contact, detects an outdated baseline, and rolls back. If the read event shares that transaction, the access disappears from the audit trail.
+
+This design records reads conservatively as authorized access attempts. Such an event does not establish that content was retrieved successfully or delivered to the client.
+
+### Transaction Design
+
+1. Prepare each sensitive retrieval by identifying and authorizing its target resources using metadata only. Establish the authenticated clinic and permission context and use `READ COMMITTED` for this preparation and audit phase. Do not retrieve `email`, `phone`, or clinical note `content` during target discovery
+
+2. Insert one `read` event per distinct target resource in the authorized attempt, grouping all events into one audit transaction. For `patient_contact`, identify the clinic and patient and leave `appointment_id` as `NULL`. For `clinical_note`, identify the note by its appointment and derive the matching patient from that appointment. Derive the actor from authenticated context. An empty authorized target set requires no resource events and permits no sensitive content retrieval. Do not invent identifiers for missing resources or copy sensitive values into events
+
+3. Commit the complete event batch before acquiring the subsequent operation's domain locks or querying its sensitive content. The audit transaction must permit inserts, even when the domain request only reads data. If the batch fails or its commit is not confirmed, do not proceed with sensitive access. Already confirmed events remain valid authorized attempts if the later operation fails or never executes
+
+4. Start the subsequent read or domain transaction with its clinic and permission context established again. Apply current permissions rather than treating the earlier event as an authorization token. Use the isolation and locking protocol of the applicable operation. Each phase must use its own transaction client consistently. Identity and permission stability follow Clinic and User Management Consistency, and connection context handling follows Transactional Clinic and Permission Context
+
+5. Retrieve content only for the previously audited resource set and only while currently authorized. Do not add resources discovered after the audit commit without another confirmed audit batch. A further sensitive retrieval requires another authorized attempt. If additional preparation is required after acquiring domain locks, end that operation before starting an independent audit transaction. The audited target set does not freeze resource values. Snapshot consistency across multiple queries belongs to Consistent Concurrent Queries
+
+6. Apply this preparation to internal contact reads used by [Concurrent Patient Registration and Updates](#concurrent-patient-registration-and-updates), including baseline comparisons. Rejecting a stale or invalid update must leave the prior read events intact. A registration or note creation that does not retrieve stored sensitive content needs no read event merely for receiving its input or obtaining identifiers
+
+7. Generate write events explicitly through the application's common transactional protocol. Patient registration records a `patient_contact` write. An update writing `email` or `phone` records a contact write for each affected patient, including assignments that retain the same value. Changes confined to other patient fields do not require a contact write event, though their contact reads still require prior read events. Clinical note creation records its write as specified in [Concurrent Clinical Note Creation](#concurrent-clinical-note-creation). Derive event targets from validated or protected records and insert events using the same transaction client as the domain writes
+
+8. Commit all of the operation's domain writes and their write events together. A failed validation or SQL operation rolls back the complete domain transaction, while confirmed read attempts from the earlier phase remain. Do not report success unless commit is confirmed. Return only identifiers and the operation result from sensitive writes. SQL and ORM result projections must not automatically retrieve contact or clinical content. Any subsequent content retrieval uses the separate audited read protocol. Unknown commit outcomes and retries belong to Conflicts, Deadlocks, and Retries
+
+9. Preserve committed events through PostgreSQL append-only protection against application `UPDATE`, `DELETE`, and `TRUNCATE` (`I6`). This protection does not make an uncommitted insert survive rollback. Concurrent event creation uses ordinary inserts without an application-wide audit lock. `occurred_at` identifies event generation time, including the prior authorization attempt for reads, rather than client receipt or a strict global commit order
+
+The earlier proposal to keep read events inside the domain transaction and preserve them with a savepoint is replaced by independently committed read attempts. Full rollback of a later domain operation therefore preserves those attempts without requiring local recovery through a savepoint.
+
+The selected read protocol adds a transaction and may retain events for authorized attempts that never retrieve content. Returning content before audit confirmation or recording audit afterward would introduce a gap when later recording fails. Batch confirmation avoids partial authorization caused by an audit insertion failure, while requiring the entire batch to succeed.
+
+Application-generated write events keep the transaction flow and its authenticated metadata explicit. Database triggers were considered as an alternative for write generation, but would require supplying that actor context inside their execution. Every sensitive write path must use the common application protocol. PostgreSQL remains responsible for protecting committed audit records from modification.
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
