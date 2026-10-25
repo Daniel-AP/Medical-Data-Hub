@@ -1005,6 +1005,54 @@ Additional agenda locks were considered but would make participating writers wai
 
 Materializing results was selected over streaming while the transaction remains open. It requires memory for the response dataset but releases database resources before transmission and prevents a later query failure from producing a partially delivered result.
 
+## Transactional Clinic and Permission Context
+
+### Concurrency Risk
+
+A pooled connection can serve different users and clinics in succession. Session-level clinic settings or operating roles can survive a successful transaction and affect a later request, compromising tenant isolation (`I5`). Establishing context on one connection and executing queries on another also separates the operation from its intended permissions and transaction.
+
+Resolving the actor's clinic requires access to local user metadata before the ordinary clinic context is available. Operations can additionally require preliminary resource relationships before acquiring their ordered locks. Granting broad access for this preparation would weaken the intended permission boundary.
+
+Ex: booking receives a `professional_id` and must resolve its associated user before acquiring user locks. Trusting a client-supplied association could protect the wrong user, while locking the professional first would violate the accepted acquisition order.
+
+Incomplete preparation can also appear as an ordinary empty result when policies filter inaccessible rows. Platform registration and synchronization workers require explicit execution paths because neither represents an ordinary authenticated clinic operation (`RF1`, `RF17`).
+
+### Transaction Design
+
+1. Authenticate the request and identify its requested operation before opening the database phase. Obtain the provider identity from the validated token, rather than accepting an independent actor identifier from request data. Complete external identity verification required for registration before entering its PostgreSQL transaction. Preliminary checks do not replace the protected local authorization below
+
+2. Enter a common transaction wrapper using the shared application pool and its restricted base login role. Select the operation's explicit isolation before its first query, following the applicable protocol and [Consistent Concurrent Queries](#consistent-concurrent-queries). Use a transaction access mode that permits the required row locks. Initialize transaction-local context in a state that denies ordinary domain access. Do not retain clinic context or operating-role selections through session-level assignments
+
+3. Call a limited `SECURITY DEFINER` bootstrap function through the transaction client. Resolve only `user_id` and `clinic_id` for the authenticated provider identity. Reject a missing local association. This preliminary lookup does not authorize the operation or acquire the actor's row lock. A platform administrator's `clinic_id = NULL` does not grant access to every clinic
+
+4. Use limited metadata-resolution functions when the operation needs additional resource relationships before locking. Scope those lookups through the actor's stable local clinic association. Return only the identifiers needed for the requested operation, such as a professional's associated user or the original appointment's references. Do not retrieve `email`, `phone`, or clinical note `content`, and do not acquire agenda locks during this preparation
+
+5. Gather the required users and acquire their locks through the limited locking functions, preserving the order and modes in [Clinic and User Management Consistency](#clinic-and-user-management-consistency). Acquire multiple user rows sequentially in ascending identifier order, without duplicates or later lock upgrades. The actor, administrative targets, and destination professional users participate when required. Retain the locks until the current SQL transaction ends
+
+6. Validate the protected actor's activity, current role, token-role correspondence, and permission for the requested operation. Require its identifiers and clinic association to agree with the preliminary resolution. Resolve the stable professional association when ownership checks require it. Derive the final actor, clinic, role, and operation scope from these checks rather than from client-supplied clinic or role values. Reject failed authorization and roll back
+
+7. Establish the validated context using fixed setting names and bound values with transaction-local `set_config(..., true)`. Select the PostgreSQL operating profile through a fixed application-controlled mapping and predefined `SET LOCAL ROLE` statements. Do not construct SQL role names from request values. Execute role selection outside `SECURITY DEFINER` functions. Complete and validate the applicable preparation before making the transaction client available to the operation
+
+8. Pass that scoped client explicitly to every repository and helper used by the phase. Execute all ORM and SQL queries through it. Do not use the global client, open another transaction inside a helper, or retain the scoped client for use after its phase ends. Await every query before completing the callback. Acquire subsequent domain locks in the accepted order. Where a lock requires modification privileges that the operating profile should not possess, use a limited locking function instead of granting those privileges to the caller
+
+9. Run audit preparation and the subsequent data operation as separate wrapper invocations under [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency). Each invocation establishes its own context and checks current authorization. Pass the confirmed audited resource identifiers between phases, not a reusable authorization grant or connection context. End the data phase before starting another independent audit attempt if additional preparation becomes necessary
+
+10. For platform clinic registration, validate and protect the platform administrator, select its restricted operating profile, and invoke a specific creation function (`RF1`). Within the caller's transaction, that function creates the new clinic, its first active administrator, and the initial role synchronization work. Its inputs contain the validated registration data and existing provider identity. It does not grant general insertion rights over users in existing clinics or access to patients, appointments, or clinical notes. The platform actor retains `clinic_id = NULL`
+
+11. Run role synchronization through a distinct restricted technical login and dedicated connection, following [Clinic and User Management Consistency](#clinic-and-user-management-consistency). Permit only the required metadata access, locking helpers, and task management. Do not allow that login to assume clinical operating profiles or modify local user roles or activity. Establish a technical context and verified target in each short SQL phase without impersonating the target user or requiring that user to be active. Retain the session advisory lock between those phases on the same physical connection, without holding a SQL transaction open during Keycloak calls
+
+12. Restrict each auxiliary function to its defined operation, resource scope, and necessary result projection. Use owners with only the required privileges, fixed qualified object references, a trusted `search_path`, and explicitly restricted execution privileges rather than default `PUBLIC` execution. Do not expose arbitrary SQL through function parameters. Bootstrap, metadata resolution, locking, and clinic creation remain distinct responsibilities. Functions participate in the caller's transaction and do not independently commit their work or release its row locks
+
+13. Abort a phase whose preparation is missing, incomplete, inconsistent, or unsuccessful before executing its ordinary operation. Do not interpret such a failure as a valid empty business result. Independently require ordinary RLS-protected access to have a complete valid clinic context, without treating missing, empty, malformed, or `NULL` clinic values as unrestricted scope. Preparatory functions, platform creation, and technical synchronization retain only their explicitly bounded access paths. Detailed grants and policy expressions belong to [Identity, Security, and Auditing](#6-identity-security-and-auditing)
+
+14. Commit or roll back the complete phase through its transaction boundary. Transaction-local settings and role selections end with that boundary, while the worker's session advisory lock follows its separate lifecycle. Do not reuse a connection whose baseline or transaction state cannot be established safely. Report success only after the required commit confirmation and preserve the response rules in [Consistent Concurrent Queries](#consistent-concurrent-queries). Waiting, recovery, retries, and unknown commit outcomes belong to Conflicts, Deadlocks, and Retries
+
+Transaction-local context was selected over session context with manual cleanup. The common wrapper and explicit client propagation centralize preparation instead of repeating it in each operation. The shared pool selects its operating profile after protected authorization, avoiding provisional routing to separate request pools. Operating privileges must not be inherited automatically by the base login, and ordinary runtime profiles remain subject to RLS without ownership or `BYPASSRLS` exemptions.
+
+Limited bootstrap and metadata functions were selected over broader preparatory table access. Locking functions avoid granting unnecessary modification privileges to callers. The specific clinic creation function confines the platform exception, while the separate technical login limits the worker to its metadata and task responsibilities. These choices add functions and privilege configuration that must remain consistent with their bounded purpose.
+
+The backend remains trusted to validate the token, supply the authenticated identity, and select the permitted operation and SQL profile. Transaction settings are not independent proof of token authenticity. SQL `current_user` identifies an operating profile or function owner rather than the human actor, so application authorization and audit attribution use the protected local user identity.
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
