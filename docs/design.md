@@ -1053,6 +1053,56 @@ Limited bootstrap and metadata functions were selected over broader preparatory 
 
 The backend remains trusted to validate the token, supply the authenticated identity, and select the permitted operation and SQL profile. Transaction settings are not independent proof of token authenticity. SQL `current_user` identifies an operating profile or function owner rather than the human actor, so application authorization and audit attribution use the protected local user identity.
 
+## Transaction and Cache Coordination
+
+### Concurrency Risk
+
+Invalidating Redis only after a PostgreSQL commit leaves a failure gap. A confirmed booking can remain available in an older cache entry if the process stops before deletion (`I8`). Cancellation or rescheduling can similarly leave the released occupation visible in cached data, preventing the next consultation from observing the committed change (`I7`).
+
+Concurrent cache producers can finish out of order. A calculation started before a booking can be published after that booking commits. Reading a newer revision afterward and attaching it to the earlier calculation would incorrectly label stale data as current.
+
+The passage of time can make a returned start no longer future without any database write. Cached professional lists can also omit newly eligible professionals. Cache entries therefore require both transactional validation and response-specific processing (`RF7`, `RF8`).
+
+Redis and PostgreSQL do not share one transaction. Redis failures must not turn an unvalidated entry into an authoritative result, while waiting for Redis inside SQL transactions would retain connections and actor locks during that wait.
+
+### Transaction Design
+
+1. Maintain one transactional availability revision per clinic in PostgreSQL. Initialize it within the clinic registration transaction. Treat it as technical metadata for cache validation. A missing revision is a failed prerequisite, not an implicit initial value or permission to accept Redis data
+
+2. Require revision updates for bookings, rescheduling, and every transition out of `reserved`, including cancellation, attendance, and absence. Also cover weekly schedule edits, block creation, service catalog edits, professional specialty changes, professional-service association creation or activation changes, professional registration, and role or activity changes of users associated with professional profiles. Apply the same obligation to any other write affecting an availability input. Contact, clinical note, audit-event, and synchronization-task writes do not change the revision by themselves
+
+3. Increment the clinic revision atomically once per relevant transaction, after its validated domain writes and transactional audit events or work records, immediately before commit. Acquire this technical resource after the existing domain resources and do not acquire earlier domain locks afterward. Preserve the operation's existing isolation and locking protocol. A failed increment rolls back the complete domain transaction. Domain changes and their new revision become visible together at commit. Rescheduling covers source release and destination occupation with the same increment
+
+4. Use one cache unit per clinic, professional, service, and requested clinic-local date, with the exact revision included in its key. Store the complete calculated spaces for that date before filtering by the current time. Preserve complete interval coverage and conflict checks even when an interval reaches another date. Entries contain availability and the metadata needed to identify their scope, without patient contact or clinical note content. Cached professional availability does not establish that a particular patient can be booked
+
+5. Start an initial authorized SQL phase through [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context). Resolve the clinic, candidate revision, and units needed for the request. For service-range queries, identify candidate professionals and dates for constructing the lookup keys. Finish and confirm this phase before contacting Redis. Its authorization and preliminary resource selection do not authorize the later definitive phase
+
+6. Retrieve the candidate entries from Redis outside SQL transactions. Do not expose them to the client or treat them as authoritative. Treat missing, unreadable, malformed, or scope-mismatching entries as unavailable candidates. Redis failure permits proceeding to the PostgreSQL calculation rather than manufacturing an empty availability result
+
+7. Open a separate definitive SQL phase and establish current authorization again. Select its isolation through [Consistent Concurrent Queries](#consistent-concurrent-queries). The revision, final eligible professional set, and availability inputs must share one statement snapshot or a `REPEATABLE READ` snapshot when several SQL statements are necessary. Obtain the clinic revision from that snapshot rather than carrying the initial phase's revision forward unchecked. Capture the response's `clock_timestamp()` reference once after authorization locks and before time-dependent processing
+
+8. Determine the final request scope under this definitive snapshot. Accept a candidate only when its clinic, professional, service, local date, revision, and expected format match that scope. Compare revisions exactly. Do not mix entries from different revisions. For `RF8`, include currently eligible professionals even when they were absent from the initial candidate selection, and exclude those no longer eligible. An earlier empty candidate selection does not establish a definitive empty result
+
+9. Calculate missing or rejected units from PostgreSQL within the definitive snapshot, using the documented schedules, blocks, reserved appointments, service rules, and professional eligibility. Combine valid candidates with calculated units only under that same revision. If the revision changed, calculate the required current units directly instead of opening another Redis lookup cycle. Associate every calculated unit with the revision from its source snapshot, never with a newer revision read after calculation
+
+10. Apply the current-time filter to the complete spaces using the single captured reference. Keep that reference consistent across professionals and dates. The cache payload remains independent of this filter so it can be reused as time advances. Interpret local dates through `clinics.time_zone` from the applicable snapshot and retain the interval and eligibility rules of the existing domain protocols
+
+11. Materialize the complete response and the unfiltered units eligible for publication, including their scope and source revision, before confirming the definitive SQL transaction. Do not send partial results or fill later response components through new queries. If authorization, validation, or SQL execution fails, discard that attempt's accumulated results. Do not return the candidate merely because PostgreSQL validation could not finish
+
+12. After the definitive commit is confirmed, attempt to publish calculated units under their source revision keys. Set the value and a finite TTL in the same Redis operation. Do not publish results from an unconfirmed phase or cache the time-filtered response as the reusable day entry. A producer may publish an older revision after another revision commits, but its distinct key cannot overwrite the newer revision's entry
+
+13. Permit concurrent producers for the same unit and revision without an additional per-key lock. Each request retains its own authorization and snapshot checks. Equivalent calculations may publish the same revision key, accepting duplicate SQL work during concurrent misses. Use the finite TTL to clean up retained keys. Physical deletion of earlier revisions is not required to confirm a domain operation, and TTL expiry is not proof of freshness
+
+14. If Redis lookup or publication fails, preserve the PostgreSQL result and use the definitive SQL calculation as the fallback. A failed cache publication does not reverse a confirmed domain operation or invalidate its calculated response. If PostgreSQL cannot supply and confirm the required validation phase, do not serve an unvalidated Redis entry. Waiting, timeouts, retries, and unknown commit outcomes belong to Conflicts, Deadlocks, and Retries
+
+15. Treat the committed revision change as logical invalidation of earlier entries. A definitive snapshot established after a relevant commit must observe its new revision and reject earlier candidates. Cancellation and rescheduling therefore expose their committed occupation changes without waiting for Redis deletion or expiry, subject to the remaining availability rules (`I7`, `I8`). Requests using an earlier definitive snapshot retain the response consistency boundary in [Consistent Concurrent Queries](#consistent-concurrent-queries). Booking and rescheduling still execute their authoritative PostgreSQL checks, including patient conflicts and the final future-start validation
+
+A clinic-wide revision was selected over revisions per professional to simplify shared dependencies and changes in the eligible professional set. Conservative updates can invalidate unaffected entries and make revision increments wait on one shared row per clinic. Every relevant writer must participate, and cache hits still require PostgreSQL authorization and revision validation.
+
+Revision keys were selected over a stable key with conditional replacement. They separate publications from different source revisions. Daily professional-service units support reuse across overlapping date ranges, while storing spaces before the current-time filter avoids temporal expiry being mistaken for transactional invalidation.
+
+Two SQL phases were selected over retaining a transaction during Redis lookup. This adds database preparation even on cache hits but releases SQL resources during the network wait. Concurrent fills accept duplicate calculations without a coordination lock. TTL cleanup avoids enumerating old keys after each write. Detailed key encoding, serialization, and TTL configuration belong to [Availability, Caching, and Indexes](#7-availability-caching-and-indexes).
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
