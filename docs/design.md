@@ -1103,6 +1103,56 @@ Revision keys were selected over a stable key with conditional replacement. They
 
 Two SQL phases were selected over retaining a transaction during Redis lookup. This adds database preparation even on cache hits but releases SQL resources during the network wait. Concurrent fills accept duplicate calculations without a coordination lock. TTL cleanup avoids enumerating old keys after each write. Detailed key encoding, serialization, and TTL configuration belong to [Availability, Caching, and Indexes](#7-availability-caching-and-indexes).
 
+## Conflicts, Deadlocks, and Retries
+
+### Concurrency Risk
+
+Concurrent operations can encounter business conflicts, deadlocks, or serialization failures despite following the documented locking protocols. Repeating only a failed statement can reuse decisions made before competing changes.
+
+Unbounded retries and separate waiting budgets can retain resources or extend a request indefinitely. A communication failure during commit creates a different risk: the mutation may already be committed, so repeating it can duplicate an effect.
+
+Ex: a schedule block commits, but its confirmation is lost. Repeating the insertion can create another block because the request has no idempotency mechanism.
+
+### Transaction Design
+
+1. Classify failures using structured database error information, including SQLSTATE and the applicable constraint name. Treat overlaps, prohibited duplicates, final appointment states, stale editing baselines, and failed authorization as rejected operations without automatic retries. Do not infer error categories from localized message text or automatically refresh the client's original editing baseline
+
+2. Permit automatic SQL retries only for `40001` (`serialization_failure`) and `40P01` (`deadlock_detected`), after establishing that the failed transaction cannot commit and ending that phase. Lock timeouts, statement timeouts, connection errors, and unknown commit outcomes do not independently qualify. Follow the reported error rather than assuming every interrupted lock wait represents a detected deadlock
+
+3. Allow at most two additional SQL transaction executions per API request, shared across all its phases and helpers. Planned audit, preparation, and data phases do not themselves consume retries. Do not create nested retry counters. A phase can therefore execute at most three times when no earlier phase has consumed the shared retry allowance
+
+4. Before each retry, roll back the failed phase and discard its provisional results. For API requests, release its row locks and pooled connection before waiting. Use an independently randomized delay of 0-50 milliseconds before the first retry and 0-100 milliseconds before the second. Start another attempt only while both the retry allowance and overall work budget remain available
+
+5. Repeat the complete failed SQL transaction and the logic that determines its queries and values. Establish fresh context through [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context), reacquire the required locks in order, and repeat current authorization and domain checks. Preserve the original request intent and editing baseline. Reevaluate time-dependent conditions according to the applicable protocol rather than carrying forward an earlier attempt's clock reference
+
+6. Preserve independently confirmed phases instead of blindly repeating the whole request. Previously committed read audit events survive a later failure. Another retrieval of sensitive values requires a fresh authorized and previously committed audit attempt under [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency). Discard failed response fragments. Cache candidates remain untrusted inputs that require validation against the new definitive snapshot
+
+7. Establish one 10-second API work budget measured with a monotonic elapsed-time reference. Share it across connection acquisition, SQL phases, Redis operations, retry delays, and other request work. Do not reset it between phases or retries. Stop initiating work when it expires and begin cancellation and cleanup. This budget does not guarantee response delivery within 10 seconds or prove that remote processing has already stopped
+
+8. Limit each API pool acquisition to 1 second, capped by the remaining work budget. An acquisition timeout does not begin the SQL phase. If a connection arrives after the request has stopped accepting work, return it in a safe state without starting the operation
+
+9. Apply transaction-local `lock_timeout` of 1 second per lock acquisition and `statement_timeout` of 3 seconds per statement, including its lock waits. Cap these limits by the remaining overall budget and update them as necessary before subsequent statements. Do not use zero to represent an exhausted budget because zero disables these PostgreSQL timeouts. These limits do not replace the overall deadline or expand the retry allowlist
+
+10. Limit Redis work to 500 milliseconds total per API request, shared across lookup and publication and capped by the remaining overall budget. A failed or exhausted lookup proceeds through the PostgreSQL fallback in [Transaction and Cache Coordination](#transaction-and-cache-coordination). Skip optional publication when no budget remains. Publication failure or expiry must not turn an already confirmed PostgreSQL result into a failed mutation
+
+11. On failure, roll back the complete current SQL phase, including its domain writes, transactional audit events, synchronization work, and availability revision increment where applicable. Do not continue issuing queries from an abandoned callback. Use cancellation and transaction cleanup supported by the selected database client, and retire a connection whose transaction state or context cannot be established safely. Sending a cancellation request or closing a connection is not evidence that an uncertain commit rolled back
+
+12. If a domain mutation's commit outcome cannot be established, report an indeterminate result and do not automatically submit that mutation again. Use manual reconciliation through authorized inspection of business state and available technical diagnostics before deciding whether another action is appropriate. An empty ordinary query does not prove rollback while the original transaction may still be in progress. A matching record does not by itself identify which request created it. Preserve the unknown outcome when the available evidence is insufficient
+
+13. Do not introduce an idempotency key, deduplication registry, or automatic recovery of a mutation result. A new submission after manual reconciliation remains a new operation under its normal business constraints. Diagnostic information must exclude credentials, tokens, patient contact, clinical note content, and sensitive request payloads. A read audit event records an authorized access attempt and does not prove that a domain mutation committed
+
+14. Apply unknown outcomes according to the affected phase. An unconfirmed audit commit prevents sensitive access during that attempt, although its events may have persisted. A new sensitive read requires another confirmed audit attempt. An unsuccessful consultation can be requested again without manually reconciling a domain mutation. These cases do not expand the server's automatic SQL retry allowlist. Confirmed local role changes retain their pending external synchronization status rather than being reported as rolled back
+
+15. Give each role synchronization attempt its own 10-second work budget, separate from API requests. Limit each Keycloak call to 2 seconds and apply the same 1-second lock and 3-second statement limits to its short SQL phases, always capped by the remaining attempt budget. Allow at most two additional SQL executions across that attempt, using the same randomized delays. Retry only the failed SQL phase and its checks, without automatically repeating a Keycloak call already performed
+
+16. Preserve the worker's dedicated physical connection and session advisory lock across its short SQL phases and external calls, following [Clinic and User Management Consistency](#clinic-and-user-management-consistency). SQL phases release their transaction locks before retry delays, while the session advisory lock can remain held within the attempt budget. On external failure, uncertainty, or budget exhaustion, stop the attempt and leave unconfirmed work pending. Release the advisory lock explicitly or close the connection when cleanup is uncertain. Later reconciliation checks current state and retains the existing protection against late external effects
+
+Bounded automatic retries were selected over requiring a new client request for every serialization failure or deadlock. Randomized delays reduce synchronized contention without guaranteeing eventual success. Shared counters and deadlines prevent helpers and separate phases from multiplying the permitted work.
+
+Manual reconciliation was selected over request idempotency to keep the project scope bounded. It adds operational work, can leave outcomes unresolved, and does not guarantee deduplication of a later submission. External role synchronization retains its separate automatic reconciliation protocol.
+
+The timeout values are design limits rather than measured performance results. They bound admitted work and individual waits, while cancellation, cleanup, and uncertain outcomes retain the limitations above.
+
 # 6. Identity, Security, and Auditing
 
 # 7. Availability, Caching, and Indexes
