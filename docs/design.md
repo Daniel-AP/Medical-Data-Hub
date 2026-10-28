@@ -1202,4 +1202,111 @@ The timeout values are design limits rather than measured performance results. T
 
 # 6. Identity, Security, and Auditing
 
+## Delegated Authentication and Token Validation
+
+### Keycloak Access
+
+Define the app's roles under the API's Keycloak client. Give the worker a separate client and credentials.
+
+The API can check tokens and look up existing accounts. The worker can read those accounts and change only the app roles assigned to them.
+
+### Token Checks
+
+For every protected request, check the token's signature and expiration, and confirm it comes from our realm and is meant for this API. Then ask Keycloak whether it is still active. Do not reuse an earlier answer.
+
+Return `401` for missing, invalid, or inactive tokens, `403` for a missing required role, and `503` if the Keycloak check cannot be completed.
+
+This avoids tracking logouts in PostgreSQL, but adds a network call and makes protected requests depend on Keycloak.
+
+### Logout
+
+Use Keycloak to close only the current session. Other sessions and account settings stay unchanged. Later requests using tokens from that session must be rejected. Requests that already passed the token check may still finish.
+
+## PostgreSQL Roles and Restricted Functions
+
+### Database Roles
+
+Use four database roles, one for each `users.role` value. Separate roles keep each domain role's database permissions distinct, at the cost of maintaining four permission sets instead of grouping roles.
+
+### Function Ownership
+
+Use a separate `NOLOGIN` owner role for each group of auxiliary `SECURITY DEFINER` functions listed below. Callers must not be members of these owner roles.
+
+Separate owners keep lookup functions from running with clinic-creation permissions, at the cost of separate role, grant, and RLS configuration.
+
+### Table and Function Permissions
+
+The following table defines the planned grants for clinic administrators, reception, and healthcare professionals. The API still checks the requested operation, and RLS limits the accessible rows.
+
+| Table | Clinic administrator | Reception | Healthcare professional |
+| --- | --- | --- | --- |
+| `clinics` | `SELECT` | `SELECT` | `SELECT` |
+| `users` | `SELECT`, `INSERT`, `UPDATE` | `SELECT` | `SELECT` |
+| `specialties` | `SELECT`, `INSERT` | None | None |
+| `professionals` | `SELECT`, `INSERT`, `UPDATE` | `SELECT` | `SELECT` |
+| `services` | `SELECT`, `INSERT`, `UPDATE` | `SELECT` | `SELECT` |
+| `professional_services` | `SELECT`, `INSERT`, `UPDATE` | `SELECT` | `SELECT` |
+| `professional_schedules` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` | `SELECT` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` |
+| `professional_blocks` | `SELECT`, `INSERT` | `SELECT` | `SELECT`, `INSERT` |
+| `patients` | `SELECT`, `INSERT`, `UPDATE` | `SELECT`, `INSERT`, `UPDATE` | `SELECT` |
+| `appointments` | `SELECT`, `INSERT`, `UPDATE` | `SELECT`, `INSERT`, `UPDATE` | `SELECT`, `UPDATE` |
+| `clinical_notes` | None | None | `SELECT`, `INSERT` |
+| `audit_records` | `SELECT`, `INSERT` | `INSERT` | `INSERT` |
+| `clinic_availability_versions` | `SELECT`, `UPDATE` | `SELECT`, `UPDATE` | `SELECT`, `UPDATE` |
+| `role_sync_tasks` | `INSERT` | None | None |
+
+Apply column grants where access is narrower than the whole table:
+
+- Limit `clinics` reads to `clinic_id` and `time_zone`. For reception and professionals, limit `users` reads to `user_id`, `clinic_id`, `role`, and `is_active`
+- Limit `users` updates to `role` and `is_active`, `professionals` updates to `specialty_id`, and `professional_services` updates to `is_active`
+- Limit `services` updates to `name`, `duration_minutes`, `specialty_id`, and `is_active`. Limit schedule updates to `weekday`, `start_minute`, and `end_minute`
+- Limit patient updates to `identification`, `name`, `date_of_birth`, `email`, and `phone`
+- Limit appointment updates to `state`, `cancelled_by_user_id`, and `cancellation_reason`. Professionals may update only `state`, through the outcome operation
+- Limit availability updates to `version` and task inserts to `user_id`. Audit inserts supply only `clinic_id`, `user_id`, `patient_id`, `resource`, `appointment_id`, and `action`, leaving the identifier and timestamp to their defaults
+
+The remaining roles have these permissions:
+
+| Role | Table access | Function access |
+| --- | --- | --- |
+| API base login | None | `EXECUTE` on identity resolution, metadata lookup, and preparatory user-locking functions |
+| Platform administrator | None | `EXECUTE` on clinic creation |
+| Synchronization worker | `SELECT` on `users.user_id`, `identity_id`, `clinic_id`, and `role`. `SELECT`, `INSERT`, and `DELETE` on `role_sync_tasks`, with inserts limited to `user_id` | `EXECUTE` on the user-locking function needed for synchronization |
+| Identity resolution owner | `SELECT` on `users.identity_id`, `user_id`, and `clinic_id` | Owns identity resolution functions |
+| Metadata lookup owner | `SELECT` on the identifier and relationship columns needed from `users`, `professionals`, and `appointments`, excluding patient contact and note content | Owns metadata lookup functions |
+| Row-locking owner | Required metadata reads and the minimum column-level `UPDATE` grant needed to lock `users`, `services`, and `professionals` | Owns locking functions |
+| Clinic creation owner | `INSERT` on `clinics`, `users`, `clinic_availability_versions`, and `role_sync_tasks`, plus `SELECT` only on identifiers returned by creation | Owns the clinic creation function |
+
+## Row-Level Security Policies
+
+### Clinic Policies
+
+| Role | Table | Operation | Row condition |
+| --- | --- | --- | --- |
+| Clinic administrator, reception, healthcare professional | Tables with `clinic_id` | Granted operations | Valid clinic context, with the existing or new row's `clinic_id` matching that clinic |
+| Clinic administrator | `role_sync_tasks` | `INSERT` | The referenced user's `clinic_id` matches the validated clinic |
+
+### Professional Policies
+
+| Role | Table | Operation | Row condition |
+| --- | --- | --- | --- |
+| Healthcare professional | `professional_schedules` | `INSERT`, `UPDATE`, `DELETE` | The existing or new row's `professional_id` matches the authenticated professional |
+| Healthcare professional | `professional_blocks` | `INSERT` | The new row's `professional_id` matches the authenticated professional |
+| Healthcare professional | `clinical_notes` | `SELECT` | The appointment belongs to the authenticated professional |
+| Healthcare professional | `clinical_notes` | `INSERT` | The appointment belongs to the authenticated professional and is `attended` |
+
+### Other Policies
+
+| Role | Table | Operation | Row condition |
+| --- | --- | --- | --- |
+| Identity resolution owner | `users` | `SELECT` | Allow reads without a clinic filter to find the authenticated user's local account before their clinic is known, including platform accounts |
+| Metadata lookup owner | `users`, `professionals`, `appointments` | `SELECT` | Allow reads without a clinic filter to find required IDs before the request's clinic checks finish |
+| Row locking owner | `users`, `services`, `professionals` | `SELECT`, locks | Allow reads and locks without a clinic filter for user permission checks, including platform users and worker targets. Reject actual updates |
+| Clinic creation owner | `clinics`, `users`, `clinic_availability_versions` | `INSERT`, identifier reads | The row's `clinic_id` matches the new clinic ID in transaction context. For `users`, `user_id` must also match the first administrator ID in that context |
+| Clinic creation owner | `role_sync_tasks` | `INSERT` | The task's `user_id` matches the first administrator ID in transaction context |
+| Synchronization worker | `users`, `role_sync_tasks` | `SELECT` | The context identifies a worker scan. No clinic filter applies, and inactive users remain visible |
+| Synchronization worker | `users` | `SELECT` | The context identifies synchronization of one verified user, and the row's `user_id` matches that target ID |
+| Synchronization worker | `role_sync_tasks` | `SELECT`, `INSERT`, `DELETE` | The context identifies synchronization of one verified user, and the task's `user_id` matches that target ID |
+| Clinic administrator, reception, healthcare professional | `audit_records` | `INSERT` | `resource = 'patient_contact'` and the event's `user_id` matches the authenticated user |
+| Healthcare professional | `audit_records` | `INSERT` | `resource = 'clinical_note'` and the event's `user_id` matches the authenticated user. The appointment's `professional_id` matches their professional profile, and its `patient_id` matches the event's patient |
+
 # 7. Availability, Caching, and Indexes
