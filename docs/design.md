@@ -1264,10 +1264,12 @@ Apply column grants where access is narrower than the whole table:
 - Limit appointment updates to `state`, `cancelled_by_user_id`, and `cancellation_reason`. Professionals may update only `state`, through the outcome operation
 - Limit availability updates to `version` and task inserts to `user_id`. Audit inserts supply only `clinic_id`, `user_id`, `patient_id`, `resource`, `appointment_id`, and `action`, leaving the identifier and timestamp to their defaults
 
-The remaining roles have these permissions:
+Additional permissions by role:
 
 | Role | Table access | Function access |
 | --- | --- | --- |
+| Reception | As listed above | `EXECUTE` on service and professional locking functions for booking and rescheduling |
+| Healthcare professional | As listed above | `EXECUTE` on professional locking functions for own schedules and blocks |
 | API base login | None | `EXECUTE` on identity resolution, metadata lookup, and preparatory user-locking functions |
 | Platform administrator | None | `EXECUTE` on clinic creation |
 | Synchronization worker | `SELECT` on `users.user_id`, `identity_id`, `clinic_id`, and `role`. `SELECT`, `INSERT`, and `DELETE` on `role_sync_tasks`, with inserts limited to `user_id` | `EXECUTE` on the user-locking function needed for synchronization |
