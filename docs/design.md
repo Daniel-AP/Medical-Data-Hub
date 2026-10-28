@@ -64,6 +64,16 @@ These rules preserve `I3` without adding appointment states or pending block rec
 - UNIQUE users_clinic_user_key: (clinic_id, user_id)
 - CHECK users_role_clinic_check: clinic_id must be NULL for platform_administrator and NOT NULL for all other roles
 
+## role_sync_tasks
+
+### Fields
+
+- role_sync_task_id UUID NOT NULL DEFAULT gen_random_uuid() (PK)
+- user_id UUID NOT NULL (FK->users.user_id)
+- created_at TIMESTAMPTZ(3) NOT NULL DEFAULT clock_timestamp() -- Task creation time
+
+Tasks reconcile the current role in `users` with Keycloak. Delete captured tasks only after the confirmation checks in Clinic and User Management Consistency.
+
 ## specialties
 
 ### Fields
@@ -234,6 +244,7 @@ erDiagram
     direction TB
 
     clinics |o..o{ users : contains
+    users ||..o{ role_sync_tasks : has_pending_tasks
     clinics ||..o{ specialties : owns
     clinics ||..o{ professionals : owns
     users ||..o| professionals : has_profile
@@ -274,6 +285,12 @@ erDiagram
         UUID clinic_id FK
         user_role role
         BOOLEAN is_active
+    }
+
+    role_sync_tasks {
+        UUID role_sync_task_id PK
+        UUID user_id FK
+        TIMESTAMPTZ(3) created_at
     }
 
     specialties {
@@ -367,6 +384,8 @@ erDiagram
 
 - clinics to users (**1:N**): Each clinic user belongs to one clinic, platform administrators belong to none
 
+- users to role_sync_tasks (**1:N**): Each pending reconciliation task references one user, including platform administrators without a clinic
+
 - clinics to specialties (**1:N**): Each specialty belongs to one clinic
 
 - clinics to professionals (**1:N**): Each professional belongs to one clinic
@@ -430,6 +449,7 @@ erDiagram
 ### First Normal Form (1NF)
 
 - All tables: Individual field values and declared PKs, with no embedded lists or repeating column groups
+- role_sync_tasks: One pending reconciliation request per row, identified by role_sync_task_id
 - professional_services: One professional-service assignment per row
 - professional_schedules and professional_blocks: One working or blocked interval per row
 
@@ -437,6 +457,7 @@ erDiagram
 
 Non-key fields must not depend on only part of a composite candidate key
 
+- role_sync_tasks: The single-column primary key introduces no partial key dependencies
 - patients: name, date_of_birth, email, and phone depend on both clinic_id and identification, neither field alone determines those values
 - professional_services: An assignment is identified by (professional_id, service_id), service name and duration depend only on service_id and remain in services
 - Retained exception: professional_services.clinic_id depends on professional_id alone or service_id alone, retaining it is a deliberate 2NF exception
@@ -445,6 +466,7 @@ Non-key fields must not depend on only part of a composite candidate key
 
 After satisfying 2NF, non-key fields must not depend on another non-key field
 
+- role_sync_tasks: Provider identity, clinic, and current role remain in users rather than being copied into pending tasks
 - specialties: Clinic name and time zone depend on non-key clinic_id, so they stay in clinics
 - professionals and services: Specialty name depends on non-key specialty_id, so it stays in specialties
 - professional_schedules and professional_blocks: Professional specialty depends on non-key professional_id, so it stays in professionals
