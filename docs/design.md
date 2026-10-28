@@ -139,9 +139,9 @@ Tasks reconcile the current role in `users` with Keycloak. Delete captured tasks
 - clinic_id UUID NOT NULL (FK->clinics.clinic_id)
 - professional_id UUID NOT NULL (FK: (clinic_id, professional_id) -> professionals(clinic_id, professional_id))
 - service_id UUID NOT NULL (FK: (clinic_id, service_id) -> services(clinic_id, service_id))
+- is_active BOOLEAN NOT NULL DEFAULT TRUE
 
-### Constraints
-
+Inactive associations remain stored for historical appointment references.
 
 ## professional_schedules
 
@@ -338,6 +338,7 @@ erDiagram
         UUID clinic_id PK, FK
         UUID professional_id PK, FK
         UUID service_id PK, FK
+        BOOLEAN is_active
     }
 
     professional_schedules {
@@ -419,7 +420,7 @@ erDiagram
 
 - specialties to services (**1:N**): Each service requires one specialty
 
-- professionals to services (**N:M**): professional_services stores distinct authorized pairs within one clinic
+- professionals to services (**N:M**): professional_services stores distinct same-clinic pairs and their activation, preserving inactive associations for historical references
 
 - professionals to professional_services (**1:N**): Each authorization belongs to one professional
 
@@ -445,7 +446,7 @@ erDiagram
 
 - services to appointments (**1:N**): Each appointment uses one same-clinic service
 
-- professional_services to appointments (**1:N**): Each appointment references an explicit professional-service authorization
+- professional_services to appointments (**1:N**): Each appointment references a same-clinic professional-service association, preserved after deactivation
 
 - users to appointments (**1:N**): A cancelling user is required only for cancelled appointments
 
@@ -482,7 +483,7 @@ Non-key fields must not depend on only part of a composite candidate key
 - clinic_availability_versions: The single-column primary key introduces no partial key dependencies
 - role_sync_tasks: The single-column primary key introduces no partial key dependencies
 - patients: name, date_of_birth, email, and phone depend on both clinic_id and identification, neither field alone determines those values
-- professional_services: An assignment is identified by (professional_id, service_id), service name and duration depend only on service_id and remain in services
+- professional_services: is_active depends on the complete professional-service pair, while service name and duration depend only on service_id and remain in services
 - Retained exception: professional_services.clinic_id depends on professional_id alone or service_id alone, retaining it is a deliberate 2NF exception
 
 ### Third Normal Form (3NF)
