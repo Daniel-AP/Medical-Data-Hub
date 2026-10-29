@@ -1534,3 +1534,49 @@ All Redis work remains subject to the shared 500-ms budget and overall API work 
 `maxmemory` is an eviction threshold, not a total process-memory limit. The larger [container limit](https://docs.docker.com/reference/compose-file/services/#mem_limit) provides nominal headroom, without guaranteeing that it is sufficient.
 
 These are team-selected design bounds, not measured capacity guarantees. They constrain cache activity and retention, not total API materialization memory. Partial cache use preserves reuse for larger requests while retaining complete PostgreSQL results.
+
+## PostgreSQL Availability Queries
+
+### Design Problem
+
+Availability queries must retrieve consistent inputs for `RF7` and `RF8` without repeating reads for every professional-date combination. Broad history scans, duplicated window matches, or unnecessary columns increase transferred data without contributing to the calculation.
+
+Missing prerequisites must remain distinguishable from valid empty eligibility or availability results.
+
+### Design Decisions
+
+**Query organization**
+
+Use parameterized queries through the scoped transaction client. The definitive phase uses `REPEATABLE READ` because its related statements must share a snapshot, following [Consistent Concurrent Queries](#consistent-concurrent-queries).
+
+Separate metadata, eligibility, schedules, appointments, and blocks into these query shapes:
+
+| Reference | Required data and filters |
+| --- | --- |
+| `AQ1` | Clinic time zone, service duration and specialty, and exact clinic version, filtered by clinic and service |
+| `AQ2` | Professional identifiers from same-clinic professionals, users, and service associations, requiring matching specialty, active association, active user, and role `healthcare_professional` |
+| `AQ3` | Complete weekly schedules for professionals with units requiring calculation, projecting `professional_id`, `weekday`, `start_minute`, and `end_minute` |
+| `AQ4` | Same-clinic `reserved` appointments overlapping required professional windows, projecting `professional_id`, `start_at`, and `end_at` |
+| `AQ5` | Same-clinic blocks overlapping those windows, with the same interval projection |
+
+`AQ1` must preserve detection of an absent version row rather than substitute zero or produce ordinary empty availability. Reject missing or inaccessible required clinic or service data. Permit inactive services.
+
+For `RF7`, restrict `AQ2` to the requested professional and reject an incompatible combination. For `RF8`, obtain the complete definitive eligible set. An empty set produces empty professional lists after prerequisite validation. Cache-operation limits do not truncate this set.
+
+**Schedules and occupancy windows**
+
+Read each required professional's complete week once through `AQ3` and reuse it across dates. This avoids complex weekday selection when appointments cross dates, at the cost of reading unused weekdays.
+
+Build occupancy windows only for units requiring calculation. For each actual interval belonging to a requested start date, identify its first and last whole-UTC-minute starts and extend the window through the last start plus service duration. Skip intervals with no aligned starts. Merge overlapping or adjacent windows per professional.
+
+Filter `AQ4` and `AQ5` using `EXISTS` over the parameterized windows, with these overlap conditions:
+
+```sql
+w.professional_id = a.professional_id
+AND a.start_at < w.end_at
+AND w.start_at < a.end_at
+```
+
+Here, `a` denotes the appointment or block row and `w` a generated search window. Preserve full source endpoints, including records beginning before a window. [`EXISTS`](https://www.postgresql.org/docs/18/functions-subquery.html#FUNCTIONS-SUBQUERY-EXISTS) avoids multiplying source rows across matching windows, unlike a join requiring deduplication.
+
+Separate metadata and eligibility reads clarify empty-result handling at the cost of another statement. Batched inputs reduce repeated retrieval, while index usage and performance remain subject to execution-plan verification under the applicable permissions and RLS policies.
