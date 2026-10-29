@@ -1389,3 +1389,31 @@ Calculate the end by adding `services.duration_minutes` as elapsed minutes to th
 Preserve complete appointment intervals across date boundaries. Check full schedule coverage and every overlapping block or reserved appointment, including those beginning before the requested date.
 
 Apply these rules to consultation, booking, and rescheduling. Retain the snapshot and common future-start reference in [Consistent Concurrent Queries](#consistent-concurrent-queries).
+
+## Professional Availability Calculation
+
+### Design Problem
+
+Availability must combine weekly schedule coverage, reserved appointments, blocks, and service duration (`RF7`). Checking schedule rows independently can reject appointments covered by adjacent intervals. Considering only occupation that starts within the requested date can miss overlapping conflicts (`I1`, `I3`, `I4`).
+
+### Design Decisions
+
+Calculate availability in TypeScript using inputs from the definitive PostgreSQL snapshot, following [Transaction and Cache Coordination](#transaction-and-cache-coordination).
+
+1. Obtain the validated professional-service scope, service duration, clinic time zone, schedules, blocks, and relevant reserved appointments. Include the professional's occupation across all services and intervals beginning before the requested date when they overlap the required coverage
+
+2. Expand weekly schedules into absolute intervals using [Time Zones and Interval Boundaries](#time-zones-and-interval-boundaries). Include all dates needed to cover complete candidate appointments
+
+3. Merge overlapping or adjacent schedule intervals. Separately merge overlapping or adjacent reserved appointments and blocks into occupied intervals
+
+4. Subtract occupied intervals from schedule coverage to obtain disjoint free intervals. Preserve `[start, end)` boundaries and discard empty intervals
+
+5. For each free interval `[a, b)` and elapsed service duration `d`, generate every whole-UTC-minute start `s` satisfying `s >= a` and `s + d <= b`. Retain only starts belonging to the requested local dates. A free interval shorter than `d` contributes no starts
+
+6. Complete the calculation and materialize its results within the definitive phase. Preserve the complete daily units before applying the common future-start filter, as required by the cache protocol
+
+Ex: a free interval `[09:00, 10:00)` with a 30-minute service admits starts from 09:00 through 09:30 inclusive, one minute apart.
+
+Constructing free intervals avoids repeating coverage and overlap checks for every candidate. TypeScript keeps interval logic available for isolated tests and reuse, at the cost of transferring the required inputs. SQL range calculations remain an alternative, with more logic in specialized queries. Neither approach has a measured performance advantage.
+
+Availability consultation considers all reserved appointments. Booking and rescheduling retain their definitive PostgreSQL checks and the original-appointment exclusion defined in [Atomic Rescheduling](#atomic-rescheduling).
