@@ -1626,3 +1626,51 @@ Inspect estimated and actual rows, filters, loops, buffers, global times, and in
 [`TIMING OFF`](https://www.postgresql.org/docs/18/sql-explain.html) retains total execution timing without per-node timing. Plan times do not represent complete API latency. A sequential scan can be appropriate.
 
 Retain indexes only when observed benefits justify their storage and write costs. Record actual plans, environment, revision, commands, and outcomes in the test report and durable evidence. The section 5 concurrency protocols remain authoritative.
+
+## Cache Evaluation and Evidence Plan
+
+### Design Problem
+
+Cache evaluation must compare equivalent availability results and include the PostgreSQL authorization and validation work that remains on cache hits. Runtime initialization, changing dates, different fixtures, or unreported failures can distort latency comparisons.
+
+`I7` and `I8` also require functional evidence that committed appointment changes remain visible while earlier cache entries still exist.
+
+### Design Decisions
+
+**Comparison scope**
+
+Compare direct PostgreSQL calculation through one authorized definitive SQL phase against the complete cache protocol. Measure the full API request in both modes, including authentication and PostgreSQL validation.
+
+Use synthetic fixtures with at least three clinics and five eligible professionals for the tested service:
+
+| Reference | Workload | Required units |
+| --- | --- | --- |
+| `CW1` | `RF7`, one professional and one date | 1 |
+| `CW2` | `RF8`, five professionals and seven dates | 35 |
+| `CW3` | `RF8`, five professionals and 31 dates | 155 |
+
+Evaluate clinic administrator, reception, and healthcare professional separately under their actual SQL profiles and RLS policies. Keep fixtures, indexes, parameters, and actor identity equivalent within each comparison.
+
+Test four Redis conditions: selected entries absent, valid, containing malformed JSON, and Redis unavailable. In `CW3`, the read limit still requires partial PostgreSQL calculation even when selected entries are valid.
+
+**Sampling and measurements**
+
+For each workload, role, and Redis condition, run five unmeasured warm-up requests per mode, followed by 30 matched pairs alternating `A-B` and `B-A`. Execute one request at a time. This produces 36 comparisons and 2160 measured requests.
+
+Warm PostgreSQL and the API, then prepare and verify the required Redis condition before every measured request. Exclude preparation from timing. Use future dates that remain stable throughout the series, recording the fixture's temporal anchor and actual response time references. Keep domain data unchanged during timed comparisons.
+
+Measure client-observed elapsed time with a monotonic clock from request submission through complete response-body receipt. Report median as the primary latency metric, alongside mean, minimum, maximum, and individual samples. Preserve all attempts and report incorrect responses, errors, and timeouts separately without replacing them.
+
+Record phase durations, SQL statement counts, and cache-unit outcomes. Report both validated units used per Redis read attempt and cached units used per definitive required unit. Valid empty units count as hits. Mark zero-denominator ratios as not applicable. Record missing, rejected, calculated, published, failed, and skipped units.
+
+**Functional checks and evidence**
+
+Require equivalent grouped availability across modes. Separately check current-day filtering and invalid metadata, formats, sizes, and starts.
+
+For booking, cancellation, and rescheduling, populate the cache, confirm the mutation, and query again before the earlier entry expires. Verify occupation changes against PostgreSQL, including both rescheduling endpoints and remaining availability rules.
+
+Also check version changes committed before the definitive snapshot, late publication under an earlier version, PostgreSQL validation failure with cached candidates, and publication failure after definitive confirmation. Preserve the response consistency boundary in [Transaction and Cache Coordination](#transaction-and-cache-coordination).
+
+Freeze and record fixture definitions, environment, versions, configuration, client timeouts, commands, revision, and working-tree differences before measurement. Store raw samples, summaries, and manifests at durable repository paths and record observed outcomes in the test report. Link actual index evidence from that report.
+
+These sequential comparisons exclude load testing and do not establish a guaranteed performance improvement.
