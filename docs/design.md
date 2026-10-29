@@ -1312,3 +1312,46 @@ Additional permissions by role:
 | Healthcare professional | `audit_records` | `INSERT` | `resource = 'clinical_note'` and the event's `user_id` matches the authenticated user. The appointment's `professional_id` matches their professional profile, and its `patient_id` matches the event's patient |
 
 # 7. Availability, Caching, and Indexes
+
+## Availability Inputs and Request Scope
+
+### Design Problem
+
+Professional availability depends on the requested service's duration and the professional's eligibility to provide it (`RF7`). Service availability extends that calculation to eligible professionals across a date range (`RF8`).
+
+An incompatible professional-service combination differs from a valid combination with no available spaces. Returning an empty result for both would conceal an invalid selection.
+
+Availability describes the professional's capacity under the consulted snapshot. It does not establish that a particular patient can reserve a returned space, because patient conflicts and definitive booking checks remain separate (`RF9`, `I1`, `I2`).
+
+### Design Decisions
+
+**Request inputs**
+
+| Query | Required inputs |
+| --- | --- |
+| Professional availability (`RF7`) | Professional identifier, service identifier, and one clinic-local date |
+| Service availability (`RF8`) | Service identifier and a clinic-local start and end date |
+
+Derive the clinic from the authenticated and validated context through [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context). Client-supplied identifiers do not establish clinic access (`I5`, `RF17`).
+
+Obtain the service duration from PostgreSQL. These queries do not require a patient identifier and do not evaluate a particular patient's conflicts.
+
+**Resource eligibility**
+
+Require the professional and service to belong to the validated clinic. The professional must have an active associated user with role `healthcare_professional`, an active professional-service association, and a specialty matching the service's required specialty.
+
+For `RF7`, reject an incompatible professional-service combination. For `RF8`, exclude ineligible professionals from the evaluated set. Reject missing or inaccessible required resources rather than presenting them as an ordinary empty availability result.
+
+Allow availability consultation for inactive services. New bookings still require an active service, while rescheduling may retain an inactive service under [Concurrent Service and Professional Authorization Changes](#concurrent-service-and-professional-authorization-changes).
+
+**Date scope**
+
+Reject a requested date earlier than today in the clinic's time zone. For `RF8`, reject a range whose start date is earlier than today. Require valid calendar dates and a start date no later than the end date.
+
+Determine today using `clinics.time_zone` from the definitive snapshot and the common time reference established by [Consistent Concurrent Queries](#consistent-concurrent-queries). For today's date, return only starts strictly later than that reference.
+
+**Result meaning**
+
+A valid query may return no spaces because the professional lacks schedule coverage or the applicable intervals are occupied or blocked. Calculation failures and unavailable dependencies must not be disguised as empty availability.
+
+Consultation does not reserve a space. Booking and rescheduling retain their definitive PostgreSQL validations. Cached results follow [Transaction and Cache Coordination](#transaction-and-cache-coordination), including authorization, eligibility, and version validation.
