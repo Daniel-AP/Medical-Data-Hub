@@ -1355,3 +1355,37 @@ Determine today using `clinics.time_zone` from the definitive snapshot and the c
 A valid query may return no spaces because the professional lacks schedule coverage or the applicable intervals are occupied or blocked. Calculation failures and unavailable dependencies must not be disguised as empty availability.
 
 Consultation does not reserve a space. Booking and rescheduling retain their definitive PostgreSQL validations. Cached results follow [Transaction and Cache Coordination](#transaction-and-cache-coordination), including authorization, eligibility, and version validation.
+
+## Time Zones and Interval Boundaries
+
+### Design Problem
+
+Availability combines local dates and weekly schedules with absolute appointment and block instants (`RF5`, `RF7`, `RF8`). Missing or repeated local times require explicit interpretation. Crossing midnight or a time-zone transition must preserve complete schedule coverage and service duration (`I3`, `I4`).
+
+Use the rules below rather than PostgreSQL's [implicit timestamp interpretation](https://www.postgresql.org/docs/18/datetime-invalid-input.html), which can shift nonexistent times or select one repeated occurrence.
+
+### Design Decisions
+
+**Dates and scope**
+
+Interpret dates and weekly schedules using `clinics.time_zone` from the definitive snapshot. Compare appointments and blocks as absolute instants. Assign each available start to its local start date.
+
+Include both request dates in `RF8`. Equal dates request one day. Select starts by their local date, using actual zone transitions rather than fixed 24-hour days. Ordinary day boundaries are inclusive midnight and exclusive next midnight.
+
+**Schedule transitions**
+
+Schedule coverage contains the real instants matching the local weekday and minute bounds. Preserve the [data model's](#professional_schedules) inclusive start, exclusive end, and `1440` endpoint convention.
+
+- Forward transitions: retain only existing times without shifting them. Entirely skipped intervals provide no coverage
+- Backward transitions: include both occurrences as distinct instants. Keep intervals separate wherever intervening time lacks coverage
+- Midnight transitions: apply the same rules. A completely omitted date contributes no starts. Conversion or calculation failures remain errors
+
+Ex: if 02:00 jumps to 03:00, `[02:30, 04:00)` provides coverage from 03:00 to 04:00. If `[01:30, 01:45)` repeats, preserve both intervals without filling the gap between them.
+
+**Duration and complete intervals**
+
+Calculate the end by adding `services.duration_minutes` as elapsed minutes to the absolute start. Use `[start, end)` for appointments and blocks, allowing adjacency.
+
+Preserve complete appointment intervals across date boundaries. Check full schedule coverage and every overlapping block or reserved appointment, including those beginning before the requested date.
+
+Apply these rules to consultation, booking, and rescheduling. Retain the snapshot and common future-start reference in [Consistent Concurrent Queries](#consistent-concurrent-queries).
