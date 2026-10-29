@@ -1580,3 +1580,49 @@ AND w.start_at < a.end_at
 Here, `a` denotes the appointment or block row and `w` a generated search window. Preserve full source endpoints, including records beginning before a window. [`EXISTS`](https://www.postgresql.org/docs/18/functions-subquery.html#FUNCTIONS-SUBQUERY-EXISTS) avoids multiplying source rows across matching windows, unlike a join requiring deduplication.
 
 Separate metadata and eligibility reads clarify empty-result handling at the cost of another statement. Batched inputs reduce repeated retrieval, while index usage and performance remain subject to execution-plan verification under the applicable permissions and RLS policies.
+
+## Index Selection and Query Plans
+
+### Design Problem
+
+`RF7` and `RF8` need selective access to eligible professionals, schedules, and overlapping occupation. An index's existence does not demonstrate its use or benefit. Additional indexes consume storage and increase write maintenance.
+
+### Design Decisions
+
+**Candidate indexes**
+
+Evaluate these non-unique B-tree candidates against the [availability query shapes](#postgresql-availability-queries):
+
+| Reference | Target | Candidate |
+| --- | --- | --- |
+| `IC1` | `AQ4`, `appointments` | `(clinic_id, professional_id, end_at) WHERE state = 'reserved'` |
+| `IC2` | `AQ5`, `professional_blocks` | `(clinic_id, professional_id, end_at)` |
+| `IC3` | `AQ3`, `professional_schedules` | `(clinic_id, professional_id)` |
+| `IC4` | `AQ2`, `professional_services` | `(clinic_id, service_id, professional_id) WHERE is_active` |
+
+Start without `INCLUDE` columns. Reuse documented PK and `UNIQUE` access paths for `AQ1` and identifier joins in `AQ2`, checking actual definitions before adding indexes. Foreign keys do not automatically index their referencing columns.
+
+For `IC1` and `IC2`, clinic and professional equalities precede `end_at > window_start`. Check `start_at < window_end` separately. This orientation can discard past occupation, while the alternative by `start_at` can discard later occupation. Compare both with equivalent workloads rather than retaining both automatically.
+
+`IC3` matches complete-week retrieval without an unused weekday search key. `IC4` supports service-first lookup across professionals, complementing the documented professional-first PK. Its active subset and `IC1`'s reserved subset require maintenance when membership changes.
+
+Keep state and activation predicates fixed and recognizable in the actual SQL. Verify partial-index eligibility with the application's prepared-query behavior. See [multicolumn indexes](https://www.postgresql.org/docs/18/indexes-multicolumn.html) and [partial indexes](https://www.postgresql.org/docs/18/indexes-partial.html).
+
+GiST range indexing remains an alternative requiring adapted overlap expressions and `btree_gist` for combined UUID keys. Covering variants require evidence that avoided heap access justifies their added size. Neither is part of the initial candidate set.
+
+**Verification plan**
+
+1. Establish a baseline retaining PK and `UNIQUE` indexes and all integrity protections
+2. Compare candidates individually, including temporal orientations, then evaluate the combined set
+3. Use identical fixtures, parameters, updated statistics, and actual operating profiles, transaction context, and RLS policies
+4. Capture plans using the following options without forcing index usage
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS, SETTINGS, TIMING OFF, FORMAT JSON)
+```
+
+Inspect estimated and actual rows, filters, loops, buffers, global times, and index sizes. Include single-professional dates, service ranges, historical reserved appointments, long blocks, and differing selectivity. Compare representative mutation costs as well as reads.
+
+[`TIMING OFF`](https://www.postgresql.org/docs/18/sql-explain.html) retains total execution timing without per-node timing. Plan times do not represent complete API latency. A sequential scan can be appropriate.
+
+Retain indexes only when observed benefits justify their storage and write costs. Record actual plans, environment, revision, commands, and outcomes in the test report and durable evidence. The section 5 concurrency protocols remain authoritative.
