@@ -1495,3 +1495,42 @@ Reject the complete unit if fields are missing or unknown, types or encodings ar
 Recalculate rejected units through [Transaction and Cache Coordination](#transaction-and-cache-coordination). Apply the common future-start filter only after validation.
 
 Readable keys, explicit starts, and UTC text favor inspection and simple decoding over hashed keys, compact ranges, and numeric timestamps. Extra calculation metadata supports consistency checks. Strict fields require format updates when the structure changes. These checks complement the accepted snapshot and publication protocol.
+
+## Cache Lifetime and Resource Bounds
+
+### Design Problem
+
+Versioned keys retain earlier entries after domain changes. TTL alone does not bound their total memory, and a date-range request can involve many cache units. Reads, publications, and retention therefore need explicit limits without truncating availability results.
+
+### Design Decisions
+
+**Lifetime and retention**
+
+Assign a 300-second TTL through the publication's `SET` operation. Reads do not renew expiration. Republishing the same key starts a new TTL.
+
+Earlier versions remain until expiration or eviction. Physical deletion is unnecessary for mutation confirmation. TTL controls retention, while version validation determines usability through [Transaction and Cache Coordination](#transaction-and-cache-coordination).
+
+**Resource limits**
+
+| Resource | Limit |
+| --- | --- |
+| Serialized unit | 64 KiB, measured as UTF-8 bytes |
+| Redis key reads per API request | 128 attempts |
+| Redis unit publications per API request | 128 attempts |
+| Redis `maxmemory` | 128 MiB |
+| Redis eviction policy | `allkeys-lru` |
+| Redis container memory | 256 MiB |
+
+Read at most 65537 bytes per key using [`GETRANGE`](https://redis.io/docs/latest/commands/getrange/). Reject values exceeding 65536 bytes before JSON decoding and recalculate them from PostgreSQL. Skip publication of oversized calculated units without truncating their results.
+
+Select cache candidates by local date and professional identifier ascending. When the request exceeds the read limit, use cached candidates for the selected subset and calculate the remaining units from PostgreSQL. Publish at most 128 eligible calculated units in the same order. Count attempts across the request without resetting limits during SQL retries.
+
+All Redis work remains subject to the shared 500-ms budget and overall API work budget in [Conflicts, Deadlocks, and Retries](#conflicts-deadlocks-and-retries). Do not open another lookup cycle or omit response components to meet cache limits.
+
+**Memory policy and tradeoffs**
+
+[`allkeys-lru`](https://redis.io/docs/latest/develop/reference/eviction/) permits approximate recency-based eviction, including usable entries. Evicted units become cache misses. Unlike `noeviction`, this policy allows reclaiming entries before their TTL instead of retaining them while rejecting memory-increasing publications.
+
+`maxmemory` is an eviction threshold, not a total process-memory limit. The larger [container limit](https://docs.docker.com/reference/compose-file/services/#mem_limit) provides nominal headroom, without guaranteeing that it is sufficient.
+
+These are team-selected design bounds, not measured capacity guarantees. They constrain cache activity and retention, not total API materialization memory. Partial cache use preserves reuse for larger requests while retaining complete PostgreSQL results.
