@@ -1417,3 +1417,35 @@ Ex: a free interval `[09:00, 10:00)` with a 30-minute service admits starts from
 Constructing free intervals avoids repeating coverage and overlap checks for every candidate. TypeScript keeps interval logic available for isolated tests and reuse, at the cost of transferring the required inputs. SQL range calculations remain an alternative, with more logic in specialized queries. Neither approach has a measured performance advantage.
 
 Availability consultation considers all reserved appointments. Booking and rescheduling retain their definitive PostgreSQL checks and the original-appointment exclusion defined in [Atomic Rescheduling](#atomic-rescheduling).
+
+## Service Availability Across Date Ranges
+
+### Design Problem
+
+Service availability must return the professionals with available starts across the requested dates (`RF8`). Combining independent professional queries could mix snapshots or omit professionals whose eligibility changed between cache preparation and definitive validation.
+
+The response needs predictable grouping and ordering, explicit empty dates, and a bounded date range without silently dropping results.
+
+### Design Decisions
+
+**Scope and calculation**
+
+Require a service and an inclusive range of clinic-local dates, following [Availability Inputs and Request Scope](#availability-inputs-and-request-scope).
+
+Accept at most 31 dates per request, counting both endpoints. Reject longer ranges without truncation. Do not impose an additional advance-booking horizon on otherwise valid future dates.
+
+The 31-date limit is a team-selected resource bound, not an assignment requirement or a measured capacity guarantee. It does not independently bound professional counts or response size.
+
+Determine eligible professionals under the definitive snapshot. For each professional and date, reuse [Professional Availability Calculation](#professional-availability-calculation) and the validated cache units permitted by [Transaction and Cache Coordination](#transaction-and-cache-coordination). Do not assemble the response from independent requests with separate snapshots.
+
+**Response composition**
+
+1. Apply the common future-start filter before determining which professionals have availability
+2. Group results first by local date, in ascending date order
+3. Include every requested date, using an empty professional list when no starts remain
+4. Within each date, include only professionals with available starts, ordered by `professional_id` ascending
+5. Order each professional's starts by absolute instant ascending, preserving distinct occurrences of repeated local times
+
+Identifier ordering keeps the relative order of remaining professionals stable as their available times change. Ordering by earliest availability would prioritize sooner options but produce a changing professional order.
+
+Materialize the complete response before confirming the definitive phase. Processing failures produce an error rather than partial results, omitted dates, or fabricated empty lists.
