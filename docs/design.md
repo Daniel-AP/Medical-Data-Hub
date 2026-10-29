@@ -1449,3 +1449,49 @@ Determine eligible professionals under the definitive snapshot. For each profess
 Identifier ordering keeps the relative order of remaining professionals stable as their available times change. Ordering by earliest availability would prioritize sooner options but produce a changing professional order.
 
 Materialize the complete response before confirming the definitive phase. Processing failures produce an error rather than partial results, omitted dates, or fabricated empty lists.
+
+## Cache Keys and Payload Format
+
+### Design Problem
+
+Cache entries must identify their scope, source version, and expected format without ambiguity. Repeated local times require distinct absolute instants. Malformed or incompatible content must trigger recalculation rather than false or empty availability (`I8`).
+
+### Design Decisions
+
+**Storage and keys**
+
+Store each daily unit as a JSON document in a Redis string. Publish the complete value with finite expiration through one [`SET` operation](https://redis.io/docs/latest/commands/set/).
+
+Use this key structure:
+
+```text
+availability:fmt1:<clinicId>:<professionalId>:<serviceId>:<localDate>:<version>
+```
+
+Encode UUIDs in lowercase with hyphens, dates as `YYYY-MM-DD`, and the domain version as exact nonnegative decimal text without leading zeros except `0`. Preserve the component order.
+
+`fmt1` identifies the format independently of the domain version. Different formats use different namespaces, preventing incompatible producers from replacing each other's entries.
+
+**Payload**
+
+Require exactly these fields:
+
+| Field | Representation |
+| --- | --- |
+| `formatVersion` | Integer `1` |
+| `clinicId`, `professionalId`, `serviceId` | Canonical UUID strings matching the key |
+| `localDate` | Local date matching the key |
+| `version` | Exact decimal string matching the key |
+| `timeZone` | Clinic time zone from the source snapshot |
+| `durationMinutes` | Service duration from the source snapshot |
+| `starts` | Complete daily list of available start instants before future filtering |
+
+Serialize starts as ISO UTC strings with explicit seconds and milliseconds, ending in `:00.000Z`. Order them by absolute instant without duplicates. An empty list represents a valid calculation with no starts. Include no patient contact or clinical content.
+
+**Validation**
+
+Reject the complete unit if fields are missing or unknown, types or encodings are invalid, metadata differs from the definitive scope, or starts violate UTC-minute alignment, ordering, uniqueness, or local-date membership. Compare versions exactly without lossy numeric conversion.
+
+Recalculate rejected units through [Transaction and Cache Coordination](#transaction-and-cache-coordination). Apply the common future-start filter only after validation.
+
+Readable keys, explicit starts, and UTC text favor inspection and simple decoding over hashed keys, compact ranges, and numeric timestamps. Extra calculation metadata supports consistency checks. Strict fields require format updates when the structure changes. These checks complement the accepted snapshot and publication protocol.
