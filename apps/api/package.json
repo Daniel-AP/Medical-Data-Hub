@@ -1,0 +1,5 @@
+{
+	"name": "@medical-data-hub/api",
+	"private": true,
+	"type": "module"
+}

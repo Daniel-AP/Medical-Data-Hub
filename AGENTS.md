@@ -1,7 +1,9 @@
 # Code
 
 - Write identifiers and comments in English
+- Use ES modules with `import` and `export`, and `import type` for type-only imports
 - Use `camelCase` for variables, functions, and properties, `PascalCase` for classes, types, and interfaces, and `kebab-case` for application files and directories
+- Keep local types in the file that uses them and types shared within a module in its `types.ts`. Infer types from validation schemas and reuse generated persistence types. Place `.d.ts` library augmentations next to the related integration or middleware
 - Use `snake_case` for SQL tables and columns, and `<singular_entity>_id` for dedicated primary keys, preserving composite and shared keys
 - Follow [Prettier](.prettierrc.json), [TypeScript](tsconfig.json), and [ESLint](eslint.config.mjs)
 

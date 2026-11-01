@@ -1,6 +1,10 @@
 {
 	"name": "medical-data-hub",
 	"private": true,
+	"type": "module",
+	"workspaces": [
+		"apps/*"
+	],
 	"scripts": {
 		"format": "prettier --write \"**/*.{ts,mts,cts,js,mjs,cjs,json}\"",
 		"format:check": "prettier --check \"**/*.{ts,mts,cts,js,mjs,cjs,json}\"",
