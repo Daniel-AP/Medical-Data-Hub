@@ -1,0 +1,68 @@
+{
+	"realm": "medical-data-hub",
+	"enabled": true,
+	"roles": {
+		"client": {
+			"medical-data-hub-api": [
+				{ "name": "platform_administrator" },
+				{ "name": "clinic_administrator" },
+				{ "name": "reception" },
+				{ "name": "healthcare_professional" }
+			]
+		}
+	},
+	"clients": [
+		{
+			"clientId": "medical-data-hub-api",
+			"enabled": true,
+			"protocol": "openid-connect",
+			"publicClient": false,
+			"secret": "medical_data_hub_api_dev",
+			"standardFlowEnabled": false,
+			"directAccessGrantsEnabled": false,
+			"serviceAccountsEnabled": true,
+			"fullScopeAllowed": false,
+			"defaultClientScopes": ["roles"]
+		},
+		{
+			"clientId": "medical-data-hub-postman",
+			"enabled": true,
+			"protocol": "openid-connect",
+			"publicClient": true,
+			"standardFlowEnabled": true,
+			"directAccessGrantsEnabled": false,
+			"serviceAccountsEnabled": false,
+			"fullScopeAllowed": false,
+			"redirectUris": ["https://oauth.pstmn.io/v1/browser-callback"],
+			"attributes": {
+				"pkce.code.challenge.method": "S256"
+			},
+			"defaultClientScopes": ["roles"],
+			"protocolMappers": [
+				{
+					"name": "medical-data-hub-api-audience",
+					"protocol": "openid-connect",
+					"protocolMapper": "oidc-audience-mapper",
+					"config": {
+						"included.client.audience": "medical-data-hub-api",
+						"access.token.claim": "true",
+						"id.token.claim": "false"
+					}
+				}
+			]
+		}
+	],
+	"clientScopeMappings": {
+		"medical-data-hub-api": [
+			{
+				"client": "medical-data-hub-postman",
+				"roles": [
+					"platform_administrator",
+					"clinic_administrator",
+					"reception",
+					"healthcare_professional"
+				]
+			}
+		]
+	}
+}

@@ -14,6 +14,51 @@ services:
       retries: 10
       start_period: 10s
 
+  keycloak-postgres:
+    image: postgres:18.6
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak_setup
+      POSTGRES_PASSWORD: keycloak_dev
+    volumes:
+      - keycloak-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak_setup
+      KC_DB_PASSWORD: keycloak_dev
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: keycloak_admin_dev
+      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    volumes:
+      - ./infra/keycloak/development:/opt/keycloak/data/import:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -ec
+        - >-
+          { printf 'HEAD /health/ready HTTP/1.0\r\n\r\n' >&0; grep -q 'HTTP/1.0 200'; } 0<>/dev/tcp/127.0.0.1/9000
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
   redis:
     image: redis:8.10.3
     command:
@@ -34,3 +79,4 @@ services:
 
 volumes:
   postgres-data:
+  keycloak-postgres-data:
