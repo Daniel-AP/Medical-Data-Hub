@@ -64,5 +64,75 @@
 				]
 			}
 		]
-	}
+	},
+	"users": [
+		{
+			"username": "platform-admin",
+			"enabled": true,
+			"firstName": "Platform",
+			"lastName": "Administrator",
+			"email": "platform-admin@example.test",
+			"credentials": [
+				{
+					"type": "password",
+					"value": "medical_data_hub_user_dev",
+					"temporary": false
+				}
+			],
+			"clientRoles": {
+				"medical-data-hub-api": ["platform_administrator"]
+			}
+		},
+		{
+			"username": "clinic-admin",
+			"enabled": true,
+			"firstName": "Clinic",
+			"lastName": "Administrator",
+			"email": "clinic-admin@example.test",
+			"credentials": [
+				{
+					"type": "password",
+					"value": "medical_data_hub_user_dev",
+					"temporary": false
+				}
+			],
+			"clientRoles": {
+				"medical-data-hub-api": ["clinic_administrator"]
+			}
+		},
+		{
+			"username": "reception",
+			"enabled": true,
+			"firstName": "Demo",
+			"lastName": "Reception",
+			"email": "reception@example.test",
+			"credentials": [
+				{
+					"type": "password",
+					"value": "medical_data_hub_user_dev",
+					"temporary": false
+				}
+			],
+			"clientRoles": {
+				"medical-data-hub-api": ["reception"]
+			}
+		},
+		{
+			"username": "healthcare-professional",
+			"enabled": true,
+			"firstName": "Demo",
+			"lastName": "Professional",
+			"email": "healthcare-professional@example.test",
+			"credentials": [
+				{
+					"type": "password",
+					"value": "medical_data_hub_user_dev",
+					"temporary": false
+				}
+			],
+			"clientRoles": {
+				"medical-data-hub-api": ["healthcare_professional"]
+			}
+		}
+	]
 }
