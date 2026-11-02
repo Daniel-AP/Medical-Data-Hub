@@ -1,6 +1,1 @@
-{
-	"tabWidth": 4,
-	"useTabs": true,
-	"singleQuote": false,
-	"semi": true
-}
+{ "tabWidth": 4, "useTabs": true, "printWidth": 120, "objectWrap": "collapse", "singleQuote": false, "semi": true }

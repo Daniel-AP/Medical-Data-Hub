@@ -1,8 +1,1 @@
-{
-	"compilerOptions": {
-		"module": "NodeNext",
-		"types": ["node"],
-		"strict": true,
-		"noEmit": true
-	}
-}
+{ "compilerOptions": { "module": "NodeNext", "types": ["node"], "strict": true, "noEmit": true } }

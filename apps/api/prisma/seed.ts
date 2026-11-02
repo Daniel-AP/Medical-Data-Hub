@@ -1,20 +1,9 @@
 import { readFileSync } from "node:fs";
-import {
-	AppointmentState,
-	AuditAction,
-	AuditResource,
-	UserRole,
-} from "../src/generated/prisma/client.js";
+import { AppointmentState, AuditAction, AuditResource, UserRole } from "../src/generated/prisma/client.js";
 import { prisma } from "../src/database/client.js";
 
 const realm = JSON.parse(
-	readFileSync(
-		new URL(
-			"../../../infra/keycloak/development/medical-data-hub-realm.json",
-			import.meta.url,
-		),
-		"utf8",
-	),
+	readFileSync(new URL("../../../infra/keycloak/development/medical-data-hub-realm.json", import.meta.url), "utf8"),
 ) as { users: { id?: string; username: string }[] };
 
 const localDate = new Intl.DateTimeFormat("en-CA", {
@@ -24,15 +13,10 @@ const localDate = new Intl.DateTimeFormat("en-CA", {
 	day: "2-digit",
 }).format(new Date());
 const weekStartAt = new Date(`${localDate}T00:00:00-06:00`);
-weekStartAt.setUTCDate(
-	weekStartAt.getUTCDate() - ((weekStartAt.getUTCDay() + 6) % 7),
-);
+weekStartAt.setUTCDate(weekStartAt.getUTCDate() - ((weekStartAt.getUTCDay() + 6) % 7));
 
 function dateAt(weekOffset: number, weekday: number, minute: number) {
-	return new Date(
-		weekStartAt.getTime() +
-			((weekOffset * 7 + weekday - 1) * 1440 + minute) * 60_000,
-	);
+	return new Date(weekStartAt.getTime() + ((weekOffset * 7 + weekday - 1) * 1440 + minute) * 60_000);
 }
 
 function numberedUsername(username: string, number: number) {
@@ -40,14 +24,7 @@ function numberedUsername(username: string, number: number) {
 }
 
 const clinicNames = ["Clínica Central", "Clínica Norte", "Clínica Sur"];
-const patientNames = [
-	"Ana Solano",
-	"Luis Mora",
-	"Sofía Vega",
-	"Diego Rojas",
-	"Carla Ruiz",
-	"Pablo León",
-];
+const patientNames = ["Ana Solano", "Luis Mora", "Sofía Vega", "Diego Rojas", "Carla Ruiz", "Pablo León"];
 const scheduleIntervals = [
 	{ startMinute: 480, endMinute: 720 },
 	{ startMinute: 780, endMinute: 1020 },
@@ -81,33 +58,19 @@ try {
 			return false;
 		}
 
-		async function createUser(
-			username: string,
-			role: UserRole,
-			clinicId: string | null,
-		) {
-			const identity = realm.users.find(
-				(user) => user.username === username,
-			);
+		async function createUser(username: string, role: UserRole, clinicId: string | null) {
+			const identity = realm.users.find((user) => user.username === username);
 			if (!identity?.id) {
 				throw new Error(`Missing seed identity: ${username}`);
 			}
 
-			return tx.user.create({
-				data: { identityId: identity.id, clinicId, role },
-			});
+			return tx.user.create({ data: { identityId: identity.id, clinicId, role } });
 		}
 
-		await createUser(
-			"platform-administrator",
-			UserRole.platformAdministrator,
-			null,
-		);
+		await createUser("platform-administrator", UserRole.platformAdministrator, null);
 
 		for (const [clinicIndex, name] of clinicNames.entries()) {
-			const { clinicId } = await tx.clinic.create({
-				data: { name, timeZone: "America/Costa_Rica" },
-			});
+			const { clinicId } = await tx.clinic.create({ data: { name, timeZone: "America/Costa_Rica" } });
 			await tx.clinicAvailabilityVersion.create({ data: { clinicId } });
 			await createUser(
 				numberedUsername("clinic-administrator", clinicIndex + 1),
@@ -120,34 +83,20 @@ try {
 				clinicId,
 			);
 
-			const [generalSpecialty, physiotherapySpecialty] =
-				await Promise.all(
-					["Medicina general", "Fisioterapia"].map((name) =>
-						tx.specialty.create({ data: { clinicId, name } }),
-					),
-				);
-			const [generalService, followUpService, physiotherapyService] =
-				await Promise.all(
-					[
-						{
-							name: "Consulta general",
-							specialtyId: generalSpecialty.specialtyId,
-							durationMinutes: 30,
-						},
-						{
-							name: "Consulta de seguimiento",
-							specialtyId: generalSpecialty.specialtyId,
-							durationMinutes: 15,
-						},
-						{
-							name: "Sesión de fisioterapia",
-							specialtyId: physiotherapySpecialty.specialtyId,
-							durationMinutes: 45,
-						},
-					].map((data) =>
-						tx.service.create({ data: { clinicId, ...data } }),
-					),
-				);
+			const [generalSpecialty, physiotherapySpecialty] = await Promise.all(
+				["Medicina general", "Fisioterapia"].map((name) => tx.specialty.create({ data: { clinicId, name } })),
+			);
+			const [generalService, followUpService, physiotherapyService] = await Promise.all(
+				[
+					{ name: "Consulta general", specialtyId: generalSpecialty.specialtyId, durationMinutes: 30 },
+					{ name: "Consulta de seguimiento", specialtyId: generalSpecialty.specialtyId, durationMinutes: 15 },
+					{
+						name: "Sesión de fisioterapia",
+						specialtyId: physiotherapySpecialty.specialtyId,
+						durationMinutes: 45,
+					},
+				].map((data) => tx.service.create({ data: { clinicId, ...data } })),
+			);
 
 			const patientIds: string[] = [];
 			for (const [patientIndex, name] of patientNames.entries()) {
@@ -156,9 +105,7 @@ try {
 						clinicId,
 						identification: `DEMO-${patientIndex + 1}`,
 						name,
-						dateOfBirth: new Date(
-							`${1985 + patientIndex}-05-15T00:00:00Z`,
-						),
+						dateOfBirth: new Date(`${1985 + patientIndex}-05-15T00:00:00Z`),
 						email: `patient-${clinicIndex + 1}-${patientIndex + 1}@example.test`,
 					},
 				});
@@ -181,56 +128,28 @@ try {
 				[physiotherapyService],
 			].entries()) {
 				const professionalUser = await createUser(
-					numberedUsername(
-						"healthcare-professional",
-						clinicIndex * 3 + professionalIndex + 1,
-					),
+					numberedUsername("healthcare-professional", clinicIndex * 3 + professionalIndex + 1),
 					UserRole.healthcareProfessional,
 					clinicId,
 				);
 				const { professionalId } = await tx.professional.create({
-					data: {
-						clinicId,
-						userId: professionalUser.userId,
-						specialtyId: services[0].specialtyId,
-					},
+					data: { clinicId, userId: professionalUser.userId, specialtyId: services[0].specialtyId },
 				});
 				await tx.professionalService.createMany({
-					data: services.map(({ serviceId }) => ({
-						clinicId,
-						professionalId,
-						serviceId,
-					})),
+					data: services.map(({ serviceId }) => ({ clinicId, professionalId, serviceId })),
 				});
 				await tx.professionalSchedule.createMany({
 					data: [1, 2, 3, 4, 5].flatMap((weekday) =>
-						scheduleIntervals.map((interval) => ({
-							clinicId,
-							professionalId,
-							weekday,
-							...interval,
-						})),
+						scheduleIntervals.map((interval) => ({ clinicId, professionalId, weekday, ...interval })),
 					),
 				});
 				await tx.professionalBlock.create({
-					data: {
-						clinicId,
-						professionalId,
-						startAt: dateAt(1, 5, 840),
-						endAt: dateAt(1, 5, 900),
-					},
+					data: { clinicId, professionalId, startAt: dateAt(1, 5, 840), endAt: dateAt(1, 5, 900) },
 				});
 
-				for (const [
-					appointmentIndex,
-					{ startAt, state },
-				] of appointmentFixtures.entries()) {
-					const { serviceId, durationMinutes } =
-						services[appointmentIndex % services.length];
-					const patientId =
-						patientIds[
-							professionalIndex * 2 + (appointmentIndex % 2)
-						];
+				for (const [appointmentIndex, { startAt, state }] of appointmentFixtures.entries()) {
+					const { serviceId, durationMinutes } = services[appointmentIndex % services.length];
+					const patientId = patientIds[professionalIndex * 2 + (appointmentIndex % 2)];
 					const durationMs = durationMinutes * 60_000;
 					const appointmentData = {
 						clinicId,
@@ -241,19 +160,16 @@ try {
 						endAt: new Date(startAt.getTime() + durationMs),
 					};
 					const isCancelled = state === AppointmentState.cancelled;
-					const { appointmentId, endAt } =
-						await tx.appointment.create({
-							data: {
-								...appointmentData,
-								state,
-								cancelledByUserId: isCancelled
-									? receptionUser.userId
-									: null,
-								cancellationReason: isCancelled
-									? "Cancelación de demostración solicitada por el paciente."
-									: null,
-							},
-						});
+					const { appointmentId, endAt } = await tx.appointment.create({
+						data: {
+							...appointmentData,
+							state,
+							cancelledByUserId: isCancelled ? receptionUser.userId : null,
+							cancellationReason: isCancelled
+								? "Cancelación de demostración solicitada por el paciente."
+								: null,
+						},
+					});
 
 					if (state === AppointmentState.attended) {
 						await tx.clinicalNote.create({
@@ -282,9 +198,7 @@ try {
 							data: {
 								...appointmentData,
 								startAt: replacementStartAt,
-								endAt: new Date(
-									replacementStartAt.getTime() + durationMs,
-								),
+								endAt: new Date(replacementStartAt.getTime() + durationMs),
 								state: AppointmentState.reserved,
 								previousAppointmentId: appointmentId,
 							},
@@ -296,11 +210,7 @@ try {
 
 		return true;
 	});
-	console.log(
-		inserted
-			? "Database seed completed."
-			: "Seed skipped: domain tables already contain data.",
-	);
+	console.log(inserted ? "Database seed completed." : "Seed skipped: domain tables already contain data.");
 } catch {
 	console.error("Database seed failed.");
 	process.exitCode = 1;
