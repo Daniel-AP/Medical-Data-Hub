@@ -1,6 +1,7 @@
 {
 	"realm": "medical-data-hub",
 	"enabled": true,
+	"adminPermissionsEnabled": true,
 	"roles": {
 		"client": {
 			"medical-data-hub-api": [
@@ -14,6 +15,7 @@
 	"clients": [
 		{
 			"clientId": "medical-data-hub-api",
+			"name": "Medical Data Hub API",
 			"enabled": true,
 			"protocol": "openid-connect",
 			"publicClient": false,
@@ -26,6 +28,7 @@
 		},
 		{
 			"clientId": "medical-data-hub-postman",
+			"name": "Medical Data Hub Postman (Development)",
 			"enabled": true,
 			"protocol": "openid-connect",
 			"publicClient": true,
@@ -40,7 +43,7 @@
 			"defaultClientScopes": ["roles"],
 			"protocolMappers": [
 				{
-					"name": "medical-data-hub-api-audience",
+					"name": "Include API as access token audience",
 					"protocol": "openid-connect",
 					"protocolMapper": "oidc-audience-mapper",
 					"config": {
@@ -50,9 +53,75 @@
 					}
 				}
 			]
+		},
+		{
+			"clientId": "medical-data-hub-role-sync-worker",
+			"name": "Medical Data Hub Role Synchronization Worker",
+			"enabled": true,
+			"protocol": "openid-connect",
+			"publicClient": false,
+			"secret": "medical_data_hub_role_sync_worker_dev",
+			"standardFlowEnabled": false,
+			"directAccessGrantsEnabled": false,
+			"serviceAccountsEnabled": true,
+			"fullScopeAllowed": false,
+			"defaultClientScopes": ["roles"]
+		},
+		{
+			"clientId": "admin-permissions",
+			"authorizationServicesEnabled": true,
+			"authorizationSettings": {
+				"allowRemoteResourceManagement": false,
+				"policyEnforcementMode": "ENFORCING",
+				"policies": [
+					{
+						"name": "Match role synchronization worker account",
+						"type": "user",
+						"logic": "POSITIVE",
+						"decisionStrategy": "UNANIMOUS",
+						"config": {
+							"users": "[\"service-account-medical-data-hub-role-sync-worker\"]"
+						}
+					},
+					{
+						"name": "Allow worker to change user role assignments",
+						"type": "scope",
+						"logic": "POSITIVE",
+						"decisionStrategy": "UNANIMOUS",
+						"config": {
+							"defaultResourceType": "Users",
+							"resources": "[\"Users\"]",
+							"scopes": "[\"map-roles\"]",
+							"applyPolicies": "[\"Match role synchronization worker account\"]"
+						}
+					},
+					{
+						"name": "Allow worker to view and assign API roles",
+						"type": "scope",
+						"logic": "POSITIVE",
+						"decisionStrategy": "UNANIMOUS",
+						"config": {
+							"defaultResourceType": "Clients",
+							"resources": "[\"medical-data-hub-api\"]",
+							"scopes": "[\"view\",\"map-roles\"]",
+							"applyPolicies": "[\"Match role synchronization worker account\"]"
+						}
+					}
+				]
+			}
 		}
 	],
 	"clientScopeMappings": {
+		"realm-management": [
+			{
+				"client": "medical-data-hub-api",
+				"roles": ["view-users"]
+			},
+			{
+				"client": "medical-data-hub-role-sync-worker",
+				"roles": ["view-users", "query-clients"]
+			}
+		],
 		"medical-data-hub-api": [
 			{
 				"client": "medical-data-hub-postman",
@@ -67,11 +136,27 @@
 	},
 	"users": [
 		{
-			"username": "platform-admin",
+			"username": "service-account-medical-data-hub-api",
+			"enabled": true,
+			"serviceAccountClientId": "medical-data-hub-api",
+			"clientRoles": {
+				"realm-management": ["view-users"]
+			}
+		},
+		{
+			"username": "service-account-medical-data-hub-role-sync-worker",
+			"enabled": true,
+			"serviceAccountClientId": "medical-data-hub-role-sync-worker",
+			"clientRoles": {
+				"realm-management": ["view-users", "query-clients"]
+			}
+		},
+		{
+			"username": "platform-administrator",
 			"enabled": true,
 			"firstName": "Platform",
 			"lastName": "Administrator",
-			"email": "platform-admin@example.test",
+			"email": "platform-administrator@example.test",
 			"credentials": [
 				{
 					"type": "password",
@@ -84,11 +169,11 @@
 			}
 		},
 		{
-			"username": "clinic-admin",
+			"username": "clinic-administrator",
 			"enabled": true,
 			"firstName": "Clinic",
 			"lastName": "Administrator",
-			"email": "clinic-admin@example.test",
+			"email": "clinic-administrator@example.test",
 			"credentials": [
 				{
 					"type": "password",
