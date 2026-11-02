@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:18.6
     environment:
-      POSTGRES_DB: medical_data_hub
-      POSTGRES_USER: medical_data_hub_setup
-      POSTGRES_PASSWORD: medical_data_hub_dev
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:
@@ -17,9 +17,9 @@ services:
   keycloak-postgres:
     image: postgres:18.6
     environment:
-      POSTGRES_DB: keycloak
-      POSTGRES_USER: keycloak_setup
-      POSTGRES_PASSWORD: keycloak_dev
+      POSTGRES_DB: ${KEYCLOAK_POSTGRES_DB}
+      POSTGRES_USER: ${KEYCLOAK_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${KEYCLOAK_POSTGRES_PASSWORD}
     volumes:
       - keycloak-postgres-data:/var/lib/postgresql
     healthcheck:
@@ -34,12 +34,12 @@ services:
     command: ["start-dev", "--import-realm"]
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak
-      KC_DB_USERNAME: keycloak_setup
-      KC_DB_PASSWORD: keycloak_dev
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: keycloak_admin_dev
-      KC_HOSTNAME: http://localhost:8080
+      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/${KEYCLOAK_POSTGRES_DB}
+      KC_DB_USERNAME: ${KEYCLOAK_POSTGRES_USER}
+      KC_DB_PASSWORD: ${KEYCLOAK_POSTGRES_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+      KC_HOSTNAME: ${KC_HOSTNAME}
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
