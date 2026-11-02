@@ -78,23 +78,12 @@ model User {
   isActive Boolean @default(true) @map("is_active")
 
   clinic Clinic? @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
-  roleSyncTasks RoleSyncTask[]
   professional Professional?
   cancelledAppointments Appointment[]
   auditRecords AuditRecord[]
 
   @@unique([clinicId, userId], map: "users_clinic_user_key")
   @@map("users")
-}
-
-model RoleSyncTask {
-  roleSyncTaskId String @id @default(dbgenerated("gen_random_uuid()")) @map("role_sync_task_id") @db.Uuid
-  userId String @map("user_id") @db.Uuid
-  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
-
-  user User @relation(fields: [userId], references: [userId], onDelete: NoAction, onUpdate: NoAction)
-
-  @@map("role_sync_tasks")
 }
 
 model Specialty {

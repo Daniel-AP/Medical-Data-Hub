@@ -5,10 +5,18 @@
 	"roles": {
 		"client": {
 			"medical-data-hub-api": [
-				{ "name": "platform_administrator" },
-				{ "name": "clinic_administrator" },
-				{ "name": "reception" },
-				{ "name": "healthcare_professional" }
+				{
+					"name": "platform_administrator"
+				},
+				{
+					"name": "clinic_administrator"
+				},
+				{
+					"name": "reception"
+				},
+				{
+					"name": "healthcare_professional"
+				}
 			]
 		}
 	},
@@ -40,7 +48,7 @@
 			"attributes": {
 				"pkce.code.challenge.method": "S256"
 			},
-			"defaultClientScopes": ["roles"],
+			"defaultClientScopes": ["basic", "roles"],
 			"protocolMappers": [
 				{
 					"name": "Include API as access token audience",
@@ -55,19 +63,6 @@
 			]
 		},
 		{
-			"clientId": "medical-data-hub-role-sync-worker",
-			"name": "Medical Data Hub Role Synchronization Worker",
-			"enabled": true,
-			"protocol": "openid-connect",
-			"publicClient": false,
-			"secret": "medical_data_hub_role_sync_worker_dev",
-			"standardFlowEnabled": false,
-			"directAccessGrantsEnabled": false,
-			"serviceAccountsEnabled": true,
-			"fullScopeAllowed": false,
-			"defaultClientScopes": ["roles"]
-		},
-		{
 			"clientId": "admin-permissions",
 			"authorizationServicesEnabled": true,
 			"authorizationSettings": {
@@ -75,16 +70,16 @@
 				"policyEnforcementMode": "ENFORCING",
 				"policies": [
 					{
-						"name": "Match role synchronization worker account",
+						"name": "Match API service account",
 						"type": "user",
 						"logic": "POSITIVE",
 						"decisionStrategy": "UNANIMOUS",
 						"config": {
-							"users": "[\"service-account-medical-data-hub-role-sync-worker\"]"
+							"users": "[\"service-account-medical-data-hub-api\"]"
 						}
 					},
 					{
-						"name": "Allow worker to change user role assignments",
+						"name": "Allow API to change user role assignments",
 						"type": "scope",
 						"logic": "POSITIVE",
 						"decisionStrategy": "UNANIMOUS",
@@ -92,11 +87,11 @@
 							"defaultResourceType": "Users",
 							"resources": "[\"Users\"]",
 							"scopes": "[\"map-roles\"]",
-							"applyPolicies": "[\"Match role synchronization worker account\"]"
+							"applyPolicies": "[\"Match API service account\"]"
 						}
 					},
 					{
-						"name": "Allow worker to view and assign API roles",
+						"name": "Allow API to view and assign API roles",
 						"type": "scope",
 						"logic": "POSITIVE",
 						"decisionStrategy": "UNANIMOUS",
@@ -104,7 +99,7 @@
 							"defaultResourceType": "Clients",
 							"resources": "[\"medical-data-hub-api\"]",
 							"scopes": "[\"view\",\"map-roles\"]",
-							"applyPolicies": "[\"Match role synchronization worker account\"]"
+							"applyPolicies": "[\"Match API service account\"]"
 						}
 					}
 				]
@@ -115,10 +110,6 @@
 		"realm-management": [
 			{
 				"client": "medical-data-hub-api",
-				"roles": ["view-users"]
-			},
-			{
-				"client": "medical-data-hub-role-sync-worker",
 				"roles": ["view-users", "query-clients"]
 			}
 		],
@@ -140,18 +131,11 @@
 			"enabled": true,
 			"serviceAccountClientId": "medical-data-hub-api",
 			"clientRoles": {
-				"realm-management": ["view-users"]
-			}
-		},
-		{
-			"username": "service-account-medical-data-hub-role-sync-worker",
-			"enabled": true,
-			"serviceAccountClientId": "medical-data-hub-role-sync-worker",
-			"clientRoles": {
 				"realm-management": ["view-users", "query-clients"]
 			}
 		},
 		{
+			"id": "10000000-0000-4000-8000-000000000001",
 			"username": "platform-administrator",
 			"enabled": true,
 			"firstName": "Platform",
@@ -169,6 +153,7 @@
 			}
 		},
 		{
+			"id": "10000000-0000-4000-8000-000000000002",
 			"username": "clinic-administrator",
 			"enabled": true,
 			"firstName": "Clinic",
@@ -186,6 +171,7 @@
 			}
 		},
 		{
+			"id": "10000000-0000-4000-8000-000000000003",
 			"username": "reception",
 			"enabled": true,
 			"firstName": "Demo",
@@ -203,6 +189,7 @@
 			}
 		},
 		{
+			"id": "10000000-0000-4000-8000-000000000004",
 			"username": "healthcare-professional",
 			"enabled": true,
 			"firstName": "Demo",
