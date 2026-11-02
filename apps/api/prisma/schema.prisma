@@ -1,0 +1,267 @@
+generator client {
+  provider = "prisma-client"
+  output = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  platformAdministrator @map("platform_administrator")
+  clinicAdministrator @map("clinic_administrator")
+  reception
+  healthcareProfessional @map("healthcare_professional")
+
+  @@map("user_role")
+}
+
+enum AppointmentState {
+  reserved
+  attended
+  absent
+  cancelled
+  rescheduled
+
+  @@map("appointment_state")
+}
+
+enum AuditResource {
+  patientContact @map("patient_contact")
+  clinicalNote @map("clinical_note")
+
+  @@map("audit_resource")
+}
+
+enum AuditAction {
+  read
+  write
+
+  @@map("audit_action")
+}
+
+model Clinic {
+  clinicId String @id @default(dbgenerated("gen_random_uuid()")) @map("clinic_id") @db.Uuid
+  name String @db.VarChar(200)
+  timeZone String @map("time_zone") @db.VarChar(64)
+
+  availabilityVersion ClinicAvailabilityVersion?
+  users User[]
+  specialties Specialty[]
+  professionals Professional[]
+  services Service[]
+  professionalServices ProfessionalService[]
+  professionalSchedules ProfessionalSchedule[]
+  professionalBlocks ProfessionalBlock[]
+  patients Patient[]
+  appointments Appointment[]
+  clinicalNotes ClinicalNote[]
+  auditRecords AuditRecord[]
+
+  @@map("clinics")
+}
+
+model ClinicAvailabilityVersion {
+  clinicId String @id @map("clinic_id") @db.Uuid
+  version BigInt @default(0)
+
+  clinic Clinic @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("clinic_availability_versions")
+}
+
+model User {
+  userId String @id @default(dbgenerated("gen_random_uuid()")) @map("user_id") @db.Uuid
+  identityId String @unique(map: "users_identity_id_key") @map("identity_id") @db.VarChar(255)
+  clinicId String? @map("clinic_id") @db.Uuid
+  role UserRole
+  isActive Boolean @default(true) @map("is_active")
+
+  clinic Clinic? @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+  roleSyncTasks RoleSyncTask[]
+  professional Professional?
+  cancelledAppointments Appointment[]
+  auditRecords AuditRecord[]
+
+  @@unique([clinicId, userId], map: "users_clinic_user_key")
+  @@map("users")
+}
+
+model RoleSyncTask {
+  roleSyncTaskId String @id @default(dbgenerated("gen_random_uuid()")) @map("role_sync_task_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  createdAt DateTime @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [userId], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("role_sync_tasks")
+}
+
+model Specialty {
+  specialtyId String @id @default(dbgenerated("gen_random_uuid()")) @map("specialty_id") @db.Uuid
+  clinicId String @map("clinic_id") @db.Uuid
+  name String @db.VarChar(100)
+
+  clinic Clinic @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+  professionals Professional[]
+  services Service[]
+
+  @@unique([clinicId, specialtyId], map: "specialties_clinic_specialty_key")
+  @@map("specialties")
+}
+
+model Professional {
+  professionalId String @id @default(dbgenerated("gen_random_uuid()")) @map("professional_id") @db.Uuid
+  clinicId String @map("clinic_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  specialtyId String @map("specialty_id") @db.Uuid
+
+  clinic Clinic @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+  user User @relation(fields: [clinicId, userId], references: [clinicId, userId], onDelete: NoAction, onUpdate: NoAction)
+  specialty Specialty @relation(fields: [clinicId, specialtyId], references: [clinicId, specialtyId], onDelete: NoAction, onUpdate: NoAction)
+  professionalServices ProfessionalService[]
+  schedules ProfessionalSchedule[]
+  blocks ProfessionalBlock[]
+  appointments Appointment[]
+
+  @@unique([clinicId, professionalId], map: "professionals_clinic_professional_key")
+  @@unique([clinicId, userId], map: "professionals_user_key")
+  @@map("professionals")
+}
+
+model Service {
+  serviceId String @id @default(dbgenerated("gen_random_uuid()")) @map("service_id") @db.Uuid
+  clinicId String @map("clinic_id") @db.Uuid
+  name String @db.VarChar(200)
+  durationMinutes Int @map("duration_minutes")
+  specialtyId String @map("specialty_id") @db.Uuid
+  isActive Boolean @default(true) @map("is_active")
+
+  clinic Clinic @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+  specialty Specialty @relation(fields: [clinicId, specialtyId], references: [clinicId, specialtyId], onDelete: NoAction, onUpdate: NoAction)
+  professionalServices ProfessionalService[]
+  appointments Appointment[]
+
+  @@unique([clinicId, serviceId], map: "services_clinic_service_key")
+  @@map("services")
+}
+
+model ProfessionalService {
+  clinicId String @map("clinic_id") @db.Uuid
+  professionalId String @map("professional_id") @db.Uuid
+  serviceId String @map("service_id") @db.Uuid
+  isActive Boolean @default(true) @map("is_active")
+
+  clinic Clinic @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+  professional Professional @relation(fields: [clinicId, professionalId], references: [clinicId, professionalId], onDelete: NoAction, onUpdate: NoAction)
+  service Service @relation(fields: [clinicId, serviceId], references: [clinicId, serviceId], onDelete: NoAction, onUpdate: NoAction)
+  appointments Appointment[]
+
+  @@id([clinicId, professionalId, serviceId])
+  @@map("professional_services")
+}
+
+model ProfessionalSchedule {
+  professionalScheduleId String @id @default(dbgenerated("gen_random_uuid()")) @map("professional_schedule_id") @db.Uuid
+  clinicId String @map("clinic_id") @db.Uuid
+  professionalId String @map("professional_id") @db.Uuid
+  weekday Int @db.SmallInt
+  startMinute Int @map("start_minute") @db.SmallInt
+  endMinute Int @map("end_minute") @db.SmallInt
+
+  clinic Clinic @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+  professional Professional @relation(fields: [clinicId, professionalId], references: [clinicId, professionalId], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("professional_schedules")
+}
+
+model ProfessionalBlock {
+  professionalBlockId String @id @default(dbgenerated("gen_random_uuid()")) @map("professional_block_id") @db.Uuid
+  clinicId String @map("clinic_id") @db.Uuid
+  professionalId String @map("professional_id") @db.Uuid
+  startAt DateTime @map("start_at") @db.Timestamptz(3)
+  endAt DateTime @map("end_at") @db.Timestamptz(3)
+
+  clinic Clinic @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+  professional Professional @relation(fields: [clinicId, professionalId], references: [clinicId, professionalId], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("professional_blocks")
+}
+
+model Patient {
+  patientId String @id @default(dbgenerated("gen_random_uuid()")) @map("patient_id") @db.Uuid
+  clinicId String @map("clinic_id") @db.Uuid
+  identification String @db.VarChar(50)
+  name String @db.VarChar(200)
+  dateOfBirth DateTime @map("date_of_birth") @db.Date
+  email String? @db.VarChar(320)
+  phone String? @db.VarChar(32)
+
+  clinic Clinic @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+  appointments Appointment[]
+  auditRecords AuditRecord[]
+
+  @@unique([clinicId, patientId], map: "patients_clinic_patient_key")
+  @@unique([clinicId, identification], map: "patients_identification_key")
+  @@map("patients")
+}
+
+model Appointment {
+  appointmentId String @id @default(dbgenerated("gen_random_uuid()")) @map("appointment_id") @db.Uuid
+  clinicId String @map("clinic_id") @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  professionalId String @map("professional_id") @db.Uuid
+  serviceId String @map("service_id") @db.Uuid
+  startAt DateTime @map("start_at") @db.Timestamptz(3)
+  endAt DateTime @map("end_at") @db.Timestamptz(3)
+  state AppointmentState @default(reserved)
+  previousAppointmentId String? @map("previous_appointment_id") @db.Uuid
+  cancelledByUserId String? @map("cancelled_by_user_id") @db.Uuid
+  cancellationReason String? @map("cancellation_reason") @db.VarChar(500)
+
+  clinic Clinic @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+  patient Patient @relation(fields: [clinicId, patientId], references: [clinicId, patientId], onDelete: NoAction, onUpdate: NoAction)
+  professional Professional @relation(fields: [clinicId, professionalId], references: [clinicId, professionalId], onDelete: NoAction, onUpdate: NoAction)
+  service Service @relation(fields: [clinicId, serviceId], references: [clinicId, serviceId], onDelete: NoAction, onUpdate: NoAction)
+  professionalService ProfessionalService @relation(fields: [clinicId, professionalId, serviceId], references: [clinicId, professionalId, serviceId], onDelete: NoAction, onUpdate: NoAction)
+  previousAppointment Appointment? @relation("AppointmentReplacement", fields: [clinicId, previousAppointmentId, patientId, serviceId], references: [clinicId, appointmentId, patientId, serviceId], onDelete: NoAction, onUpdate: NoAction)
+  replacementAppointments Appointment[] @relation("AppointmentReplacement")
+  cancelledByUser User? @relation(fields: [clinicId, cancelledByUserId], references: [clinicId, userId], onDelete: NoAction, onUpdate: NoAction)
+  clinicalNote ClinicalNote?
+
+  @@unique([clinicId, appointmentId], map: "appointments_clinic_appointment_key")
+  @@unique([clinicId, appointmentId, patientId, serviceId], map: "appointments_replacement_target_key")
+  @@unique([clinicId, previousAppointmentId], map: "appointments_previous_key")
+  @@map("appointments")
+}
+
+model ClinicalNote {
+  appointmentId String @id @map("appointment_id") @db.Uuid
+  clinicId String @map("clinic_id") @db.Uuid
+  content String @db.Text
+
+  clinic Clinic @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+  appointment Appointment @relation(fields: [clinicId, appointmentId], references: [clinicId, appointmentId], onDelete: NoAction, onUpdate: NoAction)
+  auditRecords AuditRecord[]
+
+  @@unique([clinicId, appointmentId], map: "clinical_notes_clinic_appointment_key")
+  @@map("clinical_notes")
+}
+
+model AuditRecord {
+  auditRecordId String @id @default(dbgenerated("gen_random_uuid()")) @map("audit_record_id") @db.Uuid
+  clinicId String @map("clinic_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  resource AuditResource
+  appointmentId String? @map("appointment_id") @db.Uuid
+  action AuditAction
+  occurredAt DateTime @default(dbgenerated("clock_timestamp()")) @map("occurred_at") @db.Timestamptz(3)
+
+  clinic Clinic @relation(fields: [clinicId], references: [clinicId], onDelete: NoAction, onUpdate: NoAction)
+  user User @relation(fields: [clinicId, userId], references: [clinicId, userId], onDelete: NoAction, onUpdate: NoAction)
+  patient Patient @relation(fields: [clinicId, patientId], references: [clinicId, patientId], onDelete: NoAction, onUpdate: NoAction)
+  clinicalNote ClinicalNote? @relation(fields: [clinicId, appointmentId], references: [clinicId, appointmentId], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("audit_records")
+}

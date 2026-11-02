@@ -4,12 +4,14 @@
 	"type": "module",
 	"scripts": {
 		"dev": "tsx watch src/server.ts",
-		"start": "tsx src/server.ts"
+		"start": "tsx src/server.ts",
+		"db:validate": "prisma validate"
 	},
 	"dependencies": {
 		"express": "5.3.0"
 	},
 	"devDependencies": {
-		"@types/express": "5.0.6"
+		"@types/express": "5.0.6",
+		"prisma": "7.10.1"
 	}
 }
