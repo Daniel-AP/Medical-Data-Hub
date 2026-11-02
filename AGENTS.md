@@ -15,7 +15,7 @@ These preferences are explicit user instructions.
 - Use consistent names and parallel code structures for similar responsibilities, following existing repository patterns so related code is easy to read and navigate. Keep this uniformity without adding unnecessary layers or abstractions
 - Keep tests simple, direct, and easy to read. Focus each test on meaningful behavior, use only the setup and assertions it needs, and avoid convoluted helpers, unnecessary mocks, or extra abstraction
 - Do not put spaces around arithmetic or bitwise operators, such as `+`, `-`, `*`, `/`, `%`, `**`, `^`, and `&`. Keep spaces around comparison, equality, and logical operators, such as `===`, `!==`, `<`, `>=`, `&&`, and `||`
-- Do not put a space between `if`, `for`, or `while` and the opening parenthesis: `if(condition)`, `for(...)`, `while(condition)`
+- Do not put a space between `for` or `while` and the opening parenthesis: `for(...)`, `while(condition)`
 - For statement and function blocks with at most three nonblank code lines inside, do not add blank padding after the opening brace or before the closing brace. For blocks with four or more nonblank code lines inside, add one blank line after the opening brace and one before the closing brace. Exclude the enclosing braces when counting lines
 - Group statements by meaning: keep related statements together and separate distinct steps with blank lines. Put a blank line before every `return`, unless it is the only code line in its block
 - Use interior spaces for braces that open and close on the same line, including object literals, import/export lists, and inline blocks: `{ port, host }`, `import { app }`, `{ return value; }`

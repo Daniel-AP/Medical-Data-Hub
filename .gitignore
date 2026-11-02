@@ -1,6 +1,7 @@
 node_modules/
 .vitest/
 dist/
+/apps/api/src/generated/prisma/
 .env
 !.env.example
 .DS_Store

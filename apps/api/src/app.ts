@@ -8,7 +8,7 @@ export const router = express.Router();
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const handleError: ErrorRequestHandler = (error, _request, response, _next) => {
 
-	if(error.type === "entity.parse.failed") {
+	if (error.type === "entity.parse.failed") {
 		response.status(400).json({ error: "Invalid JSON" });
 
 		return;

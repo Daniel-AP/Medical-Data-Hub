@@ -5,7 +5,7 @@ const port = Number(process.env.PORT);
 
 app.listen({ port, host }, (error) => {
 
-	if(error) {
+	if (error) {
 		console.error(error.message);
 		process.exitCode = 1;
 
