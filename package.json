@@ -10,6 +10,7 @@
 		"format:check": "prettier --check \"**/*.{ts,mts,cts,js,mjs,cjs,json}\"",
 		"lint": "eslint .",
 		"test": "vitest run",
+		"test:auth": "vitest run --config vitest-auth.config.ts",
 		"test:watch": "vitest"
 	},
 	"devDependencies": {
