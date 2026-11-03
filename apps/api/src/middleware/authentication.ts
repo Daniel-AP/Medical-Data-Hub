@@ -1,7 +1,15 @@
+import { UserRole } from "../generated/prisma/enums.js";
 import type { RequestHandler } from "express";
 import type { createAccessTokenVerifier } from "../clients/keycloak.js";
 
 type AccessTokenVerifier = ReturnType<typeof createAccessTokenVerifier>;
+
+const roleMap = {
+	platform_administrator: UserRole.platformAdministrator,
+	clinic_administrator: UserRole.clinicAdministrator,
+	reception: UserRole.reception,
+	healthcare_professional: UserRole.healthcareProfessional,
+};
 
 export function createAuthenticationMiddleware(verifyAccessToken: AccessTokenVerifier): RequestHandler {
 	return async (request, _response, next) => {
@@ -15,7 +23,36 @@ export function createAuthenticationMiddleware(verifyAccessToken: AccessTokenVer
 			throw Object.assign(new Error("Invalid access token"), { status: 401 });
 		}
 
-		request.authentication = { identityId: payload.sub };
+		const resourceAccess = payload.resource_access;
+		const isResourceAccess = typeof resourceAccess === "object" && resourceAccess !== null;
+		const clientAccess = isResourceAccess
+			? (resourceAccess as Record<string, unknown>)["medical-data-hub-api"]
+			: undefined;
+		const isClientAccess = typeof clientAccess === "object" && clientAccess !== null;
+		const tokenRoles = isClientAccess ? (clientAccess as Record<string, unknown>).roles : undefined;
+		const roles = Array.isArray(tokenRoles)
+			? Object.entries(roleMap)
+					.filter(([tokenRole]) => tokenRoles.includes(tokenRole))
+					.map(([, domainRole]) => domainRole)
+			: [];
+
+		request.authentication = { identityId: payload.sub, roles };
+		next();
+	};
+}
+
+export function requireRoles(...allowedRoles: UserRole[]): RequestHandler {
+	return (request, _response, next) => {
+		const authentication = request.authentication;
+		if (!authentication) {
+			throw Object.assign(new Error("Authentication required"), { status: 401 });
+		}
+
+		const hasAllowedRole = allowedRoles.some((role) => authentication.roles.includes(role));
+		if (!hasAllowedRole) {
+			throw Object.assign(new Error("Insufficient role"), { status: 403 });
+		}
+
 		next();
 	};
 }

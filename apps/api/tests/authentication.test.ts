@@ -53,7 +53,7 @@ it.each(["Bearer demo-token", "bEaReR   demo-token"])(
 	async (authorization) => {
 		const response = await fetch(url, { headers: { Authorization: authorization } });
 		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ identityId: "demo-user" });
+		expect(await response.json()).toEqual({ identityId: "demo-user", roles: [] });
 		expect(verifyAccessToken).toHaveBeenCalledWith("demo-token");
 	},
 );
