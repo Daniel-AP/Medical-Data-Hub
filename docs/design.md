@@ -648,6 +648,18 @@ Database per clinic requires coordinating separate database sources, and schema 
 
 # 5. Transactions and Concurrency
 
+All SQL phases in this chapter follow these common rules. Each operation specifies its explicit isolation level, resource locks, domain checks, and writes.
+
+- Prepare authenticated clinic and permission context through [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context). Execute all queries through its scoped client on the same transaction connection
+- Retain acquired row locks until commit or rollback. Reject missing or inaccessible required resources; valid empty results follow the operation's rules
+- A validation or execution failure before commit rolls back the complete SQL phase and discards provisional results. Commit domain writes with their required audit records and availability-version changes. Report success only after commit confirmation
+- Follow [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency) for sensitive access and [Transaction and Cache Coordination](#transaction-and-cache-coordination) for availability-changing writes and cached queries. SQL row locks alone do not establish Redis freshness
+- Waiting, timeouts, retries, and uncertain outcomes follow [Conflicts, Deadlocks, and Retries](#conflicts-deadlocks-and-retries). Do not repeat confirmed phases or treat an unknown commit outcome as a confirmed rollback. A later external failure cannot undo a confirmed SQL phase
+
+Patient, user, service, professional specialty, and association activation edits use partial updates. Requests supply only the mutable fields to assign, without original values or an edit-version counter. After acquiring the operation's locks, combine the supplied fields with the current protected state and validate the complete result. Write only supplied fields; omitted fields retain their current values. Explicit `NULL` clears a field only where the data model permits it. Weekly schedules instead use complete-week replacement under the protocol below.
+
+Concurrent edits to different fields preserve both changes when the resulting record remains valid. For the same field, a later serialized write may replace an earlier committed value. The API cannot distinguish intentional assignments from stale values sent by the client, so callers must send only intended changes. Original-value comparisons and edit-version counters were considered but rejected to simplify request handling, accepting that outdated edits are not detected. Domain validation, authorization, auditing, and availability-version updates still apply.
+
 ## Overlapping Bookings
 
 ### Concurrency Risk
@@ -660,21 +672,23 @@ Locking matching appointments does not protect an empty interval because the que
 
 ### Transaction Design
 
-1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context. All database operations must use the same transaction connection. Context preparation follows [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context)
+1. Begin a `READ COMMITTED` transaction
 
-2. Acquire `FOR NO KEY UPDATE` locks on the same-clinic professional and patient rows, professionals first and patients second. When multiple rows of one type are required, acquire them in ascending identifier order. Keep the locks until commit or rollback. If a required row is missing or inaccessible, reject the request and roll back
+2. Acquire `FOR NO KEY UPDATE` locks on the same-clinic professional and patient rows, professionals first and patients second. When multiple rows of one type are required, acquire them in ascending identifier order
 
 3. Validate the service, its activation, and the professional's authorization, then calculate `end_at` from `start_at` and the service duration. [Concurrent Service and Professional Authorization Changes](#concurrent-service-and-professional-authorization-changes) protects these facts through commit; this section addresses overlap checks
 
 4. After acquiring the locks, execute fresh PostgreSQL queries to validate the complete appointment interval against the professional's weekly schedule and blocks. Schedule changes and block creation must acquire the same professional lock before their definitive checks and writes. Their detailed protocols are covered in their respective topics
 
-5. Check same-clinic appointments in state `reserved` for either the professional or the patient. An existing interval conflicts when `existing.start_at < requested.end_at` and `requested.start_at < existing.end_at`. This preserves `[start, end)` semantics and permits adjacency. Reject any conflict and roll back. An empty result permits continuation because competing bookings must first acquire the already-held entity locks
+5. Check same-clinic appointments in state `reserved` for either the professional or the patient. An existing interval conflicts when `existing.start_at < requested.end_at` and `requested.start_at < existing.end_at`. This preserves `[start, end)` semantics and permits adjacency. Reject any conflict. An empty result permits continuation because competing bookings must first acquire the already-held entity locks
 
-6. Validate whole-minute alignment and perform the final future-start check immediately before insertion, requiring `start_at > clock_timestamp()`. Reject an invalid start and roll back. This establishes that the start is future at validation time, without guaranteeing that commit finishes before that start
+6. Validate whole-minute alignment and perform the final future-start check immediately before insertion, requiring `start_at > clock_timestamp()`. Reject an invalid start. This establishes that the start is future at validation time, without guaranteeing that commit finishes before that start
 
-7. Insert the appointment as `reserved` and commit. Report success only after commit succeeds. Any failure rolls back the operation. Common waiting, deadlock, and retry policies belong to Conflicts, Deadlocks, and Retries. Redis coordination belongs to Transaction and Cache Coordination
+7. Insert the appointment as `reserved` and commit
 
-The entity locks serialize competing operations even when no appointments exist. They also make operations on different dates wait when they share a professional or patient. Ordinary reads remain possible.
+Professional and patient row locks coordinate agenda occupation even when no appointments exist. Bookings for different professionals and patients can validate concurrently, although their clinic-wide availability version increments may still wait on the shared version row. Operations sharing a professional or patient wait even on different dates. Ordinary reads remain possible.
+
+A professional-only lock was considered but would not prevent overlapping bookings for the same patient with different professionals (`I2`). A clinic-wide agenda lock was also considered but would serialize unrelated bookings within the clinic. The selected professional-and-patient protocol preserves both `I1` and `I2` with less contention than clinic-wide coordination. Service and user authorization protection follows the separate protocols referenced above.
 
 `SERIALIZABLE` with complete transaction retries was considered but would add dependency monitoring and discarded work after serialization failures. Transaction-level advisory locks were also considered but would require application-defined keys and a separate locking convention. The selected row-lock protocol uses existing entities and requires every participating booking or rescheduling path to follow it.
 
@@ -690,11 +704,11 @@ Ex: one receptionist moves an appointment to 11:00 while another moves the same 
 
 ### Transaction Design
 
-1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation and the clinic and permission context required by [Overlapping Bookings](#overlapping-bookings). Read the same-clinic original to identify its professional, patient, and service. Reject a missing or inaccessible original and roll back. This preliminary reading does not establish that rescheduling is still permitted
+1. Begin a `READ COMMITTED` transaction. Read the same-clinic original to identify its professional, patient, and service. This preliminary reading does not establish that rescheduling is still permitted
 
-2. Acquire `FOR NO KEY UPDATE` locks on the source and destination professionals in ascending identifier order, locking a shared professional only once. Then acquire the same lock on the patient. Keep these locks until commit or rollback. Reject any missing or inaccessible required entity and roll back
+2. Acquire `FOR NO KEY UPDATE` locks on the source and destination professionals in ascending identifier order, locking a shared professional only once. Then acquire the same lock on the patient
 
-3. Acquire `FOR NO KEY UPDATE` on the original appointment. Confirm that it remains `reserved` and that its clinic, professional, patient, and service match the preliminary reading. Otherwise, reject the operation and roll back. Concurrent Appointment State Transitions must use compatible state protection and preserve this acquisition order whenever both agenda resources and appointment rows are needed
+3. Acquire `FOR NO KEY UPDATE` on the original appointment. Confirm that it remains `reserved` and that its clinic, professional, patient, and service match the preliminary reading. Otherwise, reject the operation. Concurrent Appointment State Transitions must use compatible state protection and preserve this acquisition order whenever both agenda resources and appointment rows are needed
 
 4. Derive the replacement's clinic, patient, and service from the locked original. Validate the destination using [Overlapping Bookings](#overlapping-bookings), excluding only the original's `appointment_id` from both professional and patient overlap checks. All other reserved appointments remain conflicts. Preserve the existing rule allowing rescheduling with an inactive service, while requiring destination professional authorization and calculating the end from the service duration. Service and authorization protection follows [Concurrent Service and Professional Authorization Changes](#concurrent-service-and-professional-authorization-changes)
 
@@ -702,7 +716,7 @@ Ex: one receptionist moves an appointment to 11:00 while another moves the same 
 
 6. Immediately before inserting the replacement, require its whole-minute-aligned `start_at` to remain greater than `clock_timestamp()`. Insert it with a new `appointment_id`, state `reserved`, and `previous_appointment_id` referencing the original. The `appointments_previous_key` unique constraint additionally prevents multiple direct replacements
 
-7. Commit both writes together and report success only after confirmation. A destination conflict, failed validation, or database error rolls back the entire operation, including any change to the original. Release all transaction locks on completion. A later attempt against an original that is no longer `reserved` must not create another replacement. Recovery when a previous commit's outcome is unknown belongs to Conflicts, Deadlocks, and Retries
+7. Commit both writes together. A destination conflict, failed validation, or database error rolls back the entire operation, including any change to the original. A later attempt against an original that is no longer `reserved` must not create another replacement
 
 The explicit original-row lock permits state validation before either write, at the cost of another locking read and possible waits. A conditional state update was considered as an alternative, but the selected protocol protects the original throughout destination validation.
 
@@ -720,27 +734,25 @@ Cancellation must also persist its state, reason, and acting user together. Outc
 
 ### Transaction Design
 
-1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context. All queries must use the same transaction connection. Context preparation follows [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context)
+1. Begin a `READ COMMITTED` transaction
 
-2. For cancellation or outcome registration, select the same-clinic appointment by identifier with `FOR NO KEY UPDATE`. Keep the lock until commit or rollback. Reject a missing or inaccessible appointment and roll back. These operations do not acquire professional or patient row locks because they remove an appointment from the reserved set without creating a new occupation
+2. For cancellation or outcome registration, select the same-clinic appointment by identifier with `FOR NO KEY UPDATE`. These operations do not acquire professional or patient row locks because they remove an appointment from the reserved set without creating a new occupation
 
 3. After acquiring the lock, require the appointment to remain `reserved` and validate the requested operation's permissions against the protected appointment data. Reject a final state without modifying it. Coordination with concurrent user deactivation or role changes remains dependent on Clinic and User Management Consistency
 
-4. Execute the applicable branch. For cancellation, validate the reason and update `state` to `cancelled`, `cancellation_reason`, and `cancelled_by_user_id` together, deriving the user from the authenticated actor (`RF11`). For an outcome, require `clock_timestamp() > start_at` immediately before updating `state` to `attended` or `absent`, keeping both cancellation fields `NULL` (`RF12`). Reject a failed validation and roll back. The `appointments_cancellation_check` constraint enforces the cancellation-field combination
+4. Execute the applicable branch. For cancellation, validate the reason and update `state` to `cancelled`, `cancellation_reason`, and `cancelled_by_user_id` together, deriving the user from the authenticated actor (`RF11`). For an outcome, require `clock_timestamp() > start_at` immediately before updating `state` to `attended` or `absent`, keeping both cancellation fields `NULL` (`RF12`). The `appointments_cancellation_check` constraint enforces the cancellation-field combination
 
-5. Commit the change and report success only after confirmation. A database error rolls back the operation. Release the lock on completion. Once one competing transition commits a final state, another request must not overwrite it using an earlier `reserved` reading. Common waiting, deadlock, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
+5. Commit the state change. Once one competing transition commits a final state, another request must not overwrite it using an earlier `reserved` reading
 
 Rescheduling uses the same original-appointment lock and state validation through [Atomic Rescheduling](#atomic-rescheduling), including its replacement transaction. It retains the order professionals, patient, then original appointment. Any operation requiring both agenda resources and an appointment lock must acquire those resources before the appointment.
 
 Locking only the appointment avoids serializing independent cancellations or outcomes for the same professional or patient. Acquiring all three resource types was considered but would introduce additional contention without being necessary for these state changes.
 
-Availability cache coordination remains dependent on Transaction and Cache Coordination. The appointment lock alone does not establish immediate cache consistency.
-
 ## Concurrent Weekly Schedule Changes
 
 ### Concurrency Risk
 
-Concurrent weekly schedule edits can overwrite changes made after an editor read the schedule. Serializing their writes does not detect an outdated request unless its starting schedule is compared with the current one.
+Concurrent weekly schedule replacements can overwrite changes made after an editor read the schedule. The selected policy validates each proposed week against current appointments but does not detect outdated edits.
 
 Ex: two editors read the same week. One changes Monday and saves. The other submits a Tuesday change together with the earlier Monday values, unintentionally undoing the first edit.
 
@@ -748,11 +760,11 @@ Schedule changes also compete with bookings and rescheduling. Checking appointme
 
 ### Transaction Design
 
-1. Require the request to include the complete weekly schedule originally read, separately from the proposed schedule. Each original row includes `professional_schedule_id`, `weekday`, `start_minute`, and `end_minute`. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context, using the same connection throughout
+1. Require the complete proposed weekly schedule without a copy of the original week or an edit-version counter. Begin a `READ COMMITTED` transaction
 
-2. Acquire `FOR NO KEY UPDATE` on the same-clinic professional and retain it until commit or rollback. Reject a missing or inaccessible professional and roll back. Validate the actor's permission to modify that professional's schedule. Clinic and permission context handling remains dependent on Transactional Clinic and Permission Context
+2. Acquire `FOR NO KEY UPDATE` on the same-clinic professional. Validate the actor's permission to modify that professional's schedule
 
-3. Read the professional's complete current weekly schedule after acquiring the lock. Compare it with the request's original set by identifiers and values, independently of presentation order. Reject a missing or mismatching baseline without writing, and require a fresh read before another edit. An empty baseline matches only an empty current schedule. The professional row remains the locking resource even when no schedule rows exist
+3. Read the professional's complete current weekly schedule after acquiring the lock to determine the writes needed for replacement. Do not require it to match a client-supplied original week. The professional row remains the locking resource even when no schedule rows exist
 
 4. Validate the proposed intervals against the weekday and minute bounds in the [data model](#3-data-model). Scope all referenced schedule identifiers to the same clinic and professional. Construct the complete proposed week before applying any changes. The migration includes the weekday and interval CHECK constraints
 
@@ -760,13 +772,11 @@ Schedule changes also compete with bookings and rescheduling. Checking appointme
 
 6. Apply the schedule inserts, updates, and deletions needed to produce the validated proposed week within this transaction. Every participating schedule writer must acquire the same professional lock before its definitive reads and writes. Bookings and rescheduling must retain their shared professional-lock protocol through commit
 
-7. Commit the complete schedule change and report success only after confirmation. A validation failure or database error rolls back all schedule writes. Release the professional lock on completion. Stale baselines and appointment conflicts are business rejections. Common waiting, deadlock, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
+7. Commit the complete schedule change. Appointment conflicts are business rejections
 
-Comparing the complete baseline avoids adding a version field, at the cost of larger requests and conservative conflicts between edits to different weekdays. A version counter was considered but would require a model change and coordinated increments across every schedule writer.
+Complete-week replacement keeps interval and appointment-coverage validation together without requiring an original schedule copy. A later successful replacement supersedes the complete earlier week, including changes to different weekdays. Detecting outdated edits is outside the selected update policy.
 
 Appointment locks were considered but are unnecessary for this check. While the professional lock prevents new bookings and rescheduling, concurrent cancellations and outcomes can only remove appointments from the reserved set. A query may conservatively reject a schedule because it still sees an appointment being cancelled. The actor may retry after resolving the conflict.
-
-Availability cache coordination remains dependent on Transaction and Cache Coordination.
 
 ## Concurrent Schedule Block Creation
 
@@ -780,9 +790,9 @@ The selected business rule rejects conflicting blocks, reports the appointments,
 
 ### Transaction Design
 
-1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context. All queries must use the same transaction connection. Context handling remains dependent on Transactional Clinic and Permission Context
+1. Begin a `READ COMMITTED` transaction
 
-2. Acquire `FOR NO KEY UPDATE` on the same-clinic professional and retain it until commit or rollback. Reject a missing or inaccessible professional and roll back. Validate the actor's permission to create a block for that professional. This lock remains the coordination resource even when no appointments or blocks exist
+2. Acquire `FOR NO KEY UPDATE` on the same-clinic professional. Validate the actor's permission to create a block for that professional. This lock remains the coordination resource even when no appointments or blocks exist
 
 3. Validate that the requested `start_at` and `end_at` are finite and that `start_at < end_at`, using the `[start, end)` semantics in the [data model](#3-data-model). The migration includes the `professional_blocks_interval_check` constraint
 
@@ -790,13 +800,13 @@ The selected business rule rejects conflicting blocks, reports the appointments,
 
 5. If the query returns conflicts, report them and roll back without inserting the block or changing appointments. If it returns none, insert the block with the authenticated clinic, the locked professional, and the validated endpoints. The empty result permits insertion because competing bookings and rescheduling must acquire the same professional lock before their definitive checks and writes
 
-6. Commit the block and report success only after confirmation. A validation failure or database error rolls back the operation. Release the professional lock on completion. Common waiting, deadlock, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
+6. Commit the block
 
 [Overlapping Bookings](#overlapping-bookings) and [Atomic Rescheduling](#atomic-rescheduling) must check blocks after acquiring the shared professional lock. This orders competing block creation and appointment creation without relying on cached availability.
 
 Additional appointment locks were considered but would increase contention without adding protection against new bookings. Concurrent cancellations and outcomes can only remove appointments from the reserved set. A conflict query may conservatively reject a block while a cancellation remains uncommitted. The actor may retry after resolving the conflict.
 
-The professional lock also serializes block creation with other participating operations for that professional, including operations on different dates. Availability cache coordination remains dependent on Transaction and Cache Coordination.
+The professional lock also serializes block creation with other participating operations for that professional, including operations on different dates.
 
 ## Concurrent Service and Professional Authorization Changes
 
@@ -812,11 +822,11 @@ Administrative edits prepared from outdated values can overwrite newer changes, 
 
 ### Transaction Design
 
-1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context. Validate the actor's permission for the operation and use the same connection throughout. Context handling belongs to Transactional Clinic and Permission Context
+1. Begin a `READ COMMITTED` transaction and validate the actor's permission for the operation
 
-2. Acquire the required locks in the order services, professionals, patients, then appointments, sorting multiple rows of each type by identifier. Bookings and rescheduling acquire `FOR SHARE` on their service before the locks in [Overlapping Bookings](#overlapping-bookings) and [Atomic Rescheduling](#atomic-rescheduling). Service catalog edits acquire `FOR NO KEY UPDATE` on the service. Association creation, reactivation, and deactivation acquire `FOR SHARE` on the service followed by `FOR NO KEY UPDATE` on the professional. Professional specialty edits acquire `FOR NO KEY UPDATE` on the professional. Retain every lock until commit or rollback. Reject missing or inaccessible required entities and roll back
+2. Acquire the required locks in the order services, professionals, patients, then appointments, sorting multiple rows of each type by identifier. Bookings and rescheduling acquire `FOR SHARE` on their service before the locks in [Overlapping Bookings](#overlapping-bookings) and [Atomic Rescheduling](#atomic-rescheduling). Service catalog edits acquire `FOR NO KEY UPDATE` on the service. Association creation, reactivation, and deactivation acquire `FOR SHARE` on the service followed by `FOR NO KEY UPDATE` on the professional. Professional specialty edits acquire `FOR NO KEY UPDATE` on the professional
 
-3. For administrative edits, compare the locked current state with the original values supplied by the request. Service edits compare `name`, `duration_minutes`, `specialty_id`, and `is_active`. Professional specialty edits compare the original `specialty_id`. Association reactivation or deactivation compares the original `is_active`. Association creation requires the pair to remain absent. Reject missing or mismatching baselines without writing and require a fresh read before another edit
+3. For administrative edits, read the locked current state and apply only supplied mutable fields. Service edits may assign `name`, `duration_minutes`, `specialty_id`, and `is_active`. Professional specialty edits assign `specialty_id`. Association activation edits assign `is_active`. Validate the resulting state under the rules below without comparing original client values. Association creation remains a separate operation requiring the pair to be absent
 
 4. For booking or rescheduling, read and validate the service and association after acquiring their required locks. Require `professional_services.is_active` and matching professional and service specialties. New bookings additionally require `services.is_active`. Rescheduling may retain an inactive service to honor an existing commitment, but its destination association must remain active. Calculate `end_at` from the protected service duration and reuse the remaining appointment protocol
 
@@ -826,7 +836,7 @@ Administrative edits prepared from outdated values can overwrite newer changes, 
 
 7. For association creation or reactivation, require `professionals.specialty_id = services.specialty_id` within the same clinic. Insert the association or set `professional_services.is_active` to `TRUE` as applicable. Before deactivation, execute a fresh query for `reserved` appointments referencing that professional and service. Reject deactivation while any remain, requiring their cancellation or rescheduling to another authorized professional first. Otherwise, set `is_active` to `FALSE`, retaining the association and its appointment references. Appointment row locks are unnecessary because concurrent cancellations and outcomes can only remove reserved appointments, while new bookings and rescheduling require the held professional lock
 
-8. Apply only the validated operation's writes and commit. Report success only after confirmation. A failed validation or database error rolls back the entire operation and releases its locks. Stale baselines, incompatible specialties, and prohibited changes are business rejections. Common waiting, deadlock, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
+8. Apply only the validated operation's writes and commit. Duplicate associations, incompatible specialties, and prohibited changes are business rejections
 
 Shared service locks allow independent bookings to use stable catalog data concurrently. Using `FOR NO KEY UPDATE` for every service reader was considered but would unnecessarily serialize those operations.
 
@@ -834,7 +844,7 @@ The common professional lock also protects association creation when no associat
 
 Logical deactivation preserves the FK from appointments to their professional-service association. Removing that FK to permit physical deletion was considered but would weaken that relationship. The FK preserves existence, while the transaction protocol checks current activation and specialty compatibility.
 
-Exact baseline comparisons avoid adding version counters, at the cost of rejecting some independent edits to different service fields. Changes affecting availability must follow Transaction and Cache Coordination. Concurrent user deactivation and role changes remain within Clinic and User Management Consistency.
+Partial updates preserve omitted fields but permit later assignments to overwrite earlier values under the section's common update policy. Concurrent user deactivation and role changes remain within Clinic and User Management Consistency.
 
 ## Concurrent Patient Registration and Updates
 
@@ -842,33 +852,33 @@ Exact baseline comparisons avoid adding version counters, at the cost of rejecti
 
 Concurrent registrations can both find no patient with an identification and attempt to create duplicate records within one clinic (`RF14`). A preliminary lookup does not protect an absent row.
 
-Concurrent updates can overwrite values changed after an editor read the patient. Contact changes must also preserve at least one contact method and must not store empty strings as provided contact values.
+Concurrent updates can overwrite values changed after an editor read the patient when requests include those fields. Partial updates preserve omitted fields but do not detect outdated assignments. Contact changes must also preserve at least one contact method and must not store empty strings as provided contact values.
 
 Ex: one receptionist corrects a patient's phone while another edits the name using an earlier copy of the record. Saving that copy could restore the old phone.
 
-Contact reads and writes also require audit coordination (`RF18`), including reads used to compare an update's starting state.
+Contact reads and writes also require audit coordination (`RF18`), including stored contact reads used to validate an update's resulting state.
 
 ### Transaction Design
 
-1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context. Validate the actor's permission and use the same transaction connection throughout. Updates must supply the original `identification`, `name`, `date_of_birth`, `email`, and `phone` received when the patient was read. Context handling belongs to Transactional Clinic and Permission Context
+1. Begin a `READ COMMITTED` transaction and validate the actor's permission. Updates supply only intended assignments to `identification`, `name`, `date_of_birth`, `email`, and `phone`, without original values
 
-2. For registration, validate the complete proposed record and execute a normal insert. Use `patients_identification_key` on `(clinic_id, identification)` as the definitive uniqueness guarantee. A preliminary lookup cannot replace it, and an empty lookup result does not provide a row lock. Reject a conflict on this constraint without modifying or automatically reusing the existing patient. Roll back the attempted registration before reporting the business conflict
+2. For registration, validate the complete proposed record and execute a normal insert. Use `patients_identification_key` on `(clinic_id, identification)` as the definitive uniqueness guarantee. A preliminary lookup cannot replace it, and an empty lookup result does not provide a row lock. Reject a conflict on this constraint without modifying or automatically reusing the existing patient
 
-3. For an update that changes `identification` relative to its supplied baseline, acquire `FOR UPDATE` on the same-clinic patient from the start. Otherwise, acquire `FOR NO KEY UPDATE` and omit `identification` from the subsequent `UPDATE`. Retain the lock until commit or rollback. Reject a missing or inaccessible patient and roll back
+3. If an update supplies `identification`, acquire `FOR UPDATE` on the same-clinic patient from the start, even if the supplied value might equal the current one. Otherwise, acquire `FOR NO KEY UPDATE` and omit `identification` from the subsequent `UPDATE`
 
-4. After acquiring the lock, compare all baseline fields with the protected current values, treating `NULL` as matching `NULL`. Reject a missing or mismatching baseline without updating the patient and require a fresh read before another edit. Do not use a reading made before the lock as the definitive comparison
+4. After acquiring the lock, read the current record and combine it with the supplied assignments. Preserve omitted fields and interpret explicit `NULL` for `email` or `phone` as removal of that contact method. Use this protected resulting state for validation rather than a client-supplied copy of the patient
 
 5. Construct and validate the complete resulting record before writing. Require nonempty identification and name, valid field types and lengths, and at least one of `email` or `phone`. Neither contact field may be an empty string when provided. Preserve phone values as strings, including country prefixes and leading zeros. Keep `clinic_id` and `patient_id` unchanged. Apply these rules to registration as well, following the [data model](#3-data-model)
 
-6. For an update, write the validated changes together while retaining the patient lock. If `identification` changes, the same uniqueness constraint must reject an identification already used within that clinic. Do not merge patients or overwrite the conflicting record. The database constraints remain an additional guard on the resulting row
+6. For an update, write only supplied fields together. If `identification` changes, the same uniqueness constraint must reject an identification already used within that clinic. Do not merge patients or overwrite the conflicting record. The database constraints remain an additional guard on the resulting row
 
-7. Coordinate contact access and audit persistence through Sensitive Data Access and Audit Consistency before reporting success, then commit. Failed validations or database errors roll back patient writes. Audit treatment for contact reads already performed, including reads during rejected edits, follows that shared protocol. Release patient locks on completion. Duplicate identifications and stale baselines are business conflicts. Common waiting, deadlock, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
+7. Commit the patient writes with their required audit events. Audit treatment for contact reads already performed, including reads during rejected edits, follows [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency). Duplicate identifications are business conflicts
 
 Patient-only updates do not acquire explicit service, professional, or appointment row locks. Operations requiring additional domain resources must preserve the order in [Concurrent Service and Professional Authorization Changes](#concurrent-service-and-professional-authorization-changes).
 
-Explicit locking permits complete validation before writing. Conditional updates using baseline values were considered, but the selected protocol keeps comparison and validation together under the patient lock.
+Explicit locking permits validation of the complete resulting record before writing only supplied fields. Concurrent edits to different fields preserve both assignments only if their combination remains valid. If two requests remove different contact methods, reject the second removal when it would leave the patient without contact data.
 
-Exact baseline comparison avoids version counters but conservatively rejects some edits to different fields. Selecting the lock mode by the intended changes avoids using `FOR UPDATE` for every edit while acquiring the stronger mode before identification changes.
+Selecting the lock mode by whether `identification` is supplied avoids using `FOR UPDATE` for every edit and avoids a later lock upgrade after reading the current identification. Outdated assignments follow the section's common update policy.
 
 ## Concurrent Clinical Note Creation
 
@@ -882,17 +892,17 @@ Creation must also verify that the appointment is `attended` and belongs to the 
 
 ### Transaction Design
 
-1. Begin a PostgreSQL transaction with explicit `READ COMMITTED` isolation under the authenticated clinic and permission context. Require permission to create clinical notes and resolve the professional through the authenticated user's association. Do not accept a client-supplied author as proof of ownership. Use the same transaction connection throughout
+1. Begin a `READ COMMITTED` transaction. Require permission to create clinical notes and resolve the professional through the authenticated user's association. Do not accept a client-supplied author as proof of ownership
 
-2. Select the same-clinic appointment by `appointment_id` with `FOR SHARE`, without filtering by state before acquiring the lock. Retain the lock until commit or rollback. Reject a missing or inaccessible appointment and roll back. If an outcome update is already in progress, the locking read can wait before checking the resulting row
+2. Select the same-clinic appointment by `appointment_id` with `FOR SHARE`, without filtering by state before acquiring the lock. If an outcome update is already in progress, the locking read can wait before checking the resulting row
 
-3. After acquiring the lock, require `state = 'attended'` and require the appointment's `professional_id` to match the authenticated professional. Validate that the supplied `content` is nonempty text. Reject a failed validation and roll back. Derive the note's clinic and appointment identifiers from the protected appointment
+3. After acquiring the lock, require `state = 'attended'` and require the appointment's `professional_id` to match the authenticated professional. Validate that the supplied `content` is nonempty text. Derive the note's clinic and appointment identifiers from the protected appointment
 
 4. Insert the note normally. Use the PK on `clinical_notes.appointment_id` as the definitive guarantee of at most one note per appointment, including when no note row exists to lock. Reject a duplicate creation without updating the existing note or automatically returning its content. Do not use an upsert that replaces clinical content
 
 5. Insert the write audit event in the same PostgreSQL transaction. Derive `patient_id` from the protected appointment and the acting user from the authenticated context. Identify the created note, use `resource = 'clinical_note'` and `action = 'write'`, and do not copy clinical content into the event. The shared audit protocol belongs to Sensitive Data Access and Audit Consistency
 
-6. Commit the note and event together and report success only after confirmation. If either insertion or commit fails, do not report a successful creation. A failed transaction rolls back both writes and releases its locks. Duplicate creation is a business conflict. Common waiting, deadlock, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
+6. Commit the note and event together. Duplicate creation is a business conflict
 
 The shared appointment lock was selected over an ordinary read to wait for an outcome update already in progress and retain protected appointment values through creation. It does not serialize competing note creators, whose uniqueness is enforced by the note's PK.
 
@@ -910,17 +920,17 @@ Ex: a patient query succeeds but inserting its read event fails. The API must di
 
 ### Transaction Design
 
-1. Begin one PostgreSQL transaction for the operation. Establish authenticated clinic and permission context, retain the required authorization locks, and use the operation's documented isolation and domain locks. All sensitive queries, domain writes, and audit inserts use the same scoped client. A read endpoint must permit audit inserts rather than opening a `READ ONLY` transaction
+1. Use one PostgreSQL transaction for the operation, with its documented isolation and domain locks. A read endpoint must permit audit inserts rather than opening a `READ ONLY` transaction
 
-2. Retrieve sensitive content only within the authorized scope. Record one `read` event per distinct resource whose stored content is retrieved during the operation, including internal contact reads used for patient-update comparisons. For `patient_contact`, identify the clinic and patient and leave `appointment_id` as `NULL`. For `clinical_note`, identify the note through its appointment and derive the patient from that appointment. Derive the actor from authenticated context. An empty result needs no resource events; do not invent identifiers for missing records or copy sensitive values into events
+2. Retrieve sensitive content only within the authorized scope. Record one `read` event per distinct resource whose stored content is retrieved during the operation, including internal contact reads used for patient-update validation. For `patient_contact`, identify the clinic and patient and leave `appointment_id` as `NULL`. For `clinical_note`, identify the note through its appointment and derive the patient from that appointment. Derive the actor from authenticated context. An empty result needs no resource events; do not invent identifiers for missing records or copy sensitive values into events
 
 3. Insert read events in that same transaction before commit. Resources discovered by an authorized query can be recorded from its results without a separate metadata-discovery transaction or a second authorization phase. Keep retrieved values inside the operation until its commit is confirmed
 
 4. Generate write events explicitly through the common application protocol and the same scoped client. Patient registration records a `patient_contact` write. An update assigning `email` or `phone` records a contact write for each affected patient, including assignments that retain the same value. Changes confined to other patient fields need no contact write event, though any stored contact reads still need their read events. Clinical note creation records its write as specified in [Concurrent Clinical Note Creation](#concurrent-clinical-note-creation). Receiving input or obtaining identifiers alone does not create a read event
 
-5. Materialize the operation's results and commit its domain writes and all read and write events together. Do not transmit sensitive content or report success before commit confirmation. If a query, validation, audit insertion, or transaction fails, roll back the whole operation and discard its results. An audit insertion failure must prevent delivery of content already retrieved
+5. Materialize the operation's results and commit its domain writes and all read and write events together. Do not transmit sensitive content before commit confirmation. An audit insertion failure must prevent delivery of content already retrieved
 
-6. Read events from a rolled-back operation are rolled back too, including internal reads during a patient update rejected for a stale baseline. This design records reads in committed application operations; it does not retain a separate history of failed internal access attempts. An uncertain commit can leave events persisted without a response being delivered. Unknown outcomes and permitted retries follow Conflicts, Deadlocks, and Retries
+6. Read events from a rolled-back operation are rolled back too, including internal reads during a patient update rejected because its resulting record is invalid. This design records reads in committed application operations; it does not retain a separate history of failed internal access attempts. An uncertain commit can leave events persisted without a response being delivered. Unknown outcomes and permitted retries follow Conflicts, Deadlocks, and Retries
 
 7. Keep sensitive-write responses limited to identifiers and the operation result. SQL and ORM write projections must not automatically retrieve contact or clinical content. A later request for stored content uses this same single-transaction read-and-audit protocol
 
@@ -950,15 +960,15 @@ Ex: Keycloak accepts a role change, but the database connection fails before the
 
 1. Authenticate the caller and perform preliminary permission checks. For user creation, verify the supplied `identity_id` against an existing identity in the configured Keycloak realm before opening the management transaction. This workflow does not create provider identities or store credentials. Identity verification is a point-in-time check and does not lock the external account
 
-2. Use explicit `READ COMMITTED` isolation for management transactions. Establish the applicable clinic and permission context and use the same transaction connection throughout each phase. Other domain operations retain their documented isolation. Query isolation remains a separate decision under Consistent Concurrent Queries
+2. Use explicit `READ COMMITTED` isolation for management transactions. Other domain operations retain their documented isolation. Query isolation follows [Consistent Concurrent Queries](#consistent-concurrent-queries)
 
-3. Identify the required users through metadata, then acquire their row locks before domain locks. Preserve the order `users -> services -> professionals -> patients -> appointments`, sorting multiple rows of each type by identifier and avoiding duplicates. Include the actor, an administrative target, and a destination professional's user when applicable. Use `FOR SHARE` for permission and eligibility checks and `FOR NO KEY UPDATE` for a user whose role or activity will change. Acquire the stronger mode initially when one row serves both purposes. Select by identity or identifier without filtering out inactive users before locking. Retain row locks until commit or rollback and reject missing or inaccessible required users
+3. Identify the required users through metadata, then acquire their row locks before domain locks. Preserve the order `users -> services -> professionals -> patients -> appointments`, sorting multiple rows of each type by identifier and avoiding duplicates. Include the actor, an administrative target, and a destination professional's user when applicable. Use `FOR SHARE` for permission and eligibility checks and `FOR NO KEY UPDATE` for a user whose role or activity will change. Acquire the stronger mode initially when one row serves both purposes. Select by identity or identifier without filtering out inactive users before locking
 
 4. After locking, require the actor to be active, require their current `users.role` to be included in the validated token's mapped domain roles, and require that role to permit the operation (`RF17`). Derive clinic access from the protected local association. An older token role cannot restore permissions withdrawn locally. Apply this protection to the single operation transaction in [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency), including its sensitive queries and audit inserts
 
 5. For clinic registration, insert the clinic and its first active `clinic_administrator` in the same PostgreSQL transaction (`RF1`). For ordinary user registration, insert the user within the authorized clinic (`RF2`). Use normal inserts and the PKs and `users_identity_id_key` as definitive uniqueness guards. An empty preliminary lookup provides no row lock. A uniqueness conflict rolls back the complete registration, including any new clinic, without reassigning or automatically returning an existing user. Recognizing a repetition of an earlier request belongs to Conflicts, Deadlocks, and Retries
 
-6. For a role or activity edit, require the original `role` and `is_active` values read when editing began, separately from the requested changes. Compare both with the locked current values, even when editing only one field. Reject a missing or mismatching baseline without writing and require a fresh read. Validate the resulting role and clinic relationship before updating. Apply actual role changes through the synchronous provider step below. An activity-only change updates `users.is_active` without changing Keycloak `enabled`
+6. For a role or activity edit, accept only the requested assignments to `role` and `is_active`, without original values. Combine them with the locked current state, validate the resulting role and clinic relationship, and update only supplied fields. Determine actual role changes against the locked current role and apply them through the synchronous provider step below. An activity-only change updates `users.is_active` without changing Keycloak `enabled`
 
 7. Keep `users.identity_id`, `users.clinic_id`, `professionals.user_id`, and `professionals.clinic_id` unchanged. Preserve logically inactive users and historical professional profiles. A different identity or clinic requires another local account and, when needed, another professional profile. Because the previous user retains its unique identity association, the same Keycloak identity cannot be reused for that new account
 
@@ -970,11 +980,11 @@ Ex: Keycloak accepts a role change, but the database connection fails before the
 
 11. Require provider confirmation and the SQL commit before reporting complete success. On provider failure, roll back the SQL transaction. Once a provider-changing request has been sent, do not automatically retry the management operation or compensate the provider change. A timeout, process interruption, or SQL commit failure may leave the two systems inconsistent. Report an uncertain outcome when confirmation is unavailable. There is no background worker, durable synchronization queue, periodic reconciliation, or automatic repair; manual correction may be necessary
 
-12. Preserve current local authorization checks during any inconsistency. Require the local role to match a mapped token role; mismatches deny access. After a successful role change, a token containing only the previous role remains insufficient and the client must obtain a new access token. Deactivation and role changes wait for already protected transactions, allowing those transactions to finish before the administrative change commits. This does not undo content already retrieved or guarantee when a response reaches its client. Local reactivation does not enable a provider account that was disabled independently. Connection and permission context handling belongs to Transactional Clinic and Permission Context. Waiting, deadlocks, retries, and unknown commit outcomes belong to Conflicts, Deadlocks, and Retries
+12. Preserve current local authorization checks during any inconsistency. Require the local role to match a mapped token role; mismatches deny access. After a successful role change, a token containing only the previous role remains insufficient and the client must obtain a new access token. Deactivation and role changes wait for already protected transactions, allowing those transactions to finish before the administrative change commits. This does not undo content already retrieved or guarantee when a response reaches its client. Local reactivation does not enable a provider account that was disabled independently
 
 Existing identities were selected over identity creation within the registration workflow. Shared user locks permit concurrent operations by the same user while stabilizing their local permissions. Checking permissions without retaining a lock would allow an administrative change to commit while an operation continued under its earlier authorization.
 
-Exact baseline comparisons were selected over version counters, accepting conservative rejection of independent edits. Separate profile registration avoids requiring specialty data during every professional-role assignment, at the cost of temporarily rejecting operations that need a missing profile.
+Separate profile registration avoids requiring specialty data during every professional-role assignment, at the cost of temporarily rejecting operations that need a missing profile. Role and activity edits follow the section's common partial-update policy.
 
 Synchronous provider updates were selected over a background synchronization worker to reduce implementation scope. Holding the existing user lock through the provider call serializes ordinary administrative changes, at the cost of retaining a SQL connection and locks during that network wait. PostgreSQL and Keycloak still do not commit atomically. Inconsistency after exceptional failures or delayed external effects is accepted, can persist indefinitely, and requires manual correction when encountered. No automatic convergence is promised.
 
@@ -994,11 +1004,11 @@ A database snapshot does not fix a changing wall-clock reference. Sending result
 
 2. When an operation retrieves patient contact or clinical note content, record the reads in the same transaction through [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency) (`RF18`). Audit events and any domain writes commit together before sensitive results can be returned
 
-3. Begin a short PostgreSQL transaction with explicit isolation selected before its first query. Use `READ COMMITTED` when one SQL statement retrieves all related domain facts needed for the response. Use `REPEATABLE READ` when several statements must share a snapshot. Base this choice on the SQL statements retrieving related domain facts rather than the number of application or ORM calls. Audit inserts alone do not require a higher snapshot isolation level. Establish the clinic and permission context and use the same transaction connection throughout. Connection context handling belongs to Transactional Clinic and Permission Context
+3. Begin a short PostgreSQL transaction with explicit isolation selected before its first query. Use `READ COMMITTED` when one SQL statement retrieves all related domain facts needed for the response. Use `REPEATABLE READ` when several statements must share a snapshot. Base this choice on the SQL statements retrieving related domain facts rather than the number of application or ORM calls. Audit inserts alone do not require a higher snapshot isolation level
 
 4. Acquire and retain the actor's `FOR SHARE` user lock and validate current authorization through [Clinic and User Management Consistency](#clinic-and-user-management-consistency). Reject a missing, inaccessible, inactive, or unauthorized actor and roll back. The phase must permit that row lock and any audit inserts rather than declaring PostgreSQL `READ ONLY`. Database privilege handling belongs to Transactional Clinic and Permission Context. Read domain resources through ordinary snapshot queries without adding professional, patient, or appointment row locks solely for consultation
 
-5. Under `READ COMMITTED`, the domain statement supplies the common snapshot for its related results. Under `REPEATABLE READ`, the snapshot is established by the transaction's first non-transaction-control statement and retained across its queries, which can include authorization preparation. A locking read can fail if the user changed after that snapshot was established. Abort and discard that attempt rather than continuing with stale authorization. Common retry handling belongs to Conflicts, Deadlocks, and Retries
+5. Under `READ COMMITTED`, the domain statement supplies the common snapshot for its related results. Under `REPEATABLE READ`, the snapshot is established by the transaction's first non-transaction-control statement and retained across its queries, which can include authorization preparation. A locking read can fail if the user changed after that snapshot was established. Abort and discard that attempt rather than continuing with stale authorization
 
 6. After obtaining authorization locks and before time-dependent calculations, capture `clock_timestamp()` once when the response needs a current-time reference. Reuse the captured value across all related SQL queries and application calculations. Do not invoke a changing clock independently for each professional, date, or result fragment. Interpret clinic-local dates and weekly schedules using `clinics.time_zone` from the applicable data snapshot
 
@@ -1054,7 +1064,7 @@ Incomplete preparation can also appear as an ordinary empty result when policies
 
 12. Abort a phase whose preparation is missing, incomplete, inconsistent, or unsuccessful before executing its ordinary operation. Do not interpret such a failure as a valid empty business result. Independently require ordinary RLS-protected access to have a complete valid clinic context, without treating missing, empty, malformed, or `NULL` clinic values as unrestricted scope. Preparatory functions and platform creation retain only their explicitly bounded access paths. Detailed grants and policy expressions belong to [Identity, Security, and Auditing](#6-identity-security-and-auditing)
 
-13. Commit or roll back the complete phase through its transaction boundary. Transaction-local settings and role selections end with that boundary. Do not reuse a connection whose baseline or transaction state cannot be established safely. Report success only after the required commit confirmation and preserve the response rules in [Consistent Concurrent Queries](#consistent-concurrent-queries). Waiting, recovery, retries, and unknown commit outcomes belong to Conflicts, Deadlocks, and Retries
+13. Commit or roll back the complete phase through its transaction boundary. Transaction-local settings and role selections end with that boundary. Do not reuse a connection whose baseline or transaction state cannot be established safely. Preserve the response rules in [Consistent Concurrent Queries](#consistent-concurrent-queries)
 
 Transaction-local context was selected over session context with manual cleanup. The common wrapper and explicit client propagation centralize preparation instead of repeating it in each operation. The shared pool selects its operating profile after protected authorization, avoiding provisional routing to separate request pools. Operating privileges must not be inherited automatically by the base login, and ordinary runtime profiles remain subject to RLS without ownership or `BYPASSRLS` exemptions.
 
@@ -1102,7 +1112,7 @@ Redis and PostgreSQL do not share one transaction. Redis failures must not turn 
 
 13. Permit concurrent producers for the same unit and version without an additional per-key lock. Each request retains its own authorization and snapshot checks. Equivalent calculations may publish the same version key, accepting duplicate SQL work during concurrent misses. Use the finite TTL to clean up retained keys. Physical deletion of earlier versions is not required to confirm a domain operation, and TTL expiry is not proof of freshness
 
-14. If Redis lookup or publication fails, preserve the PostgreSQL result and use the definitive SQL calculation as the fallback. A failed cache publication does not reverse a confirmed domain operation or invalidate its calculated response. If PostgreSQL cannot supply and confirm the required validation phase, do not serve an unvalidated Redis entry. Waiting, timeouts, retries, and unknown commit outcomes belong to Conflicts, Deadlocks, and Retries
+14. If Redis lookup or publication fails, preserve the PostgreSQL result and use the definitive SQL calculation as the fallback. A failed cache publication does not reverse a confirmed domain operation or invalidate its calculated response. If PostgreSQL cannot supply and confirm the required validation phase, do not serve an unvalidated Redis entry
 
 15. Treat the committed version change as logical invalidation of earlier entries. A definitive snapshot established after a relevant commit must observe its new version and reject earlier candidates. Cancellation and rescheduling therefore expose their committed occupation changes without waiting for Redis deletion or expiry, subject to the remaining availability rules (`I7`, `I8`). Requests using an earlier definitive snapshot retain the response consistency boundary in [Consistent Concurrent Queries](#consistent-concurrent-queries). Booking and rescheduling still execute their authoritative PostgreSQL checks, including patient conflicts and the final future-start validation
 
@@ -1124,11 +1134,11 @@ Ex: a schedule block commits, but its confirmation is lost. Repeating the insert
 
 ### Transaction Design
 
-1. Classify failures using structured database information, including SQLSTATE and the applicable constraint name. Treat overlaps, prohibited duplicates, final appointment states, stale editing baselines, and failed authorization as rejected operations without automatic retries. Do not classify errors by localized message text or refresh the client's original editing baseline automatically
+1. Classify failures using structured database information, including SQLSTATE and the applicable constraint name. Treat overlaps, prohibited duplicates, final appointment states, and failed authorization as rejected operations without automatic retries. Do not classify errors by localized message text
 
 2. Automatically retry only a complete SQL transaction rejected with `40001` (`serialization_failure`) or `40P01` (`deadlock_detected`), after confirming that attempt cannot commit. Allow at most three executions of that transaction: the original attempt and two retries. The common transaction wrapper owns this counter; query helpers do not retry independently. A management operation that has sent a provider-changing request must not be retried automatically, following Clinic and User Management Consistency
 
-3. Before a permitted retry, roll back and release the failed transaction's connection and locks. Wait a random 0-100 milliseconds, then repeat the complete transaction with fresh context, ordered locks, current authorization, and domain checks. Keep the original request intent and editing baseline. Reevaluate time-dependent conditions instead of reusing an earlier attempt's clock reference
+3. Before a permitted retry, roll back and release the failed transaction's connection and locks. Wait a random 0-100 milliseconds, then repeat the complete transaction with fresh context, ordered locks, current authorization, and domain checks. Preserve the originally submitted fields and values; reconstruct partial-update results from freshly protected current data. Reevaluate time-dependent conditions instead of reusing an earlier attempt's clock reference
 
 4. Use independent configured timeouts rather than a shared request-wide work budget:
 
