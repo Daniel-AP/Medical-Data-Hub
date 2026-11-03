@@ -36,7 +36,7 @@
 			"directAccessGrantsEnabled": false,
 			"serviceAccountsEnabled": false,
 			"fullScopeAllowed": false,
-			"redirectUris": ["https://oauth.pstmn.io/v1/browser-callback"],
+			"redirectUris": ["https://oauth.pstmn.io/v1/browser-callback", "https://oauth.pstmn.io/v1/callback"],
 			"attributes": { "pkce.code.challenge.method": "S256" },
 			"defaultClientScopes": ["basic", "roles"],
 			"protocolMappers": [
