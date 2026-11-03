@@ -7,6 +7,9 @@ services:
             HOST: ${HOST}
             PORT: ${PORT}
             DATABASE_URL: ${DATABASE_URL}
+            KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+            KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL}
+            KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE}
         ports:
             - "127.0.0.1:${PORT}:${PORT}"
         depends_on:
