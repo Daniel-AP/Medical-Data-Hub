@@ -1258,6 +1258,8 @@ Additional permissions by role:
 
 `clinics` enables RLS for `clinic_administrator`, `reception`, and `healthcare_professional`, with column-level `SELECT` on `clinic_id` and `time_zone`. Its policy requires a non-NULL actor UUID and a row matching the clinic UUID from [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context). Missing, empty, or reset context values filter all rows; malformed UUID text is rejected by the casts. These settings delimit SQL scope; protected local association, activity, role, and operation checks remain in the wrapper.
 
+Ordinary `users` access grants `SELECT` and `INSERT` to `clinic_administrator`, with `UPDATE` limited to `role` and `is_active`. Reception and healthcare professional profiles can read only `user_id`, `clinic_id`, `role`, and `is_active`. Their `SELECT` policy and the administrator's `INSERT` and `UPDATE` policies reuse the actor and clinic context contract, matching existing and proposed rows to the context clinic. `user_id`, `identity_id`, and `clinic_id` are not updatable, and no ordinary profile receives `DELETE` or `TRUNCATE`. These policies target only ordinary profiles, preserving the separate preparatory owner exceptions and the locking owner's write rejection. Provider identity verification, business validation, and synchronous Keycloak role changes remain in Clinic management.
+
 | Role | Table | Operation | Row condition |
 | --- | --- | --- | --- |
 | Clinic administrator, reception, healthcare professional | Tables with `clinic_id` | Granted operations | Valid clinic context, with the existing or new row's `clinic_id` matching that clinic |
