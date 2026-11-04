@@ -1052,7 +1052,7 @@ Incomplete preparation can also appear as an ordinary empty result when policies
 
 6. Validate the protected actor's activity, current role, token-role correspondence, and permission for the requested operation. Require its identifiers and clinic association to agree with the preliminary resolution. Resolve the stable professional association when ownership checks require it. Derive the final actor, clinic, role, and operation scope from these checks rather than from client-supplied clinic or role values. Reject failed authorization and roll back
 
-7. Establish the validated context using fixed setting names and bound values with transaction-local `set_config(..., true)`. Select the PostgreSQL operating profile through a fixed application-controlled mapping and predefined `SET LOCAL ROLE` statements. Do not construct SQL role names from request values. Execute role selection outside `SECURITY DEFINER` functions. Complete and validate the applicable preparation before making the transaction client available to the operation
+7. Establish the validated actor and clinic context in `app.user_id` and `app.clinic_id` as UUID text, using bound values and transaction-local `set_config(..., true)`. Select the PostgreSQL operating profile through a fixed application-controlled mapping and predefined `SET LOCAL ROLE` statements. Do not construct SQL role names from request values. Execute role selection outside `SECURITY DEFINER` functions. Complete and validate the applicable preparation before making the transaction client available to the operation
 
 8. Pass that scoped client explicitly to every repository and helper used by the phase. Execute all ORM and SQL queries through it. Do not use the global client, open another transaction inside a helper, or retain the scoped client for use after its phase ends. Await every query before completing the callback. Acquire subsequent domain locks in the accepted order. Where a lock requires modification privileges that the operating profile should not possess, use a limited locking function instead of granting those privileges to the caller
 
@@ -1255,6 +1255,8 @@ Additional permissions by role:
 ## Row-Level Security Policies
 
 ### Clinic Policies
+
+`clinics` enables RLS for `clinic_administrator`, `reception`, and `healthcare_professional`, with column-level `SELECT` on `clinic_id` and `time_zone`. Its policy requires a non-NULL actor UUID and a row matching the clinic UUID from [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context). Missing, empty, or reset context values filter all rows; malformed UUID text is rejected by the casts. These settings delimit SQL scope; protected local association, activity, role, and operation checks remain in the wrapper.
 
 | Role | Table | Operation | Row condition |
 | --- | --- | --- | --- |
