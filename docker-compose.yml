@@ -27,10 +27,11 @@ services:
         working_dir: /app/apps/api
         environment:
             DATABASE_URL: ${DATABASE_SETUP_URL}
+            API_DATABASE_URL: ${DATABASE_URL}
         depends_on:
             postgres:
                 condition: service_healthy
-        command: ["sh", "-c", "npx prisma migrate deploy --config prisma7.config.ts && npm run db:seed"]
+        command: ["sh", "-c", "npx prisma migrate deploy --config prisma7.config.ts && npm run db:configure-api-login && npm run db:seed"]
 
     postgres:
         image: postgres:18.6
