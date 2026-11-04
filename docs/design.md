@@ -1202,6 +1202,8 @@ Use a separate `NOLOGIN` owner role for each group of auxiliary `SECURITY DEFINE
 
 Separate owners keep lookup functions from running with clinic-creation permissions, at the cost of separate role, grant, and RLS configuration.
 
+Preliminary identity resolution uses `public.resolve_identity(text)`, owned by `medical_data_hub_identity_owner`. Its owner's domain-table grants are limited to `SELECT` on `users.identity_id`, `user_id`, and `clinic_id`. Execution is granted to the API base login, with default `PUBLIC` execution revoked. The function uses qualified table references and `search_path = pg_catalog, pg_temp`, returning only `user_id` and `clinic_id`, including a `NULL` clinic for platform accounts. Missing identities return no rows; inactive accounts remain resolvable because protected authorization belongs to Transaction context.
+
 ### Table and Function Permissions
 
 The following table defines the planned grants for clinic administrators, reception, and healthcare professionals. The API still checks the requested operation, and RLS limits the accessible rows.
