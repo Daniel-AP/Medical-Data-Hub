@@ -36,7 +36,10 @@ export function createAuthenticationMiddleware(verifyAccessToken: AccessTokenVer
 					.map(([, domainRole]) => domainRole)
 			: [];
 
-		request.authentication = { identityId: payload.sub, roles };
+		const sessionId = typeof payload.sid === "string" ? payload.sid : undefined;
+		const clientId = typeof payload.azp === "string" ? payload.azp : undefined;
+
+		request.authentication = { identityId: payload.sub, roles, sessionId, clientId };
 		next();
 	};
 }

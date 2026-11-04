@@ -1186,6 +1186,8 @@ Local validation avoids a provider request for each API request. Use short-lived
 
 ### Logout
 
+`POST /auth/logout-request` accepts a bearer access token and a JSON body containing `idToken`. Verify the ID token signature and realm, its audience and authorized party against the authenticated client, and its subject and session against the verified access token. An expired ID token may be used as a logout hint; the access token must still be valid. Return `200` with `logoutUrl` and `Cache-Control: no-store`. This response prepares logout; the client must open the returned Keycloak RP-Initiated Logout URL, containing `id_token_hint` and `client_id`, to complete it.
+
 Use Keycloak to close only the current session. Other sessions and account settings stay unchanged. The client discards its tokens, and the closed session can no longer refresh them. A copy of an already issued access token may still pass local validation until expiration; this window is accepted. Requests that already passed the token check may still finish.
 
 ## PostgreSQL Roles and Restricted Functions

@@ -72,7 +72,12 @@ afterAll(async () => {
 it("accepts a real Keycloak token and returns the reception identity", async () => {
 	const response = await fetch(`${url}/authentication-check`, requestOptions);
 	expect(response.status).toBe(200);
-	expect(await response.json()).toEqual({ identityId: expect.any(String), roles: [UserRole.reception] });
+	expect(await response.json()).toEqual({
+		identityId: expect.any(String),
+		roles: [UserRole.reception],
+		sessionId: expect.any(String),
+		clientId: "medical-data-hub-postman",
+	});
 });
 
 it("rejects a missing bearer token with 401 in the real-provider fixture", async () => {
