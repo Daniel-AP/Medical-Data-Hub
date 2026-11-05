@@ -21,14 +21,31 @@ const profiles = {
 	[UserRole.reception]: { databaseRole: "reception", selectRole: "SET LOCAL ROLE reception" },
 };
 
-const clinicAdministratorPolicy = { roles: [UserRole.clinicAdministrator], requiresProfessional: false };
+const clinicAdministratorPolicy = {
+	roles: [UserRole.clinicAdministrator],
+	requiresProfessional: false,
+	isolation: "readCommitted",
+} as const;
 const operations = {
 	readAuditRecords: clinicAdministratorPolicy,
 	updateUserPermissions: clinicAdministratorPolicy,
-	createClinic: { roles: [UserRole.platformAdministrator], requiresProfessional: false },
-	replaceOwnWeeklySchedule: { roles: [UserRole.healthcareProfessional], requiresProfessional: true },
-	rescheduleAppointment: { roles: [UserRole.clinicAdministrator, UserRole.reception], requiresProfessional: false },
-};
+	createClinic: { roles: [UserRole.platformAdministrator], requiresProfessional: false, isolation: "readCommitted" },
+	replaceOwnWeeklySchedule: {
+		roles: [UserRole.healthcareProfessional],
+		requiresProfessional: true,
+		isolation: "readCommitted",
+	},
+	rescheduleAppointment: {
+		roles: [UserRole.clinicAdministrator, UserRole.reception],
+		requiresProfessional: false,
+		isolation: "readCommitted",
+	},
+	readDefinitiveAvailability: {
+		roles: [UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional],
+		requiresProfessional: false,
+		isolation: "repeatableRead",
+	},
+} as const;
 
 type Identity = Pick<User, "userId" | "clinicId">;
 type ProfessionalAssociation = Pick<Professional, "professionalId">;
@@ -93,7 +110,7 @@ export async function runAuthorizedTransaction<T>(
 	const policy = operations[request.name];
 
 	return runTransaction(
-		"readCommitted",
+		policy.isolation,
 		async (client) => {
 			const identityResult = await client.query<Identity>(
 				`SELECT user_id AS "userId", clinic_id AS "clinicId" FROM public.resolve_identity($1::text)`,

@@ -48,6 +48,9 @@ it("authorizes a clinic administrator and scopes the callback to that clinic", a
 		{ identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] },
 		"readAuditRecords",
 		async (client, actor) => {
+			const { rows: isolation } = await client.query("SHOW transaction_isolation");
+			expect(isolation).toEqual([{ transaction_isolation: "read committed" }]);
+
 			const { rows: context } = await client.query(`
 				SELECT current_user AS role, pg_catalog.current_setting('app.user_id') AS "userId",
 				       pg_catalog.current_setting('app.clinic_id') AS "clinicId"
@@ -422,4 +425,44 @@ it("reuses one connection across clinics after authorized commit and rollback", 
 	expect((await pool.query(baselineQuery)).rows).toEqual(baseline);
 
 	expect(await runAuthorizedTransaction(firstActor, "readAuditRecords", readAuditScope, pool)).toEqual(firstScope);
+});
+
+it("keeps the definitive availability version stable across a concurrent commit", async () => {
+	const authentication = { identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] };
+
+	async function readVersion(client: TransactionClient) {
+		const { rows } = await client.query<{ version: string }>(
+			"SELECT version FROM public.clinic_availability_versions WHERE clinic_id = $1::uuid",
+			[clinicAdmin.clinicId],
+		);
+		return rows[0].version;
+	}
+
+	const originalVersion = await readVersion(setup);
+	try {
+		const observed = await runAuthorizedTransaction(
+			authentication,
+			"readDefinitiveAvailability",
+			async (client) => {
+				const { rows } = await client.query("SHOW transaction_isolation");
+				expect(rows).toEqual([{ transaction_isolation: "repeatable read" }]);
+
+				const before = await readVersion(client);
+				await setup.query(
+					"UPDATE public.clinic_availability_versions SET version = version + 1 WHERE clinic_id = $1::uuid",
+					[clinicAdmin.clinicId],
+				);
+				return { before, after: await readVersion(client) };
+			},
+			pool,
+		);
+		expect(observed).toEqual({ before: originalVersion, after: originalVersion });
+		const latest = await runAuthorizedTransaction(authentication, "readDefinitiveAvailability", readVersion, pool);
+		expect(latest).toBe((BigInt(originalVersion) + 1n).toString());
+	} finally {
+		await setup.query(
+			"UPDATE public.clinic_availability_versions SET version = $1::bigint WHERE clinic_id = $2::uuid",
+			[originalVersion, clinicAdmin.clinicId],
+		);
+	}
 });
