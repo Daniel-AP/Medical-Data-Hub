@@ -5,13 +5,16 @@ import type { Authentication } from "../middleware/types.js";
 import { runTransaction } from "./transaction.js";
 import type { TransactionClient } from "./types.js";
 
+const clinicAdministratorPolicy = {
+	role: UserRole.clinicAdministrator,
+	databaseRole: "clinic_administrator",
+	selectRole: "SET LOCAL ROLE clinic_administrator",
+	requiresProfessional: false,
+};
+
 const operations = {
-	readAuditRecords: {
-		role: UserRole.clinicAdministrator,
-		databaseRole: "clinic_administrator",
-		selectRole: "SET LOCAL ROLE clinic_administrator",
-		requiresProfessional: false,
-	},
+	readAuditRecords: clinicAdministratorPolicy,
+	updateUserPermissions: clinicAdministratorPolicy,
 	createClinic: {
 		role: UserRole.platformAdministrator,
 		databaseRole: "platform_administrator",
@@ -28,8 +31,16 @@ const operations = {
 
 type Identity = Pick<User, "userId" | "clinicId">;
 type ProfessionalAssociation = Pick<Professional, "professionalId">;
-type ActorContext = Pick<User, "userId" | "clinicId" | "role"> & Partial<ProfessionalAssociation>;
 type LockedUser = Identity & Pick<User, "isActive"> & { role: string };
+type ActorContext = Pick<User, "userId" | "clinicId" | "role"> &
+	Partial<ProfessionalAssociation> & { targetUser?: LockedUser };
+type TransactionOperation =
+	Exclude<keyof typeof operations, "updateUserPermissions"> | { name: "updateUserPermissions"; targetUserId: string };
+
+const lockUserForShare = `SELECT user_id AS "userId", clinic_id AS "clinicId", role, is_active AS "isActive"
+	FROM public.lock_user_for_share($1::uuid, $2::uuid)`;
+const lockUserForNoKeyUpdate = `SELECT user_id AS "userId", clinic_id AS "clinicId", role, is_active AS "isActive"
+	FROM public.lock_user_for_no_key_update($1::uuid, $2::uuid)`;
 
 function forbidden() {
 	return Object.assign(new Error("Operation forbidden"), { status: 403 });
@@ -37,11 +48,13 @@ function forbidden() {
 
 export async function runAuthorizedTransaction<T>(
 	authentication: Authentication,
-	operation: keyof typeof operations,
+	operation: TransactionOperation,
 	callback: (client: TransactionClient, actor: ActorContext) => Promise<T>,
 	pool?: Pool,
 ): Promise<T> {
-	const policy = operations[operation];
+	const operationName = typeof operation === "string" ? operation : operation.name;
+	const targetUserId = typeof operation === "string" ? undefined : operation.targetUserId.toLowerCase();
+	const policy = operations[operationName];
 
 	return runTransaction(
 		"readCommitted",
@@ -55,12 +68,23 @@ export async function runAuthorizedTransaction<T>(
 				throw forbidden();
 			}
 
-			const actorResult = await client.query<LockedUser>(
-				`SELECT user_id AS "userId", clinic_id AS "clinicId", role, is_active AS "isActive"
-				 FROM public.lock_user_for_share($1::uuid, $1::uuid)`,
-				[identity.userId],
-			);
-			const [actor] = actorResult.rows;
+			const userIds = new Set([identity.userId]);
+			if (targetUserId !== undefined) {
+				userIds.add(targetUserId);
+			}
+
+			const lockedUsers = new Map<string, LockedUser>();
+			for (const userId of [...userIds].sort()) {
+				const lockUser = userId === targetUserId ? lockUserForNoKeyUpdate : lockUserForShare;
+				const { rows } = await client.query<LockedUser>(lockUser, [identity.userId, userId]);
+				const [user] = rows;
+				if (!user) {
+					throw forbidden();
+				}
+				lockedUsers.set(userId, user);
+			}
+
+			const actor = lockedUsers.get(identity.userId);
 			const authorized =
 				actor?.isActive &&
 				actor.userId === identity.userId &&
@@ -72,6 +96,9 @@ export async function runAuthorizedTransaction<T>(
 			}
 
 			const context: ActorContext = { userId: actor.userId, clinicId: actor.clinicId, role: policy.role };
+			if (targetUserId !== undefined) {
+				context.targetUser = lockedUsers.get(targetUserId);
+			}
 			if (policy.requiresProfessional) {
 				const { rows } = await client.query<ProfessionalAssociation>(
 					`SELECT professional_id AS "professionalId" FROM public.resolve_actor_professional($1::uuid)`,

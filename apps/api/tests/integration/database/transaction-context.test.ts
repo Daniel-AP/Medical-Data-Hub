@@ -208,3 +208,120 @@ it("rejects a local role forbidden for the operation despite a matching token cl
 	).rejects.toMatchObject({ status: 403 });
 	expect(callback).not.toHaveBeenCalled();
 });
+
+it("locks a lower UUID target before the actor and uses the stronger mode only for the target", async () => {
+	const { rows } = await setup.query<SeedUser & Pick<User, "isActive">>(
+		`SELECT user_id AS "userId", identity_id AS "identityId", clinic_id AS "clinicId", role, is_active AS "isActive"
+		 FROM public.users WHERE clinic_id = $1::uuid ORDER BY user_id LIMIT 2`,
+		[clinicAdmin.clinicId],
+	);
+	const [target, actor] = rows;
+	const {
+		rows: [{ pid: apiPid }],
+	} = await pool.query("SELECT pg_catalog.pg_backend_pid() AS pid");
+	const {
+		rows: [{ pid: setupPid }],
+	} = await setup.query("SELECT pg_catalog.pg_backend_pid() AS pid");
+	await setup.query("UPDATE public.users SET role = 'clinic_administrator' WHERE user_id = $1::uuid", [actor.userId]);
+
+	let pending: Promise<unknown> | undefined;
+	try {
+		await setup.query("BEGIN");
+		try {
+			await setup.query("SELECT user_id FROM public.users WHERE user_id = $1::uuid FOR SHARE", [target.userId]);
+			pending = runAuthorizedTransaction(
+				{ identityId: actor.identityId, roles: [UserRole.clinicAdministrator] },
+				{ name: "updateUserPermissions", targetUserId: target.userId },
+				async (_client, context) => {
+					const { rows: sharedActor } = await setup.query(
+						"SELECT user_id FROM public.users WHERE user_id = $1::uuid FOR SHARE NOWAIT",
+						[actor.userId],
+					);
+					expect(sharedActor).toEqual([{ user_id: actor.userId }]);
+					await expect(
+						setup.query(
+							"SELECT user_id FROM public.users WHERE user_id = $1::uuid FOR NO KEY UPDATE NOWAIT",
+							[actor.userId],
+						),
+					).rejects.toMatchObject({ code: "55P03" });
+					return context.targetUser;
+				},
+				pool,
+			).catch((error: unknown) => error);
+
+			await vi.waitFor(async () => {
+				const { rows } = await setup.query(
+					"SELECT $2::int = ANY(pg_catalog.pg_blocking_pids($1::int)) AS waiting",
+					[apiPid, setupPid],
+				);
+				expect(rows[0]).toEqual({ waiting: true });
+			});
+			const { rows: unlockedActor } = await setup.query(
+				"SELECT user_id FROM public.users WHERE user_id = $1::uuid FOR NO KEY UPDATE NOWAIT",
+				[actor.userId],
+			);
+			expect(unlockedActor).toEqual([{ user_id: actor.userId }]);
+		} finally {
+			await setup.query("ROLLBACK");
+		}
+
+		expect(await pending).toEqual({
+			userId: target.userId,
+			clinicId: target.clinicId,
+			role: target.role,
+			isActive: target.isActive,
+		});
+	} finally {
+		await pending;
+		await setup.query("UPDATE public.users SET role = $1::public.user_role WHERE user_id = $2::uuid", [
+			actor.role,
+			actor.userId,
+		]);
+	}
+});
+
+it("uses the stronger lock for a self edit even with an uppercase target UUID", async () => {
+	const result = await runAuthorizedTransaction(
+		{ identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] },
+		{ name: "updateUserPermissions", targetUserId: clinicAdmin.userId.toUpperCase() },
+		async (_client, context) => {
+			const { rows } = await setup.query(
+				"SELECT user_id FROM public.users WHERE user_id = $1::uuid FOR KEY SHARE NOWAIT",
+				[clinicAdmin.userId],
+			);
+			expect(rows).toEqual([{ user_id: clinicAdmin.userId }]);
+			await expect(
+				setup.query("SELECT user_id FROM public.users WHERE user_id = $1::uuid FOR SHARE NOWAIT", [
+					clinicAdmin.userId,
+				]),
+			).rejects.toMatchObject({ code: "55P03" });
+			return context.targetUser;
+		},
+		pool,
+	);
+
+	expect(result).toEqual({
+		userId: clinicAdmin.userId,
+		clinicId: clinicAdmin.clinicId,
+		role: "clinic_administrator",
+		isActive: true,
+	});
+});
+
+it("rejects a permission edit targeting another clinic before invoking the callback", async () => {
+	const { rows } = await setup.query<Pick<User, "userId">>(
+		'SELECT user_id AS "userId" FROM public.users WHERE clinic_id <> $1::uuid ORDER BY user_id LIMIT 1',
+		[clinicAdmin.clinicId],
+	);
+	const callback = vi.fn();
+
+	await expect(
+		runAuthorizedTransaction(
+			{ identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] },
+			{ name: "updateUserPermissions", targetUserId: rows[0].userId },
+			callback,
+			pool,
+		),
+	).rejects.toMatchObject({ status: 403 });
+	expect(callback).not.toHaveBeenCalled();
+});
