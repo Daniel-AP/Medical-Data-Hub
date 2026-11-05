@@ -511,6 +511,12 @@ it("grants only the designed professional table and column privileges", async ()
 			column_name: "specialty_id",
 			is_grantable: "NO",
 		},
+		{
+			table_name: "professionals",
+			grantee: "medical_data_hub_locking_owner",
+			column_name: "specialty_id",
+			is_grantable: "NO",
+		},
 	]);
 	const metadataGrants = await setup.query(
 		`SELECT table_name, column_name, privilege_type, is_grantable FROM information_schema.column_privileges
