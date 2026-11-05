@@ -1070,6 +1070,8 @@ Incomplete preparation can also appear as an ordinary empty result when policies
 
 The internal transaction runner checks out one connection from a shared `pg.Pool` configured with the runtime `DATABASE_URL`. It returns the callback result only after PostgreSQL confirms `COMMIT` and discards the connection when the transaction state is uncertain. Database initialization continues to use Prisma with the setup connection.
 
+The authorization wrapper currently defines `readAuditRecords` for clinic administrators and `createClinic` for platform administrators. Both open a `READ COMMITTED` phase and protect the actor with `FOR SHARE`. Failed actor authorization raises a forbidden error before the callback. On success, the wrapper passes the scoped transaction client and the protected actor's user ID, nullable clinic ID, and authorized role to the callback.
+
 Transaction-local context was selected over session context with manual cleanup. The common wrapper and explicit client propagation centralize preparation instead of repeating it in each operation. The shared pool selects its operating profile after protected authorization, avoiding provisional routing to separate request pools. Operating privileges must not be inherited automatically by the base login, and ordinary runtime profiles remain subject to RLS without ownership or `BYPASSRLS` exemptions.
 
 Limited bootstrap and metadata functions were selected over broader preparatory table access. Locking functions avoid granting unnecessary modification privileges to callers. The specific clinic creation function confines the platform exception. These choices add functions and privilege configuration that must remain consistent with their bounded purpose.

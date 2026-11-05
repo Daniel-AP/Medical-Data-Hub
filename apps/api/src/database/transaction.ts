@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import type { PoolClient } from "pg";
+import type { TransactionClient } from "./types.js";
 
 const runtimePool = new Pool({ connectionString: process.env.DATABASE_URL });
 runtimePool.on("error", () => console.error("An idle database connection failed"));
@@ -10,7 +10,6 @@ const beginStatements = {
 };
 
 type TransactionIsolation = keyof typeof beginStatements;
-type TransactionClient = Pick<PoolClient, "query">;
 
 export async function runTransaction<T>(
 	isolation: TransactionIsolation,
