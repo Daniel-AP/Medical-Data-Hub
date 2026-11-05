@@ -1274,6 +1274,8 @@ Ordinary `users` access grants `SELECT` and `INSERT` to `clinic_administrator`, 
 
 ### Professional Policies
 
+`professional_schedules` and `professional_blocks` enable RLS under the existing actor and clinic context contract. All three ordinary clinic profiles can read every row in their context clinic. Clinic administrators can insert, update, and delete schedules, and insert blocks. Healthcare professionals can perform those writes only for their own profile, checked through a same-clinic `professionals` row whose `user_id` matches `app.user_id`. Separate write policies preserve this restriction alongside clinic-wide reads. Schedule updates are limited to `weekday`, `start_minute`, and `end_minute`; identifiers and clinic/professional links are immutable. No ordinary profile receives block `UPDATE` or `DELETE`, or `TRUNCATE` on either table. An absent professional association grants no write scope. Weekly replacement, appointment-conflict validation, and availability version changes remain in their domain protocols.
+
 | Role | Table | Operation | Row condition |
 | --- | --- | --- | --- |
 | Healthcare professional | `professional_schedules` | `INSERT`, `UPDATE`, `DELETE` | The existing or new row's `professional_id` matches the authenticated professional |
