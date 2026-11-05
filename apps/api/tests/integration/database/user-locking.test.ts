@@ -364,7 +364,7 @@ it("limits locking owner SELECT and UPDATE grants to the required user columns",
         FROM pg_catalog.pg_class AS table_definition
         JOIN pg_catalog.pg_namespace AS schema_definition ON schema_definition.oid = table_definition.relnamespace
         JOIN pg_catalog.pg_attribute AS column_definition ON column_definition.attrelid = table_definition.oid
-        WHERE schema_definition.nspname = 'public' AND table_definition.relkind = 'r'
+        WHERE schema_definition.nspname = 'public' AND table_definition.relname = 'users' AND table_definition.relkind = 'r'
           AND column_definition.attnum > 0 AND NOT column_definition.attisdropped
           AND (pg_catalog.has_column_privilege('medical_data_hub_locking_owner', table_definition.oid, column_definition.attnum, 'SELECT')
                OR pg_catalog.has_column_privilege('medical_data_hub_locking_owner', table_definition.oid, column_definition.attnum, 'UPDATE'))

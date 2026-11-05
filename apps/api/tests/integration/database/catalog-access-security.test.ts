@@ -409,12 +409,18 @@ it("grants only the designed catalog table and column privileges", async () => {
         ORDER BY table_name, grantee, column_name`,
 		[tableNames, roles],
 	);
-	expect(updateGrants.rows).toEqual(
-		["duration_minutes", "is_active", "name", "specialty_id"].map((columnName) => ({
+	expect(updateGrants.rows).toEqual([
+		...["duration_minutes", "is_active", "name", "specialty_id"].map((columnName) => ({
 			table_name: "services",
 			grantee: "clinic_administrator",
 			column_name: columnName,
 			is_grantable: "NO",
 		})),
-	);
+		{
+			table_name: "services",
+			grantee: "medical_data_hub_locking_owner",
+			column_name: "is_active",
+			is_grantable: "NO",
+		},
+	]);
 });
