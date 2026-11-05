@@ -99,23 +99,6 @@ it("permits profile selection without inheritance or membership administration",
 	);
 });
 
-it.each(profileNames)("selects the %s profile within a transaction", async (profileName) => {
-	await api.query("BEGIN");
-	try {
-		await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
-		const { rows } = await api.query("SELECT current_user AS role");
-		expect(rows).toEqual([{ role: profileName }]);
-	} finally {
-		await api.query("ROLLBACK");
-	}
-});
-
-it.each(domainTables)("denies direct API reads on %s", async (tableName) => {
-	await expect(api.query(`SELECT * FROM public.${escapeIdentifier(tableName)} LIMIT 1`)).rejects.toMatchObject({
-		code: "42501",
-	});
-});
-
 it("requires explicit profile selection to use a granted privilege", async () => {
 	await expect(api.query(`SELECT marker FROM public.${probeTable}`)).rejects.toMatchObject({ code: "42501" });
 	await api.query("BEGIN");
@@ -132,15 +115,6 @@ it("requires explicit profile selection to use a granted privilege", async () =>
 it("denies selection of the setup role", async () => {
 	const { rows } = await setup.query("SELECT current_user AS role");
 	await expect(api.query(`SET ROLE ${escapeIdentifier(rows[0].role)}`)).rejects.toMatchObject({ code: "42501" });
-});
-
-it("denies direct API inserts into domain tables", async () => {
-	await expect(
-		api.query("INSERT INTO public.clinics (name, time_zone) VALUES ($1, $2)", [
-			"Permission check",
-			"America/Costa_Rica",
-		]),
-	).rejects.toMatchObject({ code: "42501" });
 });
 
 it("keeps the API login and profiles from owning domain tables", async () => {

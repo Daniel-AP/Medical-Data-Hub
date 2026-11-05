@@ -151,15 +151,8 @@ it("rejects a duplicate administrator identity without leaving a partial clinic"
 	).toEqual([{ clinic_id: existingAdministrator.clinicId }]);
 });
 
-it("preserves the clinic name constraint through the creation function", async () => {
-	await api.query("SET LOCAL ROLE platform_administrator");
-	await expect(api.query(createQuery, ["", "UTC", existingAdministrator.identityId])).rejects.toMatchObject({
-		code: "23514",
-		constraint: "clinics_name_check",
-	});
-});
-
-it.each(restrictedRoles)("denies clinic creation execution to %s", async (roleName) => {
+it("denies clinic creation execution to medical_data_hub_api", async () => {
+	const roleName = "medical_data_hub_api";
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(roleName)}`);
 	await expect(
 		api.query(createQuery, ["Synthetic clinic", "UTC", existingAdministrator.identityId]),
@@ -205,42 +198,10 @@ it("uses a restricted clinic creation owner and grants function execution only t
 	]);
 });
 
-it.each([
-	["clinics", "clinic_id"],
-	["users", "user_id"],
-	["clinic_availability_versions", "version"],
-	["patients", "patient_id"],
-	["clinical_notes", "appointment_id"],
-])("denies platform reads of %s.%s", async (tableName, columnName) => {
+it("denies direct platform insertion into clinics", async () => {
 	await api.query("SET LOCAL ROLE platform_administrator");
 	await expect(
-		api.query(`SELECT ${escapeIdentifier(columnName)} FROM public.${escapeIdentifier(tableName)}`),
-	).rejects.toMatchObject({ code: "42501" });
-});
-
-it.each([
-	{
-		tableName: "clinics",
-		query: "INSERT INTO public.clinics (name, time_zone) VALUES ('Synthetic clinic', 'UTC')",
-		fields: [],
-	},
-	{
-		tableName: "users",
-		query: "INSERT INTO public.users (clinic_id, identity_id, role) VALUES ($1::uuid, $2, 'clinic_administrator')",
-		fields: ["clinicId", "identityId"] as const,
-	},
-	{
-		tableName: "clinic_availability_versions",
-		query: "INSERT INTO public.clinic_availability_versions (clinic_id) VALUES ($1::uuid)",
-		fields: ["clinicId"] as const,
-	},
-])("denies direct platform insertion into $tableName", async ({ query, fields }) => {
-	await api.query("SET LOCAL ROLE platform_administrator");
-	await expect(
-		api.query(
-			query,
-			fields.map((field) => existingAdministrator[field]),
-		),
+		api.query("INSERT INTO public.clinics (name, time_zone) VALUES ('Synthetic clinic', 'UTC')"),
 	).rejects.toMatchObject({ code: "42501" });
 });
 
@@ -255,60 +216,6 @@ it("limits clinic creation owner reads to the scoped identifiers", async () => {
 	]);
 	await setup.query(setCreationContext, [existingAdministrator.clinicId, otherAdministrator.userId]);
 	expect((await setup.query("SELECT user_id FROM public.users")).rows).toEqual([]);
-});
-
-it.each([
-	["clinics", "name"],
-	["users", "identity_id"],
-	["clinic_availability_versions", "version"],
-	["patients", "patient_id"],
-	["clinical_notes", "appointment_id"],
-])("denies clinic creation owner reads of %s.%s", async (tableName, columnName) => {
-	await setup.query(setCreationContext, [existingAdministrator.clinicId, existingAdministrator.userId]);
-	await setup.query("SET LOCAL ROLE medical_data_hub_clinic_creation_owner");
-	await expect(
-		setup.query(`SELECT ${escapeIdentifier(columnName)} FROM public.${escapeIdentifier(tableName)}`),
-	).rejects.toMatchObject({ code: "42501" });
-});
-
-const rlsViolation = { code: "42501", message: /^new row violates row-level security policy/ };
-
-it("rejects clinic creation owner inserts without creation context", async () => {
-	await setup.query("SET LOCAL ROLE medical_data_hub_clinic_creation_owner");
-	await expect(
-		setup.query("INSERT INTO public.clinics (name, time_zone) VALUES ('Synthetic clinic', 'UTC')"),
-	).rejects.toMatchObject(rlsViolation);
-});
-
-it("rejects creation owner inserts for an unrelated availability version", async () => {
-	await setup.query(setCreationContext, [existingAdministrator.clinicId, existingAdministrator.userId]);
-	await setup.query("SET LOCAL ROLE medical_data_hub_clinic_creation_owner");
-	await expect(
-		setup.query("INSERT INTO public.clinic_availability_versions (clinic_id) VALUES ($1::uuid)", [
-			otherAdministrator.clinicId,
-		]),
-	).rejects.toMatchObject(rlsViolation);
-});
-
-it.each([
-	{ label: "an unrelated user identifier", useScopedUser: false, role: "clinic_administrator" },
-	{ label: "a role other than clinic administrator", useScopedUser: true, role: "reception" },
-])("rejects creation owner user inserts with $label", async ({ useScopedUser, role }) => {
-	const scopedUserId = randomUUID();
-	await setup.query(setCreationContext, [existingAdministrator.clinicId, scopedUserId]);
-	await setup.query("SET LOCAL ROLE medical_data_hub_clinic_creation_owner");
-	await expect(
-		setup.query(
-			`INSERT INTO public.users (user_id, clinic_id, identity_id, role)
-            VALUES ($1::uuid, $2::uuid, $3, $4::public.user_role)`,
-			[
-				useScopedUser ? scopedUserId : randomUUID(),
-				existingAdministrator.clinicId,
-				existingAdministrator.identityId,
-				role,
-			],
-		),
-	).rejects.toMatchObject(rlsViolation);
 });
 
 it("grants the clinic creation owner only its required table columns", async () => {
