@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { Client, Pool } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { runAuthorizedTransaction } from "../../../src/database/transaction-context.js";
-import type { User } from "../../../src/generated/prisma/client.js";
+import type { Professional, User } from "../../../src/generated/prisma/client.js";
 import { UserRole } from "../../../src/generated/prisma/enums.js";
 
 type SeedUser = Pick<User, "userId" | "clinicId" | "identityId"> & { role: string };
+type SeedProfessional = Pick<User, "identityId"> & Pick<Professional, "professionalId" | "userId" | "clinicId">;
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
@@ -90,6 +91,62 @@ it("authorizes the platform administrator for clinic creation without a clinic c
 			canReadClinics: false,
 		},
 	});
+});
+
+it("passes the actor's professional association to the callback for own schedule replacement", async () => {
+	const { rows } = await setup.query<SeedProfessional>(`
+		SELECT local_user.identity_id AS "identityId", professional.professional_id AS "professionalId",
+		       professional.user_id AS "userId", professional.clinic_id AS "clinicId"
+		FROM public.professionals AS professional
+		JOIN public.users AS local_user ON local_user.user_id = professional.user_id
+		ORDER BY professional.professional_id
+		LIMIT 1
+	`);
+	const [professional] = rows;
+
+	const result = await runAuthorizedTransaction(
+		{ identityId: professional.identityId, roles: [UserRole.healthcareProfessional] },
+		"replaceOwnWeeklySchedule",
+		async (client, actor) => {
+			const { rows } = await client.query(`
+				SELECT professional_id AS "professionalId" FROM public.lock_own_professional_for_no_key_update()
+			`);
+			return { actor, lockedProfessionals: rows };
+		},
+		pool,
+	);
+
+	expect(result).toEqual({
+		actor: {
+			userId: professional.userId,
+			clinicId: professional.clinicId,
+			role: UserRole.healthcareProfessional,
+			professionalId: professional.professionalId,
+		},
+		lockedProfessionals: [{ professionalId: professional.professionalId }],
+	});
+});
+
+it("rejects a healthcare professional without a profile before invoking the callback", async () => {
+	const callback = vi.fn();
+	await setup.query("UPDATE public.users SET role = 'healthcare_professional' WHERE user_id = $1::uuid", [
+		clinicAdmin.userId,
+	]);
+	try {
+		await expect(
+			runAuthorizedTransaction(
+				{ identityId: clinicAdmin.identityId, roles: [UserRole.healthcareProfessional] },
+				"replaceOwnWeeklySchedule",
+				callback,
+				pool,
+			),
+		).rejects.toMatchObject({ status: 403 });
+		expect(callback).not.toHaveBeenCalled();
+	} finally {
+		await setup.query("UPDATE public.users SET role = 'clinic_administrator' WHERE user_id = $1::uuid", [
+			clinicAdmin.userId,
+		]);
+	}
 });
 
 it("rejects an identity with no local user before invoking the callback", async () => {
