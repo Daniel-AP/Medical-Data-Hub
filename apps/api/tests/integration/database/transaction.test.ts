@@ -1,4 +1,4 @@
-import { Pool } from "pg";
+import { Client, Pool } from "pg";
 import { afterAll, expect, it } from "vitest";
 import { runTransaction } from "../../../src/database/transaction.js";
 
@@ -78,4 +78,59 @@ it("rolls back a callback failure and reuses the same connection with cleared lo
 	).rejects.toBe(failure);
 
 	expect(await readSession(pool)).toEqual({ pid, role: "medical_data_hub_api", userId: "", clinicId: "" });
+});
+
+it("rejects an unconfirmed commit and discards the terminated connection", async () => {
+	const terminator = new Client({ connectionString });
+	await terminator.connect();
+
+	let provisional: { pid: number; transactionId: string } | undefined;
+	let discardSignal: unknown;
+	const onRelease = (signal: unknown) => {
+		discardSignal = signal;
+	};
+	pool.once("release", onRelease);
+
+	try {
+		await expect(
+			runTransaction(
+				"readCommitted",
+				async (client) => {
+					const { rows: phase } = await client.query<{ pid: number; transactionId: string }>(`
+						SELECT pg_catalog.pg_backend_pid() AS pid,
+						       pg_catalog.pg_current_xact_id()::text AS "transactionId"
+					`);
+					await setLocalScope(client);
+
+					const { rows } = await terminator.query(
+						"SELECT pg_catalog.pg_terminate_backend($1::int, 1000) AS terminated",
+						[phase[0].pid],
+					);
+					expect(rows).toEqual([{ terminated: true }]);
+					provisional = phase[0];
+					return provisional;
+				},
+				pool,
+			),
+		).rejects.toThrow();
+
+		expect(provisional).toEqual({ pid: expect.any(Number), transactionId: expect.any(String) });
+		expect(discardSignal).toBe(true);
+		const { rows } = await terminator.query("SELECT pg_catalog.pg_xact_status($1::xid8) AS status", [
+			provisional?.transactionId,
+		]);
+		expect(rows).toEqual([{ status: "aborted" }]);
+
+		const replacement = await runTransaction("readCommitted", readSession, pool);
+		expect(replacement).toEqual({
+			pid: expect.any(Number),
+			role: "medical_data_hub_api",
+			userId: "",
+			clinicId: "",
+		});
+		expect(replacement.pid).not.toBe(provisional?.pid);
+	} finally {
+		pool.off("release", onRelease);
+		await terminator.end();
+	}
 });
