@@ -940,7 +940,7 @@ A single operation transaction was selected over independently committed read at
 
 Application-generated events keep the operation and authenticated metadata explicit. Database triggers were considered for write-event generation but would still need that actor context. Every sensitive access path must use the common protocol, while PostgreSQL protects committed audit records against modification.
 
-`audit_records_append_only_guard` implements that engine protection as a `BEFORE UPDATE OR DELETE OR TRUNCATE` statement trigger. It rejects every such statement, including updates and deletions with no matching rows, with SQLSTATE `55000`. Its `SECURITY INVOKER` function, `public.reject_audit_record_mutation()`, uses `search_path = pg_catalog, pg_temp` with default `PUBLIC` execution revoked. Application profiles cannot disable the trigger and have no mutation grants; tests also exercise the trigger under temporary grants rolled back afterward. Inserts remain transactional and can be rolled back. Audit insertion and query grants, audit RLS, and the application event protocol remain separate implementation work.
+`audit_records_append_only_guard` implements that engine protection as a `BEFORE UPDATE OR DELETE OR TRUNCATE` statement trigger. It rejects every such statement, including updates and deletions with no matching rows, with SQLSTATE `55000`. Its `SECURITY INVOKER` function, `public.reject_audit_record_mutation()`, uses `search_path = pg_catalog, pg_temp` with default `PUBLIC` execution revoked. Application profiles cannot disable the trigger and have no mutation grants; tests also exercise the trigger under temporary grants rolled back afterward. Inserts remain transactional and can be rolled back.
 
 The clinic administrator can query audit records with filters by user, patient, and date range (`RF19`). Scope the results to the authenticated clinic and return audit metadata without patient contact values or clinical note content.
 
@@ -1292,6 +1292,8 @@ Ordinary `users` access grants `SELECT` and `INSERT` to `clinic_administrator`, 
 | Healthcare professional | `clinical_notes` | `INSERT` | The appointment belongs to the authenticated professional and is `attended` |
 
 ### Other Policies
+
+`audit_records` enables RLS. Clinic administrators can read audit metadata in their context clinic. All three ordinary clinic profiles can insert contact events that match the clinic and actor context. Only healthcare professionals can insert clinical note events. The referenced appointment must belong to their professional profile and match the event's clinic and patient, and the composite foreign key requires an existing note. Insert grants cover only `clinic_id`, `user_id`, `patient_id`, `resource`, `appointment_id`, and `action`. PostgreSQL supplies the identifier and timestamp. Reception and healthcare professional inserts omit `RETURNING` because those profiles lack read access.
 
 | Role | Table | Operation | Row condition |
 | --- | --- | --- | --- |
