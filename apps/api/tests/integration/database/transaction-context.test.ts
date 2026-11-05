@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Client, Pool } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { runAuthorizedTransaction } from "../../../src/database/transaction-context.js";
+import type { TransactionClient } from "../../../src/database/types.js";
 import type { Professional, User } from "../../../src/generated/prisma/client.js";
 import { UserRole } from "../../../src/generated/prisma/enums.js";
 
@@ -17,6 +18,7 @@ if (!setupConnectionString || !apiConnectionString) {
 const setup = new Client({ connectionString: setupConnectionString });
 const pool = new Pool({ connectionString: apiConnectionString, max: 1 });
 let clinicAdmin: SeedUser;
+let otherClinicAdmin: SeedUser;
 let platformAdmin: SeedUser;
 
 beforeAll(async () => {
@@ -27,7 +29,7 @@ beforeAll(async () => {
 		WHERE role IN ('clinic_administrator', 'platform_administrator')
 		ORDER BY clinic_id
 	`);
-	clinicAdmin = rows.find((user) => user.role === "clinic_administrator")!;
+	[clinicAdmin, otherClinicAdmin] = rows.filter((user) => user.role === "clinic_administrator");
 	platformAdmin = rows.find((user) => user.role === "platform_administrator")!;
 });
 
@@ -324,4 +326,100 @@ it("rejects a permission edit targeting another clinic before invoking the callb
 		),
 	).rejects.toMatchObject({ status: 403 });
 	expect(callback).not.toHaveBeenCalled();
+});
+
+it("holds actor authorization until commit and rejects a later phase after deactivation", async () => {
+	const authentication = { identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] };
+	const { rows: setupSession } = await setup.query("SELECT pg_catalog.pg_backend_pid() AS pid");
+	let deactivation: Promise<unknown> | undefined;
+
+	try {
+		const visibleClinics = await runAuthorizedTransaction(
+			authentication,
+			"readAuditRecords",
+			async (client) => {
+				const { rows: apiSession } = await client.query("SELECT pg_catalog.pg_backend_pid() AS pid");
+				deactivation = setup
+					.query("UPDATE public.users SET is_active = false WHERE user_id = $1::uuid", [clinicAdmin.userId])
+					.catch((error: unknown) => error);
+
+				await vi.waitFor(async () => {
+					const { rows } = await client.query(
+						"SELECT $2::int = ANY(pg_catalog.pg_blocking_pids($1::int)) AS waiting",
+						[setupSession[0].pid, apiSession[0].pid],
+					);
+					expect(rows).toEqual([{ waiting: true }]);
+				});
+
+				const { rows } = await client.query(
+					'SELECT DISTINCT clinic_id AS "clinicId" FROM public.audit_records',
+				);
+				return rows;
+			},
+			pool,
+		);
+
+		expect(visibleClinics).toEqual([{ clinicId: clinicAdmin.clinicId }]);
+		expect(await deactivation).toMatchObject({ rowCount: 1 });
+
+		const callback = vi.fn();
+		await expect(
+			runAuthorizedTransaction(authentication, "readAuditRecords", callback, pool),
+		).rejects.toMatchObject({ status: 403 });
+		expect(callback).not.toHaveBeenCalled();
+	} finally {
+		await deactivation;
+		await setup.query("UPDATE public.users SET is_active = true WHERE user_id = $1::uuid", [clinicAdmin.userId]);
+	}
+});
+
+it("reuses one connection across clinics after authorized commit and rollback", async () => {
+	const firstActor = { identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] };
+	const secondActor = { identityId: otherClinicAdmin.identityId, roles: [UserRole.clinicAdministrator] };
+	const failure = new Error("Operation failed");
+	const baselineQuery = `
+		SELECT pg_catalog.pg_backend_pid() AS pid, current_user AS role,
+		       pg_catalog.current_setting('app.user_id', true) AS "userId",
+		       pg_catalog.current_setting('app.clinic_id', true) AS "clinicId"
+	`;
+
+	async function readAuditScope(client: TransactionClient) {
+		const { rows } = await client.query(`
+			SELECT pg_catalog.pg_backend_pid() AS pid, current_user AS role,
+			       pg_catalog.current_setting('app.user_id') AS "userId",
+			       ARRAY(SELECT DISTINCT clinic_id FROM public.audit_records) AS "visibleClinics"
+		`);
+		return rows[0];
+	}
+
+	const firstScope = await runAuthorizedTransaction(firstActor, "readAuditRecords", readAuditScope, pool);
+	const { pid } = firstScope;
+	const baseline = [{ pid, role: "medical_data_hub_api", userId: "", clinicId: "" }];
+	expect(firstScope).toEqual({
+		pid,
+		role: "clinic_administrator",
+		userId: clinicAdmin.userId,
+		visibleClinics: [clinicAdmin.clinicId],
+	});
+	expect((await pool.query(baselineQuery)).rows).toEqual(baseline);
+
+	await expect(
+		runAuthorizedTransaction(
+			secondActor,
+			"readAuditRecords",
+			async (client) => {
+				expect(await readAuditScope(client)).toEqual({
+					pid,
+					role: "clinic_administrator",
+					userId: otherClinicAdmin.userId,
+					visibleClinics: [otherClinicAdmin.clinicId],
+				});
+				throw failure;
+			},
+			pool,
+		),
+	).rejects.toBe(failure);
+	expect((await pool.query(baselineQuery)).rows).toEqual(baseline);
+
+	expect(await runAuthorizedTransaction(firstActor, "readAuditRecords", readAuditScope, pool)).toEqual(firstScope);
 });
