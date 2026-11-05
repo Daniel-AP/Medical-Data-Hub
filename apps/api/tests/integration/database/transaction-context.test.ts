@@ -427,6 +427,53 @@ it("reuses one connection across clinics after authorized commit and rollback", 
 	expect(await runAuthorizedTransaction(firstActor, "readAuditRecords", readAuditScope, pool)).toEqual(firstScope);
 });
 
+it.each([
+	{ timeout: "lock", code: "55P03", query: "SELECT pg_catalog.pg_advisory_xact_lock(42, 1)" },
+	{ timeout: "statement", code: "57014", query: "SELECT pg_catalog.pg_sleep(4)" },
+])(
+	"rolls back a $timeout timeout without retrying and reuses the clean connection",
+	async ({ timeout, code, query }) => {
+		const authentication = { identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] };
+		const versionQuery = "SELECT version FROM public.clinic_availability_versions WHERE clinic_id = $1::uuid";
+		const sessionQuery = `
+		SELECT pg_catalog.pg_backend_pid() AS pid, current_user AS role,
+		       NULLIF(pg_catalog.current_setting('app.user_id', true), '') AS "userId",
+		       NULLIF(pg_catalog.current_setting('app.clinic_id', true), '') AS "clinicId",
+		       pg_catalog.current_setting('lock_timeout') AS "lockTimeout",
+		       pg_catalog.current_setting('statement_timeout') AS "statementTimeout"
+	`;
+		const baseline = await pool.query(sessionQuery);
+		const originalVersion = await setup.query(versionQuery, [clinicAdmin.clinicId]);
+		const callback = vi.fn(async (client: TransactionClient) => {
+			const update = await client.query(
+				"UPDATE public.clinic_availability_versions SET version = version + 1 WHERE clinic_id = $1::uuid",
+				[clinicAdmin.clinicId],
+			);
+			expect(update.rowCount).toBe(1);
+			await client.query(query);
+		});
+
+		const holdLock = timeout === "lock";
+		try {
+			if (holdLock) {
+				await setup.query("BEGIN");
+				await setup.query(query);
+			}
+			await expect(
+				runAuthorizedTransaction(authentication, "readAuditRecords", callback, pool),
+			).rejects.toMatchObject({ code });
+		} finally {
+			if (holdLock) {
+				await setup.query("ROLLBACK");
+			}
+		}
+
+		expect(callback).toHaveBeenCalledTimes(1);
+		expect((await setup.query(versionQuery, [clinicAdmin.clinicId])).rows).toEqual(originalVersion.rows);
+		expect((await pool.query(sessionQuery)).rows).toEqual(baseline.rows);
+	},
+);
+
 it("keeps the definitive availability version stable across a concurrent commit", async () => {
 	const authentication = { identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] };
 

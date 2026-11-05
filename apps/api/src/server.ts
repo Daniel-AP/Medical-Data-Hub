@@ -1,5 +1,6 @@
 import { app, router } from "./app.js";
 import { createAccessTokenVerifier, createLogoutIdTokenVerifier } from "./clients/keycloak.js";
+import "./config/database-timeouts.js";
 import { createAuthenticationMiddleware } from "./middleware/authentication.js";
 import { createLogoutRequestHandler } from "./routes/logout.js";
 
