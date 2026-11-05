@@ -1068,6 +1068,8 @@ Incomplete preparation can also appear as an ordinary empty result when policies
 
 13. Commit or roll back the complete phase through its transaction boundary. Transaction-local settings and role selections end with that boundary. Do not reuse a connection whose baseline or transaction state cannot be established safely. Preserve the response rules in [Consistent Concurrent Queries](#consistent-concurrent-queries)
 
+The internal transaction runner checks out one connection from a shared `pg.Pool` configured with the runtime `DATABASE_URL`. It returns the callback result only after PostgreSQL confirms `COMMIT` and discards the connection when the transaction state is uncertain. Database initialization continues to use Prisma with the setup connection.
+
 Transaction-local context was selected over session context with manual cleanup. The common wrapper and explicit client propagation centralize preparation instead of repeating it in each operation. The shared pool selects its operating profile after protected authorization, avoiding provisional routing to separate request pools. Operating privileges must not be inherited automatically by the base login, and ordinary runtime profiles remain subject to RLS without ownership or `BYPASSRLS` exemptions.
 
 Limited bootstrap and metadata functions were selected over broader preparatory table access. Locking functions avoid granting unnecessary modification privileges to callers. The specific clinic creation function confines the platform exception. These choices add functions and privilege configuration that must remain consistent with their bounded purpose.
