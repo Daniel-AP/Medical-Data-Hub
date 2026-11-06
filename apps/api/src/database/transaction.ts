@@ -1,6 +1,8 @@
 import { Pool } from "pg";
+import type { PoolClient } from "pg";
 import { databaseTimeouts } from "../config/database-timeouts.js";
-import type { TransactionClient } from "./types.js";
+import { classifyTransactionFailure, TransactionFailure } from "./transaction-failure.js";
+import type { TransactionClient, TransactionStage } from "./types.js";
 
 const runtimePool = new Pool({
 	connectionString: process.env.DATABASE_URL,
@@ -20,17 +22,21 @@ export async function runTransaction<T>(
 	operation: (client: TransactionClient) => Promise<T>,
 	pool = runtimePool,
 ): Promise<T> {
-	const client = await pool.connect();
+	let client: PoolClient | undefined;
+	let stage: TransactionStage = "acquire";
 	let reusable = false;
-	let connectionFailed = false;
-	const onConnectionError = () => {
-		connectionFailed = true;
+	let connectionError: Error | undefined;
+	const onConnectionError = (error: Error) => {
+		connectionError = error;
 	};
-	client.on("error", onConnectionError);
 
 	try {
+		client = await pool.connect();
+		client.on("error", onConnectionError);
+		stage = "begin";
 		await client.query(beginStatements[isolation]);
 
+		stage = "operation";
 		let result: T;
 		try {
 			await client.query(
@@ -51,14 +57,21 @@ export async function runTransaction<T>(
 			throw error;
 		}
 
+		stage = "commit";
 		const commit = await client.query("COMMIT");
-		reusable = commit.command === "COMMIT" || commit.command === "ROLLBACK";
-		if (commit.command !== "COMMIT") {
-			throw new Error("Database transaction did not commit");
+		if (commit.command === "ROLLBACK") {
+			reusable = true;
+			throw new TransactionFailure(stage, "aborted");
 		}
+		if (commit.command !== "COMMIT") {
+			throw new TransactionFailure(stage, "indeterminateCommit");
+		}
+		reusable = true;
 		return result;
+	} catch (error) {
+		throw classifyTransactionFailure(stage, error, connectionError !== undefined && connectionError === error);
 	} finally {
-		client.off("error", onConnectionError);
-		client.release(connectionFailed || !reusable);
+		client?.off("error", onConnectionError);
+		client?.release(connectionError !== undefined || !reusable);
 	}
 }

@@ -39,7 +39,10 @@ it("times out a queued phase without disturbing the active transaction context",
 			await setLocalScope(client);
 			const activeSession = await readSession(client);
 
-			await expect(runTransaction("readCommitted", callback, pool)).rejects.toBeInstanceOf(Error);
+			await expect(runTransaction("readCommitted", callback, pool)).rejects.toMatchObject({
+				stage: "acquire",
+				kind: "acquisition",
+			});
 			expect(pool.waitingCount).toBe(0);
 			expect(callback).not.toHaveBeenCalled();
 			expect(await readSession(client)).toEqual(activeSession);
@@ -102,6 +105,23 @@ it("rolls back a callback failure and reuses the same connection with cleared lo
 	expect(await readSession(pool)).toEqual({ pid, role: "medical_data_hub_api", userId: "", clinicId: "" });
 });
 
+it("reports an explicit rollback at commit and discards the provisional result", async () => {
+	const { pid } = await readSession(pool);
+	await expect(
+		runTransaction(
+			"readCommitted",
+			async (client) => {
+				await setLocalScope(client);
+				await expect(client.query("SELECT 1 / 0")).rejects.toMatchObject({ code: "22012" });
+				return "provisional";
+			},
+			pool,
+		),
+	).rejects.toMatchObject({ stage: "commit", kind: "aborted" });
+
+	expect(await readSession(pool)).toEqual({ pid, role: "medical_data_hub_api", userId: "", clinicId: "" });
+});
+
 it("rejects an unconfirmed commit and discards the terminated connection", async () => {
 	const terminator = new Client({ connectionString });
 	await terminator.connect();
@@ -134,7 +154,7 @@ it("rejects an unconfirmed commit and discards the terminated connection", async
 				},
 				pool,
 			),
-		).rejects.toThrow();
+		).rejects.toMatchObject({ stage: "commit", kind: "indeterminateCommit" });
 
 		expect(provisional).toEqual({ pid: expect.any(Number), transactionId: expect.any(String) });
 		expect(discardSignal).toBe(true);

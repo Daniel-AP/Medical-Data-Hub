@@ -428,11 +428,16 @@ it("reuses one connection across clinics after authorized commit and rollback", 
 });
 
 it.each([
-	{ timeout: "lock", code: "55P03", query: "SELECT pg_catalog.pg_advisory_xact_lock(42, 1)" },
-	{ timeout: "statement", code: "57014", query: "SELECT pg_catalog.pg_sleep(4)" },
+	{
+		timeout: "lock",
+		sqlState: "55P03",
+		kind: "lockUnavailable",
+		query: "SELECT pg_catalog.pg_advisory_xact_lock(42, 1)",
+	},
+	{ timeout: "statement", sqlState: "57014", kind: "queryCanceled", query: "SELECT pg_catalog.pg_sleep(4)" },
 ])(
 	"rolls back a $timeout timeout without retrying and reuses the clean connection",
-	async ({ timeout, code, query }) => {
+	async ({ timeout, sqlState, kind, query }) => {
 		const authentication = { identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] };
 		const versionQuery = "SELECT version FROM public.clinic_availability_versions WHERE clinic_id = $1::uuid";
 		const sessionQuery = `
@@ -461,7 +466,7 @@ it.each([
 			}
 			await expect(
 				runAuthorizedTransaction(authentication, "readAuditRecords", callback, pool),
-			).rejects.toMatchObject({ code });
+			).rejects.toMatchObject({ stage: "operation", kind, sqlState });
 		} finally {
 			if (holdLock) {
 				await setup.query("ROLLBACK");
