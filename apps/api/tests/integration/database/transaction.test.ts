@@ -1,5 +1,6 @@
 import { Client, Pool } from "pg";
-import { afterAll, expect, it } from "vitest";
+import { afterAll, expect, it, vi } from "vitest";
+import { databaseTimeouts } from "../../../src/config/database-timeouts.js";
 import { runTransaction } from "../../../src/database/transaction.js";
 
 const connectionString = process.env.DATABASE_URL;
@@ -7,7 +8,7 @@ if (!connectionString) {
 	throw new Error("DATABASE_URL is required for isolated database tests");
 }
 
-const pool = new Pool({ connectionString, max: 1 });
+const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: databaseTimeouts.acquireMs });
 
 afterAll(async () => {
 	await pool.end();
@@ -29,6 +30,27 @@ async function setLocalScope(client: Pick<Pool, "query">) {
 	`);
 	await client.query("SET LOCAL ROLE reception");
 }
+
+it("times out a queued phase without disturbing the active transaction context", async () => {
+	const callback = vi.fn(async () => undefined);
+	const pid = await runTransaction(
+		"readCommitted",
+		async (client) => {
+			await setLocalScope(client);
+			const activeSession = await readSession(client);
+
+			await expect(runTransaction("readCommitted", callback, pool)).rejects.toBeInstanceOf(Error);
+			expect(pool.waitingCount).toBe(0);
+			expect(callback).not.toHaveBeenCalled();
+			expect(await readSession(client)).toEqual(activeSession);
+			return activeSession.pid;
+		},
+		pool,
+	);
+
+	const nextSession = await runTransaction("readCommitted", readSession, pool);
+	expect(nextSession).toEqual({ pid, role: "medical_data_hub_api", userId: "", clinicId: "" });
+});
 
 it("returns after commit and reuses the same connection with cleared local context", async () => {
 	const { pid } = await readSession(pool);

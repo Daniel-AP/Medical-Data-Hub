@@ -2,7 +2,10 @@ import { Pool } from "pg";
 import { databaseTimeouts } from "../config/database-timeouts.js";
 import type { TransactionClient } from "./types.js";
 
-const runtimePool = new Pool({ connectionString: process.env.DATABASE_URL });
+const runtimePool = new Pool({
+	connectionString: process.env.DATABASE_URL,
+	connectionTimeoutMillis: databaseTimeouts.acquireMs,
+});
 runtimePool.on("error", () => console.error("An idle database connection failed"));
 
 const beginStatements = {

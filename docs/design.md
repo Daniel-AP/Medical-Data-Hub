@@ -1164,7 +1164,9 @@ Ex: a schedule block commits, but its confirmation is lost. Repeating the insert
 
    Set PostgreSQL timeouts transaction-locally. Use one Redis lookup batch outside SQL transactions; attempt a publication batch only after definitive commit. Do not maintain a cumulative cache-time budget or a request-wide counter of Redis key operations. Keep these values configurable; they are initial design settings, not measured performance guarantees or a total response deadline
 
-   The API reads `DATABASE_LOCK_TIMEOUT_MS` and `DATABASE_STATEMENT_TIMEOUT_MS` at startup. Unset values default to `1000` and `3000` milliseconds, respectively. Explicit values must be decimal integers from `1` to `2147483647` milliseconds. The transaction runner sets both limits when initializing the empty local context after `BEGIN`, before authorization queries. Compose supplies these settings to the API service.
+   At startup the API reads `DATABASE_ACQUIRE_TIMEOUT_MS`, `DATABASE_LOCK_TIMEOUT_MS`, and `DATABASE_STATEMENT_TIMEOUT_MS`. Unset values use the defaults in the table. Explicit values must be decimal integers from `1` to `2147483647` milliseconds. Compose supplies these settings to the API service.
+
+   The API pool uses `connectionTimeoutMillis` for acquisition. When the pool queue wait expires, `pg` removes the waiter and rejects the checkout with an error that carries no dedicated code. The transaction runner applies the lock and statement limits when initializing the empty local context after `BEGIN`, before authorization queries.
 
 5. A pool timeout starts no SQL transaction. A SQL timeout ends the operation with rollback and no automatic retry. A Redis timeout or failure makes its candidates unavailable and invokes PostgreSQL fallback, or skips optional publication after commit. Stop waiting on the failed batch, discard late lookup results, and do not queue cache work indefinitely during an outage. A failed cache publication must not reverse a confirmed domain result. A provider-changing request with a failed or unknown outcome follows the accepted inconsistency policy in Clinic and User Management Consistency
 
