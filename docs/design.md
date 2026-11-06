@@ -1156,6 +1156,8 @@ Ex: a schedule block commits, but its confirmation is lost. Repeating the insert
 
 3. Before a permitted retry, roll back and release the failed transaction's connection and locks. Wait a random 0-100 milliseconds, then repeat the complete transaction with fresh context, ordered locks, current authorization, and domain checks. Preserve the originally submitted fields and values; reconstruct partial-update results from freshly protected current data. Reevaluate time-dependent conditions instead of reusing an earlier attempt's clock reference
 
+   The transaction runner requires a retry candidate from the current attempt and a confirmed `ROLLBACK` before releasing the connection and starting the delay. A connection failure or unconfirmed cleanup ends the retry sequence. The authorized transaction wrapper prepares the context again inside each attempt, including identity resolution, locks, and local authorization checks.
+
 4. Use independent configured timeouts rather than a shared request-wide work budget:
 
    | Operation | Timeout |

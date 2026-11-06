@@ -1,3 +1,5 @@
+import { randomInt } from "node:crypto";
+import { setTimeout } from "node:timers/promises";
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
 import { databaseTimeouts } from "../config/database-timeouts.js";
@@ -16,12 +18,40 @@ const beginStatements = {
 };
 
 type TransactionIsolation = keyof typeof beginStatements;
+const maxAttempts = 3;
 
 export async function runTransaction<T>(
 	isolation: TransactionIsolation,
 	operation: (client: TransactionClient) => Promise<T>,
 	pool = runtimePool,
 ): Promise<T> {
+	for (let attempt = 1; ; attempt++) {
+		const outcome = await runTransactionAttempt(isolation, operation, pool);
+		if ("result" in outcome) {
+			return outcome.result;
+		}
+		if (attempt === maxAttempts) {
+			throw outcome.retry;
+		}
+		await setTimeout(randomInt(101));
+	}
+}
+
+async function rollbackTransaction(client: PoolClient) {
+	try {
+		const rollback = await client.query("ROLLBACK");
+		return rollback.command === "ROLLBACK";
+	} catch {
+		// Keep the original failure and discard the connection.
+		return false;
+	}
+}
+
+async function runTransactionAttempt<T>(
+	isolation: TransactionIsolation,
+	operation: (client: TransactionClient) => Promise<T>,
+	pool: Pool,
+): Promise<{ result: T } | { retry: TransactionFailure }> {
 	let client: PoolClient | undefined;
 	let stage: TransactionStage = "acquire";
 	let reusable = false;
@@ -37,25 +67,14 @@ export async function runTransaction<T>(
 		await client.query(beginStatements[isolation]);
 
 		stage = "operation";
-		let result: T;
-		try {
-			await client.query(
-				`SELECT pg_catalog.set_config('lock_timeout', $1, true),
-				        pg_catalog.set_config('statement_timeout', $2, true),
-				        pg_catalog.set_config('app.user_id', '', true),
-				        pg_catalog.set_config('app.clinic_id', '', true)`,
-				[`${databaseTimeouts.lockMs}ms`, `${databaseTimeouts.statementMs}ms`],
-			);
-			result = await operation(client);
-		} catch (error) {
-			try {
-				const rollback = await client.query("ROLLBACK");
-				reusable = rollback.command === "ROLLBACK";
-			} catch {
-				// Keep the original failure and discard the connection.
-			}
-			throw error;
-		}
+		await client.query(
+			`SELECT pg_catalog.set_config('lock_timeout', $1, true),
+			        pg_catalog.set_config('statement_timeout', $2, true),
+			        pg_catalog.set_config('app.user_id', '', true),
+			        pg_catalog.set_config('app.clinic_id', '', true)`,
+			[`${databaseTimeouts.lockMs}ms`, `${databaseTimeouts.statementMs}ms`],
+		);
+		const result = await operation(client);
 
 		stage = "commit";
 		const commit = await client.query("COMMIT");
@@ -67,9 +86,28 @@ export async function runTransaction<T>(
 			throw new TransactionFailure(stage, "indeterminateCommit");
 		}
 		reusable = true;
-		return result;
+		return { result };
 	} catch (error) {
-		throw classifyTransactionFailure(stage, error, connectionError !== undefined && connectionError === error);
+		if (client && stage === "operation") {
+			reusable = await rollbackTransaction(client);
+		}
+		const failure = classifyTransactionFailure(
+			stage,
+			error,
+			connectionError !== undefined && connectionError === error,
+		);
+		const retryableAbort =
+			failure instanceof TransactionFailure && failure !== error && failure.kind === "retryableAbort";
+		if (!retryableAbort || connectionError) {
+			throw failure;
+		}
+		if (client && stage !== "operation") {
+			reusable = await rollbackTransaction(client);
+		}
+		if (!reusable || connectionError) {
+			throw failure;
+		}
+		return { retry: failure };
 	} finally {
 		client?.off("error", onConnectionError);
 		client?.release(connectionError !== undefined || !reusable);

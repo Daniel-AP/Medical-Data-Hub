@@ -518,3 +518,68 @@ it("keeps the definitive availability version stable across a concurrent commit"
 		);
 	}
 });
+
+it.each([
+	{ name: "retries a serialization failure and commits using a fresh snapshot", conflicts: 1, executions: 2 },
+	{ name: "stops after three executions when every snapshot conflicts", conflicts: 3, executions: 3 },
+])("$name", async ({ conflicts, executions }) => {
+	const authentication = { identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] };
+	const versionQuery = "SELECT version FROM public.clinic_availability_versions WHERE clinic_id = $1::uuid";
+	const incrementQuery =
+		"UPDATE public.clinic_availability_versions SET version = version + 1 WHERE clinic_id = $1::uuid";
+	const clinic = [clinicAdmin.clinicId];
+	const baseline = (await setup.query<{ version: string }>(versionQuery, clinic)).rows[0].version;
+	const snapshots: { version: string; transactionId: string }[] = [];
+
+	try {
+		const operation = runAuthorizedTransaction(
+			authentication,
+			"readDefinitiveAvailability",
+			async (client) => {
+				const previous = snapshots.at(-1);
+				if (previous) {
+					const { rows } = await setup.query("SELECT pg_catalog.pg_xact_status($1::xid8) AS status", [
+						previous.transactionId,
+					]);
+					expect(rows).toEqual([{ status: "aborted" }]);
+				}
+
+				const { rows } = await client.query<{ version: string; transactionId: string }>(
+					`SELECT version, pg_catalog.pg_current_xact_id()::text AS "transactionId"
+					 FROM public.clinic_availability_versions WHERE clinic_id = $1::uuid`,
+					clinic,
+				);
+				const [snapshot] = rows;
+				snapshots.push(snapshot);
+				if (snapshots.length <= conflicts) {
+					await setup.query(incrementQuery, clinic);
+				}
+				await client.query(incrementQuery, clinic);
+				return snapshot.version;
+			},
+			pool,
+		);
+
+		if (conflicts === executions) {
+			await expect(operation).rejects.toMatchObject({
+				stage: "operation",
+				kind: "retryableAbort",
+				sqlState: "40001",
+			});
+		} else {
+			await expect(operation).resolves.toBe((BigInt(baseline) + 1n).toString());
+		}
+		const expectedVersions = Array.from({ length: executions }, (_, index) =>
+			(BigInt(baseline) + BigInt(index)).toString(),
+		);
+		expect(snapshots.map(({ version }) => version)).toEqual(expectedVersions);
+		expect((await setup.query(versionQuery, clinic)).rows).toEqual([
+			{ version: (BigInt(baseline) + BigInt(executions)).toString() },
+		]);
+	} finally {
+		await setup.query(
+			"UPDATE public.clinic_availability_versions SET version = $1::bigint WHERE clinic_id = $2::uuid",
+			[baseline, clinicAdmin.clinicId],
+		);
+	}
+});
