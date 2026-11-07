@@ -2,6 +2,7 @@ import { Client, Pool } from "pg";
 import { afterAll, expect, it, vi } from "vitest";
 import { databaseTimeouts } from "../../../src/config/database-timeouts.js";
 import { runTransaction } from "../../../src/database/transaction.js";
+import type { TransactionClient } from "../../../src/database/types.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -89,29 +90,19 @@ it("returns after commit and reuses the same connection with cleared local conte
 	expect(nextSession).toEqual({ pid, role: "medical_data_hub_api", userId: "", clinicId: "" });
 });
 
-it("rolls back a callback failure and reuses the same connection with cleared local context", async () => {
+it("rolls back a business conflict without retrying and reuses the clean connection", async () => {
 	const { pid } = await readSession(pool);
-	const failure = new Error("Operation failed");
+	const conflict = Object.assign(new Error("Operation conflict"), { status: 409 });
+	const callback = vi.fn(async (client: TransactionClient) => {
+		expect(await readSession(client)).toEqual({ pid, role: "medical_data_hub_api", userId: "", clinicId: "" });
+		const { rows } = await client.query("SHOW transaction_isolation");
+		expect(rows[0]).toEqual({ transaction_isolation: "repeatable read" });
+		await setLocalScope(client);
+		throw conflict;
+	});
 
-	await expect(
-		runTransaction(
-			"repeatableRead",
-			async (client) => {
-				expect(await readSession(client)).toEqual({
-					pid,
-					role: "medical_data_hub_api",
-					userId: "",
-					clinicId: "",
-				});
-				const { rows } = await client.query("SHOW transaction_isolation");
-				expect(rows[0]).toEqual({ transaction_isolation: "repeatable read" });
-				await setLocalScope(client);
-				throw failure;
-			},
-			pool,
-		),
-	).rejects.toBe(failure);
-
+	await expect(runTransaction("repeatableRead", callback, pool)).rejects.toBe(conflict);
+	expect(callback).toHaveBeenCalledTimes(1);
 	expect(await readSession(pool)).toEqual({ pid, role: "medical_data_hub_api", userId: "", clinicId: "" });
 });
 
@@ -184,5 +175,49 @@ it("rejects an unconfirmed commit and discards the terminated connection", async
 	} finally {
 		pool.off("release", onRelease);
 		await terminator.end();
+	}
+});
+
+it("reports an indeterminate result without replay when a committed transaction loses its confirmation", async () => {
+	const { pid } = await readSession(pool);
+	const connection = await pool.connect();
+	const query = connection.query.bind(connection);
+	const lostConfirmation = new Error("Synthetic loss of commit confirmation");
+	const interceptedQuery = vi.spyOn(connection, "query").mockImplementation((...args: unknown[]) => {
+		if (args[0] === "COMMIT") {
+			return query("COMMIT").then((commit) => {
+				expect(commit.command).toBe("COMMIT");
+				throw lostConfirmation;
+			});
+		}
+		return Reflect.apply(query, connection, args);
+	});
+	connection.release();
+
+	let transactionId: string | undefined;
+	const callback = vi.fn(async (client: TransactionClient) => {
+		const { rows } = await client.query<{ transactionId: string }>(
+			'SELECT pg_catalog.pg_current_xact_id()::text AS "transactionId"',
+		);
+		transactionId = rows[0].transactionId;
+		return transactionId;
+	});
+
+	try {
+		await expect(runTransaction("readCommitted", callback, pool)).rejects.toMatchObject({
+			stage: "commit",
+			kind: "indeterminateCommit",
+			cause: lostConfirmation,
+		});
+		expect(callback).toHaveBeenCalledTimes(1);
+
+		const { rows } = await pool.query(
+			"SELECT pg_catalog.pg_backend_pid() AS pid, pg_catalog.pg_xact_status($1::xid8) AS status",
+			[transactionId],
+		);
+		expect(rows[0]).toEqual({ pid: expect.any(Number), status: "committed" });
+		expect(rows[0].pid).not.toBe(pid);
+	} finally {
+		interceptedQuery.mockRestore();
 	}
 });
