@@ -1,8 +1,9 @@
 import { randomInt } from "node:crypto";
-import { setTimeout } from "node:timers/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
 import { databaseTimeouts } from "../config/database-timeouts.js";
+import { OperationOutcomeUnknownError } from "../operation-outcome-unknown.js";
 import { classifyTransactionFailure, TransactionFailure } from "./transaction-failure.js";
 import type { TransactionClient, TransactionStage } from "./types.js";
 
@@ -34,7 +35,31 @@ export async function runTransaction<T>(
 		if (attempt === maxAttempts) {
 			throw outcome.retry;
 		}
-		await setTimeout(randomInt(101));
+		await delay(randomInt(101));
+	}
+}
+
+async function acquireConnection(pool: Pool) {
+	let timeout: TransactionFailure | undefined;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const deadline = new Promise<never>((_resolve, reject) => {
+		timer = setTimeout(() => {
+			timeout = new TransactionFailure("acquire", "acquireTimeout");
+			reject(timeout);
+		}, databaseTimeouts.acquireMs);
+	});
+
+	try {
+		const checkout = pool.connect().then((client) => {
+			if (timeout) {
+				client.release();
+				throw timeout;
+			}
+			return client;
+		});
+		return await Promise.race([deadline, checkout]);
+	} finally {
+		clearTimeout(timer);
 	}
 }
 
@@ -65,7 +90,7 @@ async function runTransactionAttempt<T>(
 	};
 
 	try {
-		const client = await pool.connect();
+		const client = await acquireConnection(pool);
 		checkedOutClient = client;
 		client.on("error", onConnectionError);
 		stage = "begin";
@@ -123,14 +148,18 @@ async function runTransactionAttempt<T>(
 		);
 		const retryableAbort =
 			failure instanceof TransactionFailure && failure !== error && failure.kind === "retryableAbort";
+		const operationFailure =
+			providerMutationSent && failure instanceof TransactionFailure
+				? new OperationOutcomeUnknownError(failure)
+				: failure;
 		if (!retryableAbort || connectionError) {
-			throw failure;
+			throw operationFailure;
 		}
 		if (checkedOutClient && stage !== "operation") {
 			reusable = await rollbackTransaction(checkedOutClient);
 		}
 		if (!reusable || connectionError || providerMutationSent) {
-			throw failure;
+			throw operationFailure;
 		}
 		return { retry: failure };
 	} finally {

@@ -2,6 +2,7 @@ import { DatabaseError } from "pg";
 import type { TransactionStage } from "./types.js";
 
 type FailureKind =
+	| "acquireTimeout"
 	| "acquisition"
 	| "connection"
 	| "lockUnavailable"

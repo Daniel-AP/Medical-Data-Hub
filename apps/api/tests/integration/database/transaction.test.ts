@@ -41,9 +41,9 @@ it("times out a queued phase without disturbing the active transaction context",
 
 			await expect(runTransaction("readCommitted", callback, pool)).rejects.toMatchObject({
 				stage: "acquire",
-				kind: "acquisition",
+				kind: "acquireTimeout",
 			});
-			expect(pool.waitingCount).toBe(0);
+			await vi.waitFor(() => expect(pool.waitingCount).toBe(0));
 			expect(callback).not.toHaveBeenCalled();
 			expect(await readSession(client)).toEqual(activeSession);
 			return activeSession.pid;

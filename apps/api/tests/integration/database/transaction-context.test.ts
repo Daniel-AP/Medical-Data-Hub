@@ -570,11 +570,8 @@ it.each([
 		);
 
 		if (conflicts === executions) {
-			await expect(operation).rejects.toMatchObject({
-				stage: "operation",
-				kind: "retryableAbort",
-				sqlState: "40001",
-			});
+			const failure = { stage: "operation", kind: "retryableAbort", sqlState: "40001" };
+			await expect(operation).rejects.toMatchObject(markMutation ? { cause: failure } : failure);
 		} else {
 			await expect(operation).resolves.toBe((BigInt(baseline) + 1n).toString());
 		}

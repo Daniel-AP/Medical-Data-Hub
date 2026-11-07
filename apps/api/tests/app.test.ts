@@ -4,10 +4,44 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { app, router } from "../src/app.js";
+import { TransactionFailure } from "../src/database/transaction-failure.js";
+import { OperationOutcomeUnknownError } from "../src/operation-outcome-unknown.js";
 
 let server: Server;
 let url: string;
 const requestOptions = { method: "POST", headers: { "Content-Type": "application/json" } };
+const transientBody = { error: STATUS_CODES[503] };
+const indeterminateBody = { error: STATUS_CODES[500], code: "OPERATION_OUTCOME_UNKNOWN" };
+const databaseErrors = [
+	{
+		name: "returns 503 for a database acquisition timeout",
+		path: "/runtime-acquisition-timeout",
+		failure: new TransactionFailure("acquire", "acquireTimeout"),
+		status: 503,
+		body: transientBody,
+	},
+	{
+		name: "returns 503 for a canceled database statement",
+		path: "/runtime-statement-canceled",
+		failure: new TransactionFailure("operation", "queryCanceled"),
+		status: 503,
+		body: transientBody,
+	},
+	{
+		name: "reports an indeterminate commit without exposing database details",
+		path: "/runtime-indeterminate-commit",
+		failure: new TransactionFailure("commit", "indeterminateCommit", new Error("Synthetic internal detail")),
+		status: 500,
+		body: indeterminateBody,
+	},
+	{
+		name: "reports an indeterminate provider outcome without exposing its cause",
+		path: "/runtime-indeterminate-operation",
+		failure: new OperationOutcomeUnknownError(new Error("Synthetic internal detail")),
+		status: 500,
+		body: indeterminateBody,
+	},
+];
 
 beforeAll(async () => {
 	router.post("/runtime-json-check", (request, response) => {
@@ -16,6 +50,11 @@ beforeAll(async () => {
 	router.get("/runtime-error-check", async () => {
 		throw new Error("Synthetic internal detail");
 	});
+	for (const { path, failure } of databaseErrors) {
+		router.get(path, async () => {
+			throw failure;
+		});
+	}
 
 	server = app.listen(0, "127.0.0.1");
 	await once(server, "listening");
@@ -66,4 +105,10 @@ it("preserves the payload size error status", async () => {
 	});
 	expect(response.status).toBe(413);
 	expect(await response.json()).toEqual({ error: STATUS_CODES[413] });
+});
+
+it.each(databaseErrors)("$name", async ({ path, status, body }) => {
+	const response = await fetch(`${url}${path}`);
+	expect(response.status).toBe(status);
+	expect(await response.json()).toEqual(body);
 });
