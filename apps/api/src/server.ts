@@ -2,7 +2,9 @@ import { app, router } from "./app.js";
 import { createAccessTokenVerifier, createLogoutIdTokenVerifier } from "./clients/keycloak.js";
 import "./config/database-timeouts.js";
 import "./config/redis-timeout.js";
-import { createAuthenticationMiddleware } from "./middleware/authentication.js";
+import { UserRole } from "./generated/prisma/enums.js";
+import { createAuthenticationMiddleware, requireRoles } from "./middleware/authentication.js";
+import { listAuditRecords } from "./routes/audit-records.js";
 import { createLogoutRequestHandler } from "./routes/logout.js";
 
 const host = process.env.HOST;
@@ -20,6 +22,7 @@ const authenticate = createAuthenticationMiddleware(createAccessTokenVerifier(co
 const prepareLogout = createLogoutRequestHandler(createLogoutIdTokenVerifier(configuration), issuer);
 
 router.post("/auth/logout-request", authenticate, prepareLogout);
+router.get("/audit-records", authenticate, requireRoles(UserRole.clinicAdministrator), listAuditRecords);
 
 app.listen({ port, host }, (error) => {
 	if (error) {
