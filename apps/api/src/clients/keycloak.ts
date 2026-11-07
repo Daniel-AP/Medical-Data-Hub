@@ -1,11 +1,14 @@
 import { createRemoteJWKSet, errors, jwtVerify } from "jose";
 import type { JWTPayload, JWTVerifyGetKey } from "jose";
+import { readTimeout } from "../config/read-timeout.js";
 
-type KeycloakConfig = { issuer: string; jwksUrl: string; audience: string };
+const keycloakHttpTimeoutMs = readTimeout("KEYCLOAK_HTTP_TIMEOUT_MS", 2000);
+
+type KeycloakConfig = { issuer: string; jwksUrl: string; audience: string; timeoutMs?: number };
 type IdTokenContext = { identityId: string; sessionId: string; clientId: string };
 
-function createKeyResolver(jwksUrl: string): JWTVerifyGetKey {
-	const jwks = createRemoteJWKSet(new URL(jwksUrl));
+function createKeyResolver(jwksUrl: string, timeoutMs = keycloakHttpTimeoutMs): JWTVerifyGetKey {
+	const jwks = createRemoteJWKSet(new URL(jwksUrl), { timeoutDuration: timeoutMs });
 
 	return async (header, token) => {
 		try {
@@ -23,7 +26,7 @@ function createKeyResolver(jwksUrl: string): JWTVerifyGetKey {
 }
 
 export function createAccessTokenVerifier(config: KeycloakConfig) {
-	const resolveKey = createKeyResolver(config.jwksUrl);
+	const resolveKey = createKeyResolver(config.jwksUrl, config.timeoutMs);
 
 	return async (token: string) => {
 		try {
@@ -45,7 +48,7 @@ export function createAccessTokenVerifier(config: KeycloakConfig) {
 }
 
 export function createLogoutIdTokenVerifier(config: Omit<KeycloakConfig, "audience">) {
-	const resolveKey = createKeyResolver(config.jwksUrl);
+	const resolveKey = createKeyResolver(config.jwksUrl, config.timeoutMs);
 
 	return async (token: string, context: IdTokenContext) => {
 		const hasSessionContext = context.sessionId.length > 0 && context.clientId.length > 0;

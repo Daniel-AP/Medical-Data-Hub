@@ -1178,6 +1178,10 @@ Ex: a schedule block commits, but its confirmation is lost. Repeating the insert
 
    The API pool uses `connectionTimeoutMillis` for acquisition. When the pool queue wait expires, `pg` removes the waiter and rejects the checkout with an error that carries no dedicated code. The transaction runner applies the lock and statement limits when initializing the empty local context after `BEGIN`, before authorization queries.
 
+   The API reads `KEYCLOAK_HTTP_TIMEOUT_MS` at startup using the same integer validation. Compose supplies the setting to the API service. The access and logout verifiers configure the `jose` JWKS request timeout, including the response body. A timed-out JWKS request follows the key-unavailability response in [Token Checks](#token-checks).
+
+   The administrative client will apply the same limit to each Keycloak request. If a marked mutation times out before provider confirmation, preserve its indeterminate outcome for manual reconciliation.
+
 5. A pool timeout starts no SQL transaction. A SQL timeout ends the operation with rollback and no automatic retry. A Redis timeout or failure makes its candidates unavailable and invokes PostgreSQL fallback, or skips optional publication after commit. Stop waiting on the failed batch, discard late lookup results, and do not queue cache work indefinitely during an outage. A failed cache publication must not reverse a confirmed domain result. A provider-changing request with a failed or unknown outcome follows the accepted inconsistency policy in Clinic and User Management Consistency
 
 6. Roll back the complete failed SQL transaction, including domain writes, read and write audit events, and any availability version increment. Discard provisional results and do not continue issuing queries from an abandoned callback. Return a pooled connection only in a safe transaction and context state; retire it when cleanup cannot be confirmed. Sending cancellation or closing a connection does not prove that an uncertain commit rolled back

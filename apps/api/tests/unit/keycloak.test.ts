@@ -1,3 +1,7 @@
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { RequestListener } from "node:http";
+import type { AddressInfo } from "node:net";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import type { JWK, JWTPayload } from "jose";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -82,6 +86,35 @@ it("reports unavailable verification keys with 503", async () => {
 	fetchKeys.mockRejectedValueOnce(new TypeError("fetch failed"));
 	const token = await createToken();
 	await expect(verifyAccessToken(token)).rejects.toMatchObject({ status: 503 });
+});
+
+it("reports a delayed JWKS response as unavailable with 503", async () => {
+	vi.unstubAllGlobals();
+	const requestKeys = vi.fn<RequestListener>((_request, response) => {
+		response.writeHead(200, { "Content-Type": "application/json" });
+		response.flushHeaders();
+		const timer = setTimeout(() => response.end(JSON.stringify({ keys: [publicJwk] })), 1000);
+		response.once("close", () => clearTimeout(timer));
+	});
+	const server = createServer(requestKeys);
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+
+	try {
+		const { port } = server.address() as AddressInfo;
+		const verify = createAccessTokenVerifier({
+			issuer,
+			audience,
+			jwksUrl: `http://127.0.0.1:${port}`,
+			timeoutMs: 250,
+		});
+		const token = await createToken();
+		await expect(verify(token)).rejects.toMatchObject({ status: 503 });
+		expect(requestKeys).toHaveBeenCalledTimes(1);
+	} finally {
+		server.close();
+		await once(server, "close");
+	}
 });
 
 it("reports an unsuccessful JWKS response with 503", async () => {
