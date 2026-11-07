@@ -14,6 +14,7 @@ services:
             KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL}
             KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE}
             KEYCLOAK_HTTP_TIMEOUT_MS: ${KEYCLOAK_HTTP_TIMEOUT_MS-2000}
+            REDIS_BATCH_TIMEOUT_MS: ${REDIS_BATCH_TIMEOUT_MS-500}
         ports:
             - "127.0.0.1:${PORT}:${PORT}"
         depends_on:
