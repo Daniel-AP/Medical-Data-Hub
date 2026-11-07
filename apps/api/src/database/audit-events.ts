@@ -21,3 +21,20 @@ export async function insertAuditEvent(
 		[actor.clinicId, actor.userId, target.patientId, target.resource, appointmentId, action],
 	);
 }
+
+export function createAuditReadRecorder(client: TransactionClient, actor: AuditActor) {
+	const recordedResources = new Set<string>();
+
+	return async function recordReads(targets: readonly AuditTarget[]): Promise<void> {
+		for (const target of targets) {
+			const resourceId = target.resource === "clinical_note" ? target.appointmentId : target.patientId;
+			const key = `${target.resource}:${resourceId}`;
+			if (recordedResources.has(key)) {
+				continue;
+			}
+
+			recordedResources.add(key);
+			await insertAuditEvent(client, actor, target, "read");
+		}
+	};
+}

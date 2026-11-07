@@ -942,6 +942,8 @@ Application-generated events keep the operation and authenticated metadata expli
 
 `insertAuditEvent` uses the caller's scoped transaction client and the authorized actor's clinic and user identifiers. It takes a resource reference and action and issues one parameterized insert without `RETURNING`. It binds `NULL` for a patient-contact event's appointment and requires the appointment identifier for a clinical-note event. PostgreSQL generates the event identifier and timestamp.
 
+Call `createAuditReadRecorder` once inside each authorized transaction attempt. After retrieving stored contact or note content, pass the recovered resource references to the recorder and await the inserts within the attempt. The recorder tracks each resource by type and patient or appointment identifier across queries. Empty results produce no events, and each retry starts with a fresh recorder.
+
 `audit_records_append_only_guard` implements that engine protection as a `BEFORE UPDATE OR DELETE OR TRUNCATE` statement trigger. It rejects every such statement, including updates and deletions with no matching rows, with SQLSTATE `55000`. Its `SECURITY INVOKER` function, `public.reject_audit_record_mutation()`, uses `search_path = pg_catalog, pg_temp` with default `PUBLIC` execution revoked. Application profiles cannot disable the trigger and have no mutation grants; tests also exercise the trigger under temporary grants rolled back afterward. Inserts remain transactional and can be rolled back.
 
 The clinic administrator can query audit records with filters by user, patient, and date range (`RF19`). Scope the results to the authenticated clinic and return audit metadata without patient contact values or clinical note content.
