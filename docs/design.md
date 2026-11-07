@@ -1058,6 +1058,8 @@ Incomplete preparation can also appear as an ordinary empty result when policies
 
 8. Pass that scoped client explicitly to every repository and helper used by the phase. Execute all ORM and SQL queries through it. Do not use the global client, open another transaction inside a helper, or retain the scoped client for use after its phase ends. Await every query before completing the callback. Acquire subsequent domain locks in the accepted order. Where a lock requires modification privileges that the operating profile should not possess, use a limited locking function instead of granting those privileges to the caller
 
+   The scoped client accepts queries while the operation callback is active and the connection is available. The wrapper closes the scoped client when the callback settles or the connection reports an error. Transaction cleanup uses the underlying connection.
+
 9. Retrieve sensitive content and insert its audit events within the same wrapper invocation under [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency). Establish authorization once for that operation and use the same scoped client for domain queries and events. Confirm the operation transaction before returning sensitive content
 
 10. For platform clinic registration, validate and protect the platform administrator, select its restricted operating profile, and invoke a specific creation function (`RF1`). Within the caller's transaction, that function creates the new clinic, its first active administrator, and its initial availability version. Its inputs contain the validated registration data and existing provider identity. It does not grant general insertion rights over users in existing clinics or access to patients, appointments, or clinical notes. The platform actor retains `clinic_id = NULL`
@@ -1153,6 +1155,8 @@ Ex: a schedule block commits, but its confirmation is lost. Repeating the insert
    A `ROLLBACK` command tag in response to `COMMIT` or a server integrity violation at commit confirms an abort. `40001` and `40P01` identify retry candidates. Other commit failures without a confirming response are classified as indeterminate. A pool acquisition failure without a structured connection signal remains a generic acquisition failure.
 
 2. Automatically retry only a complete SQL transaction rejected with `40001` (`serialization_failure`) or `40P01` (`deadlock_detected`), after confirming that attempt cannot commit. Allow at most three executions of that transaction: the original attempt and two retries. The common transaction wrapper owns this counter; query helpers do not retry independently. A management operation that has sent a provider-changing request must not be retried automatically, following Clinic and User Management Consistency
+
+   Call `markProviderMutationSent()` immediately before dispatching a request that can change Keycloak state. The mark prevents another execution of the SQL phase even if PostgreSQL later reports a retry candidate. The wrapper still performs transaction cleanup.
 
 3. Before a permitted retry, roll back and release the failed transaction's connection and locks. Wait a random 0-100 milliseconds, then repeat the complete transaction with fresh context, ordered locks, current authorization, and domain checks. Preserve the originally submitted fields and values; reconstruct partial-update results from freshly protected current data. Reevaluate time-dependent conditions instead of reusing an earlier attempt's clock reference
 

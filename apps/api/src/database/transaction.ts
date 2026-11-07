@@ -18,11 +18,12 @@ const beginStatements = {
 };
 
 type TransactionIsolation = keyof typeof beginStatements;
+type TransactionOperation<T> = (client: TransactionClient, markProviderMutationSent: () => void) => Promise<T>;
 const maxAttempts = 3;
 
 export async function runTransaction<T>(
 	isolation: TransactionIsolation,
-	operation: (client: TransactionClient) => Promise<T>,
+	operation: TransactionOperation<T>,
 	pool = runtimePool,
 ): Promise<T> {
 	for (let attempt = 1; ; attempt++) {
@@ -49,19 +50,23 @@ async function rollbackTransaction(client: PoolClient) {
 
 async function runTransactionAttempt<T>(
 	isolation: TransactionIsolation,
-	operation: (client: TransactionClient) => Promise<T>,
+	operation: TransactionOperation<T>,
 	pool: Pool,
 ): Promise<{ result: T } | { retry: TransactionFailure }> {
-	let client: PoolClient | undefined;
+	let checkedOutClient: PoolClient | undefined;
 	let stage: TransactionStage = "acquire";
 	let reusable = false;
+	let attemptOpen = true;
+	let providerMutationSent = false;
 	let connectionError: Error | undefined;
 	const onConnectionError = (error: Error) => {
 		connectionError = error;
+		attemptOpen = false;
 	};
 
 	try {
-		client = await pool.connect();
+		const client = await pool.connect();
+		checkedOutClient = client;
 		client.on("error", onConnectionError);
 		stage = "begin";
 		await client.query(beginStatements[isolation]);
@@ -74,7 +79,27 @@ async function runTransactionAttempt<T>(
 			        pg_catalog.set_config('app.clinic_id', '', true)`,
 			[`${databaseTimeouts.lockMs}ms`, `${databaseTimeouts.statementMs}ms`],
 		);
-		const result = await operation(client);
+		const assertAttemptOpen = () => {
+			if (!attemptOpen) {
+				throw new Error("Transaction attempt is closed");
+			}
+		};
+		const scopedClient: TransactionClient = {
+			query: (...args: unknown[]) => {
+				assertAttemptOpen();
+				return Reflect.apply(client.query, client, args);
+			},
+		};
+		const markProviderMutationSent = () => {
+			assertAttemptOpen();
+			providerMutationSent = true;
+		};
+		let result: T;
+		try {
+			result = await operation(scopedClient, markProviderMutationSent);
+		} finally {
+			attemptOpen = false;
+		}
 
 		stage = "commit";
 		const commit = await client.query("COMMIT");
@@ -88,8 +113,8 @@ async function runTransactionAttempt<T>(
 		reusable = true;
 		return { result };
 	} catch (error) {
-		if (client && stage === "operation") {
-			reusable = await rollbackTransaction(client);
+		if (checkedOutClient && stage === "operation") {
+			reusable = await rollbackTransaction(checkedOutClient);
 		}
 		const failure = classifyTransactionFailure(
 			stage,
@@ -101,15 +126,15 @@ async function runTransactionAttempt<T>(
 		if (!retryableAbort || connectionError) {
 			throw failure;
 		}
-		if (client && stage !== "operation") {
-			reusable = await rollbackTransaction(client);
+		if (checkedOutClient && stage !== "operation") {
+			reusable = await rollbackTransaction(checkedOutClient);
 		}
-		if (!reusable || connectionError) {
+		if (!reusable || connectionError || providerMutationSent) {
 			throw failure;
 		}
 		return { retry: failure };
 	} finally {
-		client?.off("error", onConnectionError);
-		client?.release(connectionError !== undefined || !reusable);
+		checkedOutClient?.off("error", onConnectionError);
+		checkedOutClient?.release(connectionError !== undefined || !reusable);
 	}
 }

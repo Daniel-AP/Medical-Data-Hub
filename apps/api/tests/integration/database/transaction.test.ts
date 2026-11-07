@@ -58,7 +58,7 @@ it("times out a queued phase without disturbing the active transaction context",
 it("returns after commit and reuses the same connection with cleared local context", async () => {
 	const { pid } = await readSession(pool);
 
-	const transactionId = await runTransaction(
+	const { transactionId, previousClient } = await runTransaction(
 		"readCommitted",
 		async (client) => {
 			expect(await readSession(client)).toEqual({ pid, role: "medical_data_hub_api", userId: "", clinicId: "" });
@@ -69,7 +69,7 @@ it("returns after commit and reuses the same connection with cleared local conte
 			`);
 			expect(rows[0]).toMatchObject({ isolation: "read committed", readOnly: "off" });
 			await setLocalScope(client);
-			return rows[0].transactionId;
+			return { transactionId: rows[0].transactionId, previousClient: client };
 		},
 		pool,
 	);
@@ -77,6 +77,16 @@ it("returns after commit and reuses the same connection with cleared local conte
 	const { rows } = await pool.query("SELECT pg_catalog.pg_xact_status($1::xid8) AS status", [transactionId]);
 	expect(rows[0]).toEqual({ status: "committed" });
 	expect(await readSession(pool)).toEqual({ pid, role: "medical_data_hub_api", userId: "", clinicId: "" });
+
+	const nextSession = await runTransaction(
+		"readCommitted",
+		async (client) => {
+			await expect(async () => previousClient.query("SELECT 1")).rejects.toThrow("Transaction attempt is closed");
+			return readSession(client);
+		},
+		pool,
+	);
+	expect(nextSession).toEqual({ pid, role: "medical_data_hub_api", userId: "", clinicId: "" });
 });
 
 it("rolls back a callback failure and reuses the same connection with cleared local context", async () => {

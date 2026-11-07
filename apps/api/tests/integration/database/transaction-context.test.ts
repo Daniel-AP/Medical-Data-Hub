@@ -522,7 +522,13 @@ it("keeps the definitive availability version stable across a concurrent commit"
 it.each([
 	{ name: "retries a serialization failure and commits using a fresh snapshot", conflicts: 1, executions: 2 },
 	{ name: "stops after three executions when every snapshot conflicts", conflicts: 3, executions: 3 },
-])("$name", async ({ conflicts, executions }) => {
+	{
+		name: "does not retry a serialization failure after a provider mutation is marked",
+		conflicts: 1,
+		executions: 1,
+		markMutation: true,
+	},
+])("$name", async ({ conflicts, executions, markMutation }) => {
 	const authentication = { identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] };
 	const versionQuery = "SELECT version FROM public.clinic_availability_versions WHERE clinic_id = $1::uuid";
 	const incrementQuery =
@@ -535,7 +541,7 @@ it.each([
 		const operation = runAuthorizedTransaction(
 			authentication,
 			"readDefinitiveAvailability",
-			async (client) => {
+			async (client, _actor, markProviderMutationSent) => {
 				const previous = snapshots.at(-1);
 				if (previous) {
 					const { rows } = await setup.query("SELECT pg_catalog.pg_xact_status($1::xid8) AS status", [
@@ -551,6 +557,9 @@ it.each([
 				);
 				const [snapshot] = rows;
 				snapshots.push(snapshot);
+				if (markMutation) {
+					markProviderMutationSent();
+				}
 				if (snapshots.length <= conflicts) {
 					await setup.query(incrementQuery, clinic);
 				}

@@ -102,7 +102,7 @@ async function resolveReschedulingMetadata(
 export async function runAuthorizedTransaction<T>(
 	authentication: Authentication,
 	operation: TransactionOperation,
-	callback: (client: TransactionClient, actor: ActorContext) => Promise<T>,
+	callback: (client: TransactionClient, actor: ActorContext, markProviderMutationSent: () => void) => Promise<T>,
 	pool?: Pool,
 ): Promise<T> {
 	const request = typeof operation === "string" ? { name: operation } : operation;
@@ -111,7 +111,7 @@ export async function runAuthorizedTransaction<T>(
 
 	return runTransaction(
 		policy.isolation,
-		async (client) => {
+		async (client, markProviderMutationSent) => {
 			const identityResult = await client.query<Identity>(
 				`SELECT user_id AS "userId", clinic_id AS "clinicId" FROM public.resolve_identity($1::text)`,
 				[authentication.identityId],
@@ -183,7 +183,7 @@ export async function runAuthorizedTransaction<T>(
 			);
 			await client.query(profiles[role].selectRole);
 
-			return callback(client, context);
+			return callback(client, context, markProviderMutationSent);
 		},
 		pool,
 	);
