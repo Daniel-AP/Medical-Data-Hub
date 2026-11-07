@@ -70,7 +70,7 @@ async function readCommittedEvents(transactionId: string) {
 	const { rows } = await setup.query(
 		`SELECT audit_record_id AS "auditRecordId", clinic_id AS "clinicId", user_id AS "userId",
 		        patient_id AS "patientId", resource, appointment_id AS "appointmentId", action, occurred_at AS "occurredAt"
-		 FROM public.audit_records WHERE xmin = $1::xid ORDER BY patient_id`,
+		 FROM public.audit_records WHERE xmin = $1::xid ORDER BY patient_id, action`,
 		[transactionId],
 	);
 	return rows;
@@ -287,4 +287,139 @@ it("withholds audited contact content without retry when commit confirmation is 
 	} finally {
 		interceptedQuery.mockRestore();
 	}
+});
+
+it("commits a new patient and its contact write event together", async () => {
+	const actor = await readAuditFixture("patient_contact");
+	const identification = randomUUID();
+	const email = `${identification}@example.test`;
+	const { result, transactionId } = await runAuditPhase(actor, "SET LOCAL ROLE reception", async (client) => {
+		const {
+			rows: [patient],
+		} = await client.query<Pick<Patient, "patientId">>(
+			`INSERT INTO public.patients (clinic_id, identification, name, date_of_birth, email)
+			 VALUES ($1::uuid, $2, 'Synthetic patient', '1990-05-15', $3) RETURNING patient_id AS "patientId"`,
+			[actor.clinicId, identification, email],
+		);
+		await insertAuditEvent(client, actor, { resource: "patient_contact", patientId: patient.patientId }, "write");
+		return patient;
+	});
+
+	expect(result).toEqual({ patientId: expect.any(String) });
+	const patient = await setup.query(
+		"SELECT 1 FROM public.patients WHERE patient_id = $1::uuid AND email = $2 AND xmin = $3::xid",
+		[result.patientId, email, transactionId],
+	);
+	expect(patient.rowCount).toBe(1);
+	expect(await readCommittedEvents(transactionId)).toMatchObject([
+		{
+			clinicId: actor.clinicId,
+			userId: actor.userId,
+			patientId: result.patientId,
+			resource: "patient_contact",
+			appointmentId: null,
+			action: "write",
+		},
+	]);
+});
+
+it("commits a new clinical note and its write event together", async () => {
+	const actor = await readAuditFixture("clinical_note");
+	const {
+		rows: [{ appointmentId }],
+	} = await setup.query<Pick<ClinicalNote, "appointmentId">>(
+		`INSERT INTO public.appointments (clinic_id, patient_id, professional_id, service_id, start_at, end_at, state)
+		 SELECT clinic_id, patient_id, professional_id, service_id, $2::timestamptz,
+		        $2::timestamptz + (end_at - start_at), 'attended'
+		 FROM public.appointments WHERE appointment_id = $1::uuid
+		 RETURNING appointment_id AS "appointmentId"`,
+		[actor.appointmentId, "2020-02-03T15:00:00Z"],
+	);
+	const content = "Synthetic note for the audit write test";
+	const { result, transactionId } = await runAuditPhase(
+		actor,
+		"SET LOCAL ROLE healthcare_professional",
+		async (client) => {
+			const {
+				rows: [{ patientId }],
+			} = await client.query<Pick<Patient, "patientId">>(
+				'SELECT patient_id AS "patientId" FROM public.appointments WHERE appointment_id = $1::uuid',
+				[appointmentId],
+			);
+			const {
+				rows: [note],
+			} = await client.query<Pick<ClinicalNote, "appointmentId">>(
+				`INSERT INTO public.clinical_notes (appointment_id, clinic_id, content)
+				 VALUES ($1::uuid, $2::uuid, $3) RETURNING appointment_id AS "appointmentId"`,
+				[appointmentId, actor.clinicId, content],
+			);
+			await insertAuditEvent(client, actor, { resource: "clinical_note", appointmentId, patientId }, "write");
+			return note;
+		},
+	);
+
+	expect(result).toEqual({ appointmentId });
+	const note = await setup.query(
+		"SELECT 1 FROM public.clinical_notes WHERE appointment_id = $1::uuid AND content = $2 AND xmin = $3::xid",
+		[appointmentId, content, transactionId],
+	);
+	expect(note.rowCount).toBe(1);
+	expect(await readCommittedEvents(transactionId)).toMatchObject([
+		{
+			clinicId: actor.clinicId,
+			userId: actor.userId,
+			patientId: actor.patientId,
+			resource: "clinical_note",
+			appointmentId,
+			action: "write",
+		},
+	]);
+});
+
+it.each([
+	{ label: "an unchanged email assignment", assignsContact: true, actions: ["read", "write"] },
+	{ label: "a name-only edit", assignsContact: false, actions: ["read"] },
+])("commits the expected contact audit events for $label", async ({ assignsContact, actions }) => {
+	const actor = await readAuditFixture("patient_contact");
+	const { patientId } = actor;
+	const original = (await readContact(setup, patientId)).rows[0];
+	const name = `Synthetic name ${randomUUID()}`;
+	const { result, transactionId } = await runAuditPhase(actor, "SET LOCAL ROLE reception", async (client) => {
+		const recordReads = createAuditReadRecorder(client, actor);
+		const { rows } = await readContact(client, patientId);
+		expect(rows.length).toBe(1);
+		expect(Boolean(rows[0].email || rows[0].phone)).toBe(true);
+		await recordReads(rows.map(({ patientId }) => ({ resource: "patient_contact", patientId })));
+
+		const statement = assignsContact
+			? 'UPDATE public.patients SET email = $1 WHERE patient_id = $2::uuid RETURNING patient_id AS "patientId"'
+			: 'UPDATE public.patients SET name = $1 WHERE patient_id = $2::uuid RETURNING patient_id AS "patientId"';
+		const update = await client.query<Pick<Patient, "patientId">>(statement, [
+			assignsContact ? original.email : name,
+			patientId,
+		]);
+		if (assignsContact) {
+			await insertAuditEvent(client, actor, { resource: "patient_contact", patientId }, "write");
+		}
+		return update.rows[0];
+	});
+
+	expect(result).toEqual({ patientId });
+	const patient = await setup.query(
+		`SELECT 1 FROM public.patients WHERE patient_id = $1::uuid AND xmin = $2::xid
+		 AND email IS NOT DISTINCT FROM $3 AND phone IS NOT DISTINCT FROM $4
+		 AND ($5::text IS NULL OR name = $5)`,
+		[patientId, transactionId, original.email, original.phone, assignsContact ? null : name],
+	);
+	expect(patient.rowCount).toBe(1);
+	expect(await readCommittedEvents(transactionId)).toMatchObject(
+		actions.map((action) => ({
+			clinicId: actor.clinicId,
+			userId: actor.userId,
+			patientId,
+			resource: "patient_contact",
+			appointmentId: null,
+			action,
+		})),
+	);
 });
