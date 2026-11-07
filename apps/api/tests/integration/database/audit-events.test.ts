@@ -31,9 +31,12 @@ async function readAuditFixture(resource: "patient_contact" | "clinical_note") {
 	const {
 		rows: [fixture],
 	} = await setup.query<AuditFixture>(
-		`SELECT clinic_id AS "clinicId", user_id AS "userId", patient_id AS "patientId", appointment_id AS "appointmentId"
-		 FROM public.audit_records WHERE resource = $1::public.audit_resource ORDER BY audit_record_id LIMIT 1`,
-		[resource],
+		`SELECT record.clinic_id AS "clinicId", record.user_id AS "userId", record.patient_id AS "patientId",
+		        record.appointment_id AS "appointmentId"
+		 FROM public.audit_records AS record JOIN public.users AS actor USING (clinic_id, user_id)
+		 WHERE record.resource = $1::public.audit_resource AND actor.role = $2::public.user_role
+		 ORDER BY record.audit_record_id LIMIT 1`,
+		[resource, resource === "patient_contact" ? "reception" : "healthcare_professional"],
 	);
 	return fixture;
 }

@@ -946,7 +946,11 @@ Call `createAuditReadRecorder` once inside each authorized transaction attempt. 
 
 `audit_records_append_only_guard` implements that engine protection as a `BEFORE UPDATE OR DELETE OR TRUNCATE` statement trigger. It rejects every such statement, including updates and deletions with no matching rows, with SQLSTATE `55000`. Its `SECURITY INVOKER` function, `public.reject_audit_record_mutation()`, uses `search_path = pg_catalog, pg_temp` with default `PUBLIC` execution revoked. Application profiles cannot disable the trigger and have no mutation grants; tests also exercise the trigger under temporary grants rolled back afterward. Inserts remain transactional and can be rolled back.
 
-The clinic administrator can query audit records with filters by user, patient, and date range (`RF19`). Scope the results to the authenticated clinic and return audit metadata without patient contact values or clinical note content.
+The audit query uses the `readAuditRecords` authorization policy for clinic administrators (`RF19`). It binds the clinic from the authorized context, applies the supplied filters together, and selects audit metadata under RLS. It sorts by `occurred_at` descending and then by `audit_record_id` descending to break ties.
+
+The agreed HTTP contract is `GET /audit-records`. Its optional query parameters are `userId` and `patientId` (UUIDs) and `from` and `to` (ISO 8601 timestamps with an explicit offset or `Z` and up to millisecond precision). The date range includes `from` and excludes `to`. Either bound can be supplied on its own. The route returns `400` for invalid, repeated, or unknown parameters, including `clinicId`, and for `from >= to` when both bounds are supplied.
+
+A successful response returns `200` with `{ records: [...] }`. Each record contains `auditRecordId`, `clinicId`, `userId`, `patientId`, `resource`, `appointmentId`, `action`, and `occurredAt` serialized as a UTC timestamp. The array follows the database order and is empty when no records match.
 
 ## Clinic and User Management Consistency
 
