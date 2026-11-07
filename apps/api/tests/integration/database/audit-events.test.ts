@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Client, Pool } from "pg";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { createAuditReadRecorder, insertAuditEvent } from "../../../src/database/audit-events.js";
 import { runTransaction } from "../../../src/database/transaction.js";
 import type { TransactionClient } from "../../../src/database/types.js";
@@ -16,7 +16,7 @@ if (!setupConnectionString || !apiConnectionString) {
 }
 
 const setup = new Client({ connectionString: setupConnectionString });
-const pool = new Pool({ connectionString: apiConnectionString });
+const pool = new Pool({ connectionString: apiConnectionString, max: 1 });
 
 beforeAll(async () => {
 	await setup.connect();
@@ -237,4 +237,54 @@ it("rolls back a contact update and its read and write events after a rejection"
 	const stored = (await readContact(setup, patientId)).rows[0];
 	expect(stored.email === original.email && stored.phone === original.phone).toBe(true);
 	expect(await readCommittedEvents(transactionId)).toEqual([]);
+});
+
+it("withholds audited contact content without retry when commit confirmation is lost", async () => {
+	const actor = await readAuditFixture("patient_contact");
+	const connection = await pool.connect();
+	const query = connection.query.bind(connection);
+	const lostConfirmation = new Error("Synthetic loss of commit confirmation");
+	const interceptedQuery = vi.spyOn(connection, "query").mockImplementation((...args: unknown[]) => {
+		if (args[0] === "COMMIT") {
+			return query("COMMIT").then((commit) => {
+				expect(commit.command).toBe("COMMIT");
+				throw lostConfirmation;
+			});
+		}
+		return Reflect.apply(query, connection, args);
+	});
+	connection.release();
+
+	let transactionId = "";
+	const read = vi.fn(async (client: TransactionClient) => {
+		const recordReads = createAuditReadRecorder(client, actor);
+		const { rows } = await readContact(client, actor.patientId);
+		expect(rows.length).toBe(1);
+		expect(Boolean(rows[0].email || rows[0].phone)).toBe(true);
+		await recordReads(rows.map(({ patientId }) => ({ resource: "patient_contact", patientId })));
+		transactionId = await readTransactionId(client);
+		return rows;
+	});
+
+	try {
+		const phase = runAuditPhase(actor, "SET LOCAL ROLE reception", read);
+		await expect(phase.then(({ result }) => result.length)).rejects.toMatchObject({
+			stage: "commit",
+			kind: "indeterminateCommit",
+			cause: lostConfirmation,
+		});
+		expect(read).toHaveBeenCalledTimes(1);
+		expect(await readCommittedEvents(transactionId)).toMatchObject([
+			{
+				clinicId: actor.clinicId,
+				userId: actor.userId,
+				patientId: actor.patientId,
+				resource: "patient_contact",
+				appointmentId: null,
+				action: "read",
+			},
+		]);
+	} finally {
+		interceptedQuery.mockRestore();
+	}
 });
