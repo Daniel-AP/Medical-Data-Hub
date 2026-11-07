@@ -53,13 +53,17 @@ async function runAuditPhase<T>(
 			await client.query(selectRole);
 
 			const result = await operation(client);
-			const { rows } = await client.query<{ transactionId: string }>(
-				'SELECT pg_catalog.pg_current_xact_id()::xid::text AS "transactionId"',
-			);
-			return { result, transactionId: rows[0].transactionId };
+			return { result, transactionId: await readTransactionId(client) };
 		},
 		pool,
 	);
+}
+
+async function readTransactionId(client: TransactionClient) {
+	const { rows } = await client.query<{ transactionId: string }>(
+		'SELECT pg_catalog.pg_current_xact_id()::xid::text AS "transactionId"',
+	);
+	return rows[0].transactionId;
 }
 
 async function readCommittedEvents(transactionId: string) {
@@ -182,5 +186,55 @@ it("commits no read events for an empty contact result", async () => {
 	});
 
 	expect(result).toHaveLength(0);
+	expect(await readCommittedEvents(transactionId)).toEqual([]);
+});
+
+it("rejects retrieved contact content when the audit insert is denied", async () => {
+	const actor = await readAuditFixture("patient_contact");
+	const phase = runAuditPhase(actor, "SET LOCAL ROLE reception", async (client) => {
+		const recordReads = createAuditReadRecorder(client, actor);
+		const { rows } = await readContact(client, actor.patientId);
+		expect(rows.length).toBe(1);
+		expect(Boolean(rows[0].email || rows[0].phone)).toBe(true);
+
+		await client.query("RESET ROLE");
+		await recordReads(rows.map(({ patientId }) => ({ resource: "patient_contact", patientId })));
+		return rows;
+	});
+
+	await expect(phase.then(({ result }) => result.length)).rejects.toMatchObject({
+		stage: "operation",
+		kind: "database",
+		sqlState: "42501",
+	});
+});
+
+it("rolls back a contact update and its read and write events after a rejection", async () => {
+	const actor = await readAuditFixture("patient_contact");
+	const { patientId } = actor;
+	const original = (await readContact(setup, patientId)).rows[0];
+	const updatedEmail = `${randomUUID()}@example.test`;
+	const rejection = Object.assign(new Error("Controlled rejection after audit inserts"), { status: 409 });
+	let transactionId = "";
+
+	const phase = runAuditPhase(actor, "SET LOCAL ROLE reception", async (client) => {
+		const recordReads = createAuditReadRecorder(client, actor);
+		const { rows } = await readContact(client, patientId);
+		expect(rows.length).toBe(1);
+		await recordReads(rows.map(({ patientId }) => ({ resource: "patient_contact", patientId })));
+
+		const update = await client.query("UPDATE public.patients SET email = $1 WHERE patient_id = $2::uuid", [
+			updatedEmail,
+			patientId,
+		]);
+		expect(update.rowCount).toBe(1);
+		await insertAuditEvent(client, actor, { resource: "patient_contact", patientId }, "write");
+		transactionId = await readTransactionId(client);
+		throw rejection;
+	});
+
+	await expect(phase).rejects.toBe(rejection);
+	const stored = (await readContact(setup, patientId)).rows[0];
+	expect(stored.email === original.email && stored.phone === original.phone).toBe(true);
 	expect(await readCommittedEvents(transactionId)).toEqual([]);
 });
