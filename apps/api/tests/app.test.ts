@@ -14,9 +14,9 @@ const transientBody = { error: STATUS_CODES[503] };
 const indeterminateBody = { error: STATUS_CODES[500], code: "OPERATION_OUTCOME_UNKNOWN" };
 const databaseErrors = [
 	{
-		name: "returns 503 for a database acquisition timeout",
-		path: "/runtime-acquisition-timeout",
-		failure: new TransactionFailure("acquire", "acquireTimeout"),
+		name: "returns 503 for a database acquisition failure",
+		path: "/runtime-acquisition-failure",
+		failure: new TransactionFailure("acquire", "acquisition"),
 		status: 503,
 		body: transientBody,
 	},

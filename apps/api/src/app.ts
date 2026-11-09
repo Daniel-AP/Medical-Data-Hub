@@ -8,7 +8,7 @@ export const app = express();
 export const router = express.Router();
 
 const transientTransactionFailures = new Set([
-	"acquireTimeout",
+	"acquisition",
 	"connection",
 	"lockUnavailable",
 	"queryCanceled",

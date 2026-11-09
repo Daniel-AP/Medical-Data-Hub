@@ -39,30 +39,6 @@ export const runTransaction = async <T>(
 	}
 };
 
-const acquireConnection = async (pool: Pool) => {
-	let timeout: TransactionFailure | undefined;
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const deadline = new Promise<never>((_resolve, reject) => {
-		timer = setTimeout(() => {
-			timeout = new TransactionFailure("acquire", "acquireTimeout");
-			reject(timeout);
-		}, databaseTimeouts.acquireMs);
-	});
-
-	try {
-		const checkout = pool.connect().then((client) => {
-			if (timeout) {
-				client.release();
-				throw timeout;
-			}
-			return client;
-		});
-		return await Promise.race([deadline, checkout]);
-	} finally {
-		clearTimeout(timer);
-	}
-};
-
 const rollbackTransaction = async (client: PoolClient) => {
 	try {
 		const rollback = await client.query("ROLLBACK");
@@ -90,7 +66,7 @@ const runTransactionAttempt = async <T>(
 	};
 
 	try {
-		const client = await acquireConnection(pool);
+		const client = await pool.connect();
 		checkedOutClient = client;
 		client.on("error", onConnectionError);
 		stage = "begin";

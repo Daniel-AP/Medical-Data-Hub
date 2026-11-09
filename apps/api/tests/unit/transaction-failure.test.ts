@@ -24,12 +24,13 @@ it("preserves a constraint name on a database rejection at commit", () => {
 	});
 });
 
-it("distinguishes acquisition and connection failures from an unconfirmed commit", () => {
+it("classifies connection failures according to the transaction stage", () => {
 	const genericError = new Error("Synthetic failure");
 	const connectionError = Object.assign(new Error("Synthetic failure"), { code: "ECONNREFUSED" });
 
 	expect(classifyTransactionFailure("acquire", genericError)).toMatchObject({ kind: "acquisition" });
-	expect(classifyTransactionFailure("acquire", connectionError)).toMatchObject({ kind: "connection" });
+	expect(classifyTransactionFailure("acquire", connectionError)).toMatchObject({ kind: "acquisition" });
+	expect(classifyTransactionFailure("begin", connectionError)).toMatchObject({ kind: "connection" });
 	expect(classifyTransactionFailure("commit", connectionError)).toMatchObject({ kind: "indeterminateCommit" });
 });
 
