@@ -68,7 +68,7 @@ const rollbackTransaction = async (client: PoolClient) => {
 		const rollback = await client.query("ROLLBACK");
 		return rollback.command === "ROLLBACK";
 	} catch {
-		// Keep the original failure and discard the connection.
+		// Keep the original failure and discard the connection
 		return false;
 	}
 };

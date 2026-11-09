@@ -123,7 +123,7 @@ it("filters administrative user updates targeting another clinic", async () => {
 it("allows same-clinic inserts using an existing realm identity", async () => {
 	await setup.query("BEGIN");
 	try {
-		// Free an existing realm identity only within this rolled-back fixture transaction.
+		// Free an existing realm identity only within this rolled-back fixture transaction
 		await setup.query("DELETE FROM public.users WHERE user_id = $1::uuid", [otherAdministrator.userId]);
 		await setup.query(
 			`SELECT pg_catalog.set_config('app.user_id', $1, true),

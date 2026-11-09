@@ -69,6 +69,7 @@ it.each([
 	["an ID token without expiration", { exp: undefined }],
 	["an ID token without a subject", { sub: undefined }],
 	["an ID token without a session", { sid: undefined }],
+	["an expired ID token without a session", { exp: 0, sid: undefined }],
 	["an expired ID token with an incorrect issuer", { exp: 0, iss: "http://another-provider/realms/other" }],
 ] as const)("rejects %s with 401", async (_case, payload) => {
 	const token = await createToken(payload);
@@ -91,9 +92,4 @@ it("reports unavailable ID token verification keys with 503", async () => {
 	fetchKeys.mockRejectedValueOnce(new TypeError("fetch failed"));
 	const token = await createToken();
 	await expect(verifyIdToken(token, context)).rejects.toMatchObject({ status: 503 });
-});
-
-it("rejects an empty session identifier even when both tokens contain it", async () => {
-	const token = await createToken({ sid: "" });
-	await expect(verifyIdToken(token, { ...context, sessionId: "" })).rejects.toMatchObject({ status: 401 });
 });

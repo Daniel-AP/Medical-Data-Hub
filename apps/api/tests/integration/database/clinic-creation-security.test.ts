@@ -62,7 +62,7 @@ it("creates a clinic, its active administrator, and its zero availability versio
 	const requestedName = "Synthetic clinic";
 	const timeZone = "America/Costa_Rica";
 
-	// Free a seeded realm identity inside the same rolled-back transaction.
+	// Free a seeded realm identity inside the same rolled-back transaction
 	await setup.query("UPDATE public.users SET identity_id = $1 WHERE user_id = $2::uuid", [
 		randomUUID(),
 		existingAdministrator.userId,

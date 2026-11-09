@@ -43,11 +43,6 @@ const parseTimestamp = (value: unknown) => {
 };
 
 export const listAuditRecords: RequestHandler = async (request, response) => {
-	const authentication = request.authentication;
-	if (!authentication) {
-		throw Object.assign(new Error("Authentication required"), { status: 401 });
-	}
-
 	const query = request.query;
 	if (Object.keys(query).some((name) => !auditFilterNames.has(name))) {
 		throw invalidFilters();
@@ -61,6 +56,7 @@ export const listAuditRecords: RequestHandler = async (request, response) => {
 		throw invalidFilters();
 	}
 
-	const records = await readAuditRecords(authentication, { userId, patientId, from, to });
+	// Authentication and role middleware run before this handler
+	const records = await readAuditRecords(request.authentication!, { userId, patientId, from, to });
 	response.json({ records });
 };

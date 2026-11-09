@@ -39,22 +39,9 @@ const appointmentFixtures = [
 
 try {
 	const inserted = await prisma.$transaction(async (tx) => {
-		const counts = await Promise.all([
-			tx.clinic.count(),
-			tx.clinicAvailabilityVersion.count(),
-			tx.user.count(),
-			tx.specialty.count(),
-			tx.service.count(),
-			tx.professional.count(),
-			tx.professionalService.count(),
-			tx.professionalSchedule.count(),
-			tx.professionalBlock.count(),
-			tx.patient.count(),
-			tx.appointment.count(),
-			tx.clinicalNote.count(),
-			tx.auditRecord.count(),
-		]);
-		if (counts.some((count) => count > 0)) {
+		const existingClinic = await tx.clinic.findFirst({ select: { clinicId: true } });
+		const existingUser = await tx.user.findFirst({ select: { userId: true } });
+		if (existingClinic || existingUser) {
 			return false;
 		}
 

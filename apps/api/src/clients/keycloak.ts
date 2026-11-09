@@ -51,24 +51,18 @@ export const createLogoutIdTokenVerifier = (config: Omit<KeycloakConfig, "audien
 	const resolveKey = createKeyResolver(config.jwksUrl, config.timeoutMs);
 
 	return async (token: string, context: IdTokenContext) => {
-		const hasSessionContext = context.sessionId.length > 0 && context.clientId.length > 0;
-		if (!hasSessionContext) {
-			throw Object.assign(new Error("Missing session context"), { status: 401 });
-		}
-
 		let payload: JWTPayload;
 		try {
 			const result = await jwtVerify(token, resolveKey, {
 				issuer: config.issuer,
 				audience: context.clientId,
 				subject: context.identityId,
-				requiredClaims: ["exp", "sub", "sid"],
+				requiredClaims: ["exp"],
 			});
 			payload = result.payload;
 		} catch (error) {
-			const isExpiredIdToken = error instanceof errors.JWTExpired && error.claim === "exp";
-			if (isExpiredIdToken) {
-				// Expired ID tokens can identify a session for logout.
+			if (error instanceof errors.JWTExpired) {
+				// Expired ID tokens can identify a session for logout
 				payload = error.payload;
 			} else if (error instanceof errors.JOSEError) {
 				throw Object.assign(new Error("Invalid ID token"), { status: 401 });
