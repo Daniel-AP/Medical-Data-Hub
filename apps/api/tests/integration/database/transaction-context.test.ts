@@ -386,14 +386,14 @@ it("reuses one connection across clinics after authorized commit and rollback", 
 		       pg_catalog.current_setting('app.clinic_id', true) AS "clinicId"
 	`;
 
-	async function readAuditScope(client: TransactionClient) {
+	const readAuditScope = async (client: TransactionClient) => {
 		const { rows } = await client.query(`
 			SELECT pg_catalog.pg_backend_pid() AS pid, current_user AS role,
 			       pg_catalog.current_setting('app.user_id') AS "userId",
 			       ARRAY(SELECT DISTINCT clinic_id FROM public.audit_records) AS "visibleClinics"
 		`);
 		return rows[0];
-	}
+	};
 
 	const firstScope = await runAuthorizedTransaction(firstActor, "readAuditRecords", readAuditScope, pool);
 	const { pid } = firstScope;
@@ -482,13 +482,13 @@ it.each([
 it("keeps the definitive availability version stable across a concurrent commit", async () => {
 	const authentication = { identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] };
 
-	async function readVersion(client: TransactionClient) {
+	const readVersion = async (client: TransactionClient) => {
 		const { rows } = await client.query<{ version: string }>(
 			"SELECT version FROM public.clinic_availability_versions WHERE clinic_id = $1::uuid",
 			[clinicAdmin.clinicId],
 		);
 		return rows[0].version;
-	}
+	};
 
 	const originalVersion = await readVersion(setup);
 	try {

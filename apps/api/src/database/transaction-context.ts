@@ -68,15 +68,15 @@ const lockUserForShare = `SELECT user_id AS "userId", clinic_id AS "clinicId", r
 const lockUserForNoKeyUpdate = `SELECT user_id AS "userId", clinic_id AS "clinicId", role, is_active AS "isActive"
 	FROM public.lock_user_for_no_key_update($1::uuid, $2::uuid)`;
 
-function forbidden() {
+const forbidden = () => {
 	return Object.assign(new Error("Operation forbidden"), { status: 403 });
-}
+};
 
-async function resolveReschedulingMetadata(
+const resolveReschedulingMetadata = async (
 	client: TransactionClient,
 	actorUserId: string,
 	operation: RescheduleOperation,
-) {
+) => {
 	const appointmentResult = await client.query<AppointmentReferences>(
 		`SELECT professional_id AS "professionalId", patient_id AS "patientId", service_id AS "serviceId"
 		 FROM public.resolve_appointment_references($1::uuid, $2::uuid)`,
@@ -97,14 +97,14 @@ async function resolveReschedulingMetadata(
 	}
 
 	return { originalAppointment, destinationUserId: destination.userId };
-}
+};
 
-export async function runAuthorizedTransaction<T>(
+export const runAuthorizedTransaction = async <T>(
 	authentication: Authentication,
 	operation: TransactionOperation,
 	callback: (client: TransactionClient, actor: ActorContext, markProviderMutationSent: () => void) => Promise<T>,
 	pool?: Pool,
-): Promise<T> {
+): Promise<T> => {
 	const request = typeof operation === "string" ? { name: operation } : operation;
 	const targetUserId = request.name === "updateUserPermissions" ? request.targetUserId.toLowerCase() : undefined;
 	const policy = operations[request.name];
@@ -187,4 +187,4 @@ export async function runAuthorizedTransaction<T>(
 		},
 		pool,
 	);
-}
+};

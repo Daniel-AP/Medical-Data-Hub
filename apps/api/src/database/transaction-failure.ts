@@ -40,7 +40,11 @@ const connectionErrorCodes = new Set([
 	"ETIMEDOUT",
 ]);
 
-export function classifyTransactionFailure(stage: TransactionStage, cause: unknown, connectionLost = false): unknown {
+export const classifyTransactionFailure = (
+	stage: TransactionStage,
+	cause: unknown,
+	connectionLost = false,
+): unknown => {
 	if (cause instanceof TransactionFailure) {
 		return cause;
 	}
@@ -79,4 +83,4 @@ export function classifyTransactionFailure(stage: TransactionStage, cause: unkno
 		return new TransactionFailure(stage, "database", cause);
 	}
 	return cause;
-}
+};

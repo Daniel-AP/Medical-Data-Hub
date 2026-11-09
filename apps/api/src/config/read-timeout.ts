@@ -1,4 +1,4 @@
-export function readTimeout(name: string, defaultValue: number) {
+export const readTimeout = (name: string, defaultValue: number) => {
 	const value = process.env[name];
 	if (value === undefined) {
 		return defaultValue;
@@ -10,4 +10,4 @@ export function readTimeout(name: string, defaultValue: number) {
 	}
 
 	return milliseconds;
-}
+};

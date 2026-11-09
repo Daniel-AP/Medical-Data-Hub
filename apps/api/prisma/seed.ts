@@ -15,13 +15,13 @@ const localDate = new Intl.DateTimeFormat("en-CA", {
 const weekStartAt = new Date(`${localDate}T00:00:00-06:00`);
 weekStartAt.setUTCDate(weekStartAt.getUTCDate() - ((weekStartAt.getUTCDay() + 6) % 7));
 
-function dateAt(weekOffset: number, weekday: number, minute: number) {
+const dateAt = (weekOffset: number, weekday: number, minute: number) => {
 	return new Date(weekStartAt.getTime() + ((weekOffset * 7 + weekday - 1) * 1440 + minute) * 60_000);
-}
+};
 
-function numberedUsername(username: string, number: number) {
+const numberedUsername = (username: string, number: number) => {
 	return number === 1 ? username : `${username}-${number}`;
-}
+};
 
 const clinicNames = ["Clínica Central", "Clínica Norte", "Clínica Sur"];
 const patientNames = ["Ana Solano", "Luis Mora", "Sofía Vega", "Diego Rojas", "Carla Ruiz", "Pablo León"];
@@ -58,14 +58,14 @@ try {
 			return false;
 		}
 
-		async function createUser(username: string, role: UserRole, clinicId: string | null) {
+		const createUser = async (username: string, role: UserRole, clinicId: string | null) => {
 			const identity = realm.users.find((user) => user.username === username);
 			if (!identity?.id) {
 				throw new Error(`Missing seed identity: ${username}`);
 			}
 
 			return tx.user.create({ data: { identityId: identity.id, clinicId, role } });
-		}
+		};
 
 		await createUser("platform-administrator", UserRole.platformAdministrator, null);
 

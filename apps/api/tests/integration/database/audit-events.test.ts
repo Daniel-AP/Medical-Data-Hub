@@ -27,7 +27,7 @@ afterAll(async () => {
 	await setup.end();
 });
 
-async function readAuditFixture(resource: "patient_contact" | "clinical_note") {
+const readAuditFixture = async (resource: "patient_contact" | "clinical_note") => {
 	const {
 		rows: [fixture],
 	} = await setup.query<AuditFixture>(
@@ -39,13 +39,13 @@ async function readAuditFixture(resource: "patient_contact" | "clinical_note") {
 		[resource, resource === "patient_contact" ? "reception" : "healthcare_professional"],
 	);
 	return fixture;
-}
+};
 
-async function runAuditPhase<T>(
+const runAuditPhase = async <T>(
 	{ clinicId, userId }: AuditFixture,
 	selectRole: string,
 	operation: (client: TransactionClient) => Promise<T>,
-) {
+) => {
 	return runTransaction(
 		"readCommitted",
 		async (client) => {
@@ -60,16 +60,16 @@ async function runAuditPhase<T>(
 		},
 		pool,
 	);
-}
+};
 
-async function readTransactionId(client: TransactionClient) {
+const readTransactionId = async (client: TransactionClient) => {
 	const { rows } = await client.query<{ transactionId: string }>(
 		'SELECT pg_catalog.pg_current_xact_id()::xid::text AS "transactionId"',
 	);
 	return rows[0].transactionId;
-}
+};
 
-async function readCommittedEvents(transactionId: string) {
+const readCommittedEvents = async (transactionId: string) => {
 	const { rows } = await setup.query(
 		`SELECT audit_record_id AS "auditRecordId", clinic_id AS "clinicId", user_id AS "userId",
 		        patient_id AS "patientId", resource, appointment_id AS "appointmentId", action, occurred_at AS "occurredAt"
@@ -77,14 +77,14 @@ async function readCommittedEvents(transactionId: string) {
 		[transactionId],
 	);
 	return rows;
-}
+};
 
-function readContact(client: TransactionClient, patientId: string) {
+const readContact = (client: TransactionClient, patientId: string) => {
 	return client.query<Contact>(
 		'SELECT patient_id AS "patientId", email, phone FROM public.patients WHERE patient_id = $1::uuid',
 		[patientId],
 	);
-}
+};
 
 it.each([
 	{ resource: "patient_contact", action: "read", selectRole: "SET LOCAL ROLE reception" },

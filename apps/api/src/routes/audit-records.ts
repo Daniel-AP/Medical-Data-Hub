@@ -5,11 +5,11 @@ const auditFilterNames = new Set(["userId", "patientId", "from", "to"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const timestampPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}(?::?\d{2})?)$/;
 
-function invalidFilters() {
+const invalidFilters = () => {
 	return Object.assign(new Error("Invalid audit filters"), { status: 400 });
-}
+};
 
-function parseUuid(value: unknown) {
+const parseUuid = (value: unknown) => {
 	if (value === undefined) {
 		return undefined;
 	}
@@ -17,9 +17,9 @@ function parseUuid(value: unknown) {
 		throw invalidFilters();
 	}
 	return value;
-}
+};
 
-function parseTimestamp(value: unknown) {
+const parseTimestamp = (value: unknown) => {
 	if (value === undefined) {
 		return undefined;
 	}
@@ -40,7 +40,7 @@ function parseTimestamp(value: unknown) {
 		throw invalidFilters();
 	}
 	return instant;
-}
+};
 
 export const listAuditRecords: RequestHandler = async (request, response) => {
 	const authentication = request.authentication;

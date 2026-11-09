@@ -11,7 +11,7 @@ const roleMap = {
 	healthcare_professional: UserRole.healthcareProfessional,
 };
 
-export function createAuthenticationMiddleware(verifyAccessToken: AccessTokenVerifier): RequestHandler {
+export const createAuthenticationMiddleware = (verifyAccessToken: AccessTokenVerifier): RequestHandler => {
 	return async (request, _response, next) => {
 		const token = request.get("authorization")?.match(/^Bearer +(\S+)$/i)?.[1];
 		if (!token) {
@@ -42,9 +42,9 @@ export function createAuthenticationMiddleware(verifyAccessToken: AccessTokenVer
 		request.authentication = { identityId: payload.sub, roles, sessionId, clientId };
 		next();
 	};
-}
+};
 
-export function requireRoles(...allowedRoles: UserRole[]): RequestHandler {
+export const requireRoles = (...allowedRoles: UserRole[]): RequestHandler => {
 	return (request, _response, next) => {
 		const authentication = request.authentication;
 		if (!authentication) {
@@ -58,4 +58,4 @@ export function requireRoles(...allowedRoles: UserRole[]): RequestHandler {
 
 		next();
 	};
-}
+};

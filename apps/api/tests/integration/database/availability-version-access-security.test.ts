@@ -48,14 +48,14 @@ afterAll(async () => {
 	await setup.end();
 });
 
-async function setLocalProfile(profileName: string) {
+const setLocalProfile = async (profileName: string) => {
 	const actor = users.find((user) => user.role === profileName)!;
 	await api.query(
 		"SELECT pg_catalog.set_config('app.user_id', $1, true), pg_catalog.set_config('app.clinic_id', $2, true)",
 		[actor.userId, actor.clinicId],
 	);
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
-}
+};
 
 it("filters availability reads and updates on a connection without context settings", async () => {
 	const fresh = new Client({ connectionString: apiConnectionString });

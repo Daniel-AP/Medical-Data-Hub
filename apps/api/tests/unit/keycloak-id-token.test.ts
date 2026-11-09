@@ -10,7 +10,7 @@ let privateKey: CryptoKey;
 let publicJwk: JWK;
 let verifyIdToken: ReturnType<typeof createLogoutIdTokenVerifier>;
 
-function createToken(payload: JWTPayload = {}) {
+const createToken = (payload: JWTPayload = {}) => {
 	return new SignJWT({
 		iss: issuer,
 		aud: context.clientId,
@@ -23,7 +23,7 @@ function createToken(payload: JWTPayload = {}) {
 	})
 		.setProtectedHeader({ alg: "RS256", kid: "test-key" })
 		.sign(privateKey);
-}
+};
 
 beforeAll(async () => {
 	const keyPair = await generateKeyPair("RS256");

@@ -6,7 +6,7 @@ import { runAuthorizedTransaction } from "./transaction-context.js";
 type AuditRecordFilters = { userId?: string; patientId?: string; from?: Date; to?: Date };
 type AuditRecordMetadata = Omit<AuditRecord, "resource"> & { resource: "patient_contact" | "clinical_note" };
 
-export function readAuditRecords(authentication: Authentication, filters: AuditRecordFilters, pool?: Pool) {
+export const readAuditRecords = (authentication: Authentication, filters: AuditRecordFilters, pool?: Pool) => {
 	return runAuthorizedTransaction(
 		authentication,
 		"readAuditRecords",
@@ -27,4 +27,4 @@ export function readAuditRecords(authentication: Authentication, filters: AuditR
 		},
 		pool,
 	);
-}
+};

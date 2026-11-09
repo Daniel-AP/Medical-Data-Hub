@@ -76,7 +76,7 @@ afterAll(async () => {
 	await setup.end();
 });
 
-async function insertContactEvent(actor: AuditActor, patientId: string, occurredAt: Date): Promise<ContactEvent> {
+const insertContactEvent = async (actor: AuditActor, patientId: string, occurredAt: Date): Promise<ContactEvent> => {
 	const {
 		rows: [{ auditRecordId }],
 	} = await setup.query<Pick<AuditRecord, "auditRecordId">>(
@@ -95,11 +95,11 @@ async function insertContactEvent(actor: AuditActor, patientId: string, occurred
 		action: "read",
 		occurredAt,
 	};
-}
+};
 
-function readForAdmin(actor: ClinicAdmin, filters: Parameters<typeof readAuditRecords>[1]) {
+const readForAdmin = (actor: ClinicAdmin, filters: Parameters<typeof readAuditRecords>[1]) => {
 	return readAuditRecords({ identityId: actor.identityId, roles: [UserRole.clinicAdministrator] }, filters, pool);
-}
+};
 
 it("filters audit records by user, patient, or date range independently", async () => {
 	const { userId } = startEvent;

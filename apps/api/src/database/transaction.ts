@@ -22,11 +22,11 @@ type TransactionIsolation = keyof typeof beginStatements;
 type TransactionOperation<T> = (client: TransactionClient, markProviderMutationSent: () => void) => Promise<T>;
 const maxAttempts = 3;
 
-export async function runTransaction<T>(
+export const runTransaction = async <T>(
 	isolation: TransactionIsolation,
 	operation: TransactionOperation<T>,
 	pool = runtimePool,
-): Promise<T> {
+): Promise<T> => {
 	for (let attempt = 1; ; attempt++) {
 		const outcome = await runTransactionAttempt(isolation, operation, pool);
 		if ("result" in outcome) {
@@ -37,9 +37,9 @@ export async function runTransaction<T>(
 		}
 		await delay(randomInt(101));
 	}
-}
+};
 
-async function acquireConnection(pool: Pool) {
+const acquireConnection = async (pool: Pool) => {
 	let timeout: TransactionFailure | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const deadline = new Promise<never>((_resolve, reject) => {
@@ -61,9 +61,9 @@ async function acquireConnection(pool: Pool) {
 	} finally {
 		clearTimeout(timer);
 	}
-}
+};
 
-async function rollbackTransaction(client: PoolClient) {
+const rollbackTransaction = async (client: PoolClient) => {
 	try {
 		const rollback = await client.query("ROLLBACK");
 		return rollback.command === "ROLLBACK";
@@ -71,13 +71,13 @@ async function rollbackTransaction(client: PoolClient) {
 		// Keep the original failure and discard the connection.
 		return false;
 	}
-}
+};
 
-async function runTransactionAttempt<T>(
+const runTransactionAttempt = async <T>(
 	isolation: TransactionIsolation,
 	operation: TransactionOperation<T>,
 	pool: Pool,
-): Promise<{ result: T } | { retry: TransactionFailure }> {
+): Promise<{ result: T } | { retry: TransactionFailure }> => {
 	let checkedOutClient: PoolClient | undefined;
 	let stage: TransactionStage = "acquire";
 	let reusable = false;
@@ -166,4 +166,4 @@ async function runTransactionAttempt<T>(
 		checkedOutClient?.off("error", onConnectionError);
 		checkedOutClient?.release(connectionError !== undefined || !reusable);
 	}
-}
+};

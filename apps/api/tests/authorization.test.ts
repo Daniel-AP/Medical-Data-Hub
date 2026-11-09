@@ -14,9 +14,9 @@ const requestOptions = { headers: { Authorization: "Bearer demo-token" } };
 let server: Server;
 let url: string;
 
-function payloadWithRoles(roles: string[]): JWTPayload {
+const payloadWithRoles = (roles: string[]): JWTPayload => {
 	return { sub: "demo-user", resource_access: { "medical-data-hub-api": { roles } } };
-}
+};
 
 beforeAll(async () => {
 	const authenticate = createAuthenticationMiddleware(verifyAccessToken);

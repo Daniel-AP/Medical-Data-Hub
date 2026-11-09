@@ -9,6 +9,7 @@ export default [
 		},
 		plugins: { "@typescript-eslint": tseslint.plugin },
 		rules: {
+			"prefer-arrow-callback": "error",
 			"@typescript-eslint/no-explicit-any": "error",
 			"@typescript-eslint/no-unused-vars": "error",
 			"@typescript-eslint/no-floating-promises": "error",

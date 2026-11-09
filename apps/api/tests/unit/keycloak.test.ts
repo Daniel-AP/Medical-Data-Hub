@@ -14,7 +14,7 @@ let privateKey: CryptoKey;
 let publicJwk: JWK;
 let verifyAccessToken: ReturnType<typeof createAccessTokenVerifier>;
 
-function createToken(payload: JWTPayload = {}, kid = "test-key") {
+const createToken = (payload: JWTPayload = {}, kid = "test-key") => {
 	return new SignJWT({
 		iss: issuer,
 		aud: audience,
@@ -24,7 +24,7 @@ function createToken(payload: JWTPayload = {}, kid = "test-key") {
 	})
 		.setProtectedHeader({ alg: "RS256", kid })
 		.sign(privateKey);
-}
+};
 
 beforeAll(async () => {
 	const keyPair = await generateKeyPair("RS256");

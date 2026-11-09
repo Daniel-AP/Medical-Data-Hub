@@ -7,7 +7,7 @@ const keycloakHttpTimeoutMs = readTimeout("KEYCLOAK_HTTP_TIMEOUT_MS", 2000);
 type KeycloakConfig = { issuer: string; jwksUrl: string; audience: string; timeoutMs?: number };
 type IdTokenContext = { identityId: string; sessionId: string; clientId: string };
 
-function createKeyResolver(jwksUrl: string, timeoutMs = keycloakHttpTimeoutMs): JWTVerifyGetKey {
+const createKeyResolver = (jwksUrl: string, timeoutMs = keycloakHttpTimeoutMs): JWTVerifyGetKey => {
 	const jwks = createRemoteJWKSet(new URL(jwksUrl), { timeoutDuration: timeoutMs });
 
 	return async (header, token) => {
@@ -23,9 +23,9 @@ function createKeyResolver(jwksUrl: string, timeoutMs = keycloakHttpTimeoutMs): 
 			throw Object.assign(new Error("Verification keys unavailable"), { status: 503 });
 		}
 	};
-}
+};
 
-export function createAccessTokenVerifier(config: KeycloakConfig) {
+export const createAccessTokenVerifier = (config: KeycloakConfig) => {
 	const resolveKey = createKeyResolver(config.jwksUrl, config.timeoutMs);
 
 	return async (token: string) => {
@@ -45,9 +45,9 @@ export function createAccessTokenVerifier(config: KeycloakConfig) {
 			throw error;
 		}
 	};
-}
+};
 
-export function createLogoutIdTokenVerifier(config: Omit<KeycloakConfig, "audience">) {
+export const createLogoutIdTokenVerifier = (config: Omit<KeycloakConfig, "audience">) => {
 	const resolveKey = createKeyResolver(config.jwksUrl, config.timeoutMs);
 
 	return async (token: string, context: IdTokenContext) => {
@@ -84,4 +84,4 @@ export function createLogoutIdTokenVerifier(config: Omit<KeycloakConfig, "audien
 
 		return payload;
 	};
-}
+};

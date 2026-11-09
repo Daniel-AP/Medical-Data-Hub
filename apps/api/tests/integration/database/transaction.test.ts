@@ -15,22 +15,22 @@ afterAll(async () => {
 	await pool.end();
 });
 
-async function readSession(client: Pick<Pool, "query">) {
+const readSession = async (client: Pick<Pool, "query">) => {
 	const { rows } = await client.query(`
 		SELECT pg_catalog.pg_backend_pid() AS pid, current_user AS role,
 		       pg_catalog.current_setting('app.user_id', true) AS "userId",
 		       pg_catalog.current_setting('app.clinic_id', true) AS "clinicId"
 	`);
 	return rows[0];
-}
+};
 
-async function setLocalScope(client: Pick<Pool, "query">) {
+const setLocalScope = async (client: Pick<Pool, "query">) => {
 	await client.query(`
 		SELECT pg_catalog.set_config('app.user_id', pg_catalog.gen_random_uuid()::text, true),
 		       pg_catalog.set_config('app.clinic_id', pg_catalog.gen_random_uuid()::text, true)
 	`);
 	await client.query("SET LOCAL ROLE reception");
-}
+};
 
 it("times out a queued phase without disturbing the active transaction context", async () => {
 	const callback = vi.fn(async () => undefined);

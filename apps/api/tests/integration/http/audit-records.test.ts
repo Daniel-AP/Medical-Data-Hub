@@ -13,13 +13,13 @@ if (!apiUrl || !administratorToken || !foreignAdministratorToken || !receptionTo
 }
 const auditUrl = new URL("/audit-records", apiUrl);
 
-function requestAudit(token?: string, query?: string | URLSearchParams) {
+const requestAudit = (token?: string, query?: string | URLSearchParams) => {
 	const url = new URL(auditUrl);
 	if (query) {
 		url.search = query.toString();
 	}
 	return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
-}
+};
 
 it("requires a valid bearer token to query audit records", async () => {
 	expect((await requestAudit()).status).toBe(401);

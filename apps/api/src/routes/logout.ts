@@ -3,7 +3,7 @@ import type { createLogoutIdTokenVerifier } from "../clients/keycloak.js";
 
 type LogoutIdTokenVerifier = ReturnType<typeof createLogoutIdTokenVerifier>;
 
-export function createLogoutRequestHandler(verifyIdToken: LogoutIdTokenVerifier, issuer: string): RequestHandler {
+export const createLogoutRequestHandler = (verifyIdToken: LogoutIdTokenVerifier, issuer: string): RequestHandler => {
 	return async (request, response) => {
 		const authentication = request.authentication;
 		if (!authentication?.sessionId || !authentication.clientId) {
@@ -28,4 +28,4 @@ export function createLogoutRequestHandler(verifyIdToken: LogoutIdTokenVerifier,
 		response.set("Cache-Control", "no-store");
 		response.json({ logoutUrl: logoutUrl.toString() });
 	};
-}
+};

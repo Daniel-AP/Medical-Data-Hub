@@ -62,7 +62,7 @@ afterAll(async () => {
 	await setup.end();
 });
 
-async function setLocalProfile(profileName: string) {
+const setLocalProfile = async (profileName: string) => {
 	const actor =
 		profileName === "healthcare_professional"
 			? ownNote
@@ -73,15 +73,15 @@ async function setLocalProfile(profileName: string) {
 	);
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
 	return actor.userId;
-}
+};
 
-function contactValues(userId: string, action = "read") {
+const contactValues = (userId: string, action = "read") => {
 	return [localContact.clinicId, userId, localContact.patientId, "patient_contact", null, action];
-}
+};
 
-function noteValues(note: AuditReference, userId: string, action = "read") {
+const noteValues = (note: AuditReference, userId: string, action = "read") => {
 	return [note.clinicId, userId, note.patientId, "clinical_note", note.appointmentId, action];
-}
+};
 
 it("reads all audit events from the administrator's context clinic", async () => {
 	await setLocalProfile("clinic_administrator");

@@ -22,12 +22,12 @@ const verifyAccessToken = createAccessTokenVerifier(configuration);
 let server: Server;
 let url: string;
 
-function requestRefresh(refreshToken: string) {
+const requestRefresh = (refreshToken: string) => {
 	return fetch(`${issuer}/protocol/openid-connect/token`, {
 		method: "POST",
 		body: new URLSearchParams({ grant_type: "refresh_token", client_id: clientId, refresh_token: refreshToken }),
 	});
-}
+};
 
 beforeAll(async () => {
 	router.post(
