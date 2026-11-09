@@ -5,7 +5,7 @@ import type { Authentication } from "../middleware/types.js";
 import { runTransaction } from "./transaction.js";
 import type { TransactionClient } from "./types.js";
 
-const profiles = {
+const databaseProfiles = {
 	[UserRole.clinicAdministrator]: {
 		databaseRole: "clinic_administrator",
 		selectRole: "SET LOCAL ROLE clinic_administrator",
@@ -21,159 +21,176 @@ const profiles = {
 	[UserRole.reception]: { databaseRole: "reception", selectRole: "SET LOCAL ROLE reception" },
 };
 
-const clinicAdministratorPolicy = {
-	roles: [UserRole.clinicAdministrator],
-	requiresProfessional: false,
-	isolation: "readCommitted",
-} as const;
-const operations = {
-	readAuditRecords: clinicAdministratorPolicy,
-	updateUserPermissions: clinicAdministratorPolicy,
-	createClinic: { roles: [UserRole.platformAdministrator], requiresProfessional: false, isolation: "readCommitted" },
+const operationPolicies = {
+	readAuditRecords: {
+		roles: [UserRole.clinicAdministrator],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
+	updateUserPermissions: {
+		roles: [UserRole.clinicAdministrator],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
+	createClinic: {
+		roles: [UserRole.platformAdministrator],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
 	replaceOwnWeeklySchedule: {
 		roles: [UserRole.healthcareProfessional],
-		requiresProfessional: true,
+		requiresActorProfessionalId: true,
 		isolation: "readCommitted",
 	},
 	rescheduleAppointment: {
 		roles: [UserRole.clinicAdministrator, UserRole.reception],
-		requiresProfessional: false,
+		requiresActorProfessionalId: false,
 		isolation: "readCommitted",
 	},
 	readDefinitiveAvailability: {
 		roles: [UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional],
-		requiresProfessional: false,
+		requiresActorProfessionalId: false,
 		isolation: "repeatableRead",
 	},
 } as const;
 
-type Identity = Pick<User, "userId" | "clinicId">;
-type ProfessionalAssociation = Pick<Professional, "professionalId">;
-type LockedUser = Identity & Pick<User, "isActive"> & { role: string };
+type ActorIdentity = Pick<User, "userId" | "clinicId">;
+type LockedUser = Pick<User, "userId" | "clinicId" | "isActive"> & { role: string };
 type AppointmentReferences = Pick<Appointment, "professionalId" | "patientId" | "serviceId">;
-type ActorContext = Pick<User, "userId" | "clinicId" | "role"> &
-	Partial<ProfessionalAssociation> & {
-		targetUser?: LockedUser;
-		originalAppointment?: AppointmentReferences;
-		destinationUser?: LockedUser;
-	};
-type RescheduleOperation = { name: "rescheduleAppointment"; appointmentId: string; destinationProfessionalId: string };
-type TransactionOperation =
-	| Exclude<keyof typeof operations, "updateUserPermissions" | "rescheduleAppointment">
-	| { name: "updateUserPermissions"; targetUserId: string }
-	| RescheduleOperation;
+type ActorContext = Pick<User, "userId" | "clinicId" | "role"> & {
+	professionalId?: Professional["professionalId"];
+	targetUser?: LockedUser;
+	originalAppointment?: AppointmentReferences;
+	destinationUser?: LockedUser;
+};
 
-const lockUserForShare = `SELECT user_id AS "userId", clinic_id AS "clinicId", role, is_active AS "isActive"
+type AuthorizedOperation =
+	| { name: Exclude<keyof typeof operationPolicies, "updateUserPermissions" | "rescheduleAppointment"> }
+	| { name: "updateUserPermissions"; targetUserId: string }
+	| { name: "rescheduleAppointment"; appointmentId: string; destinationProfessionalId: string };
+
+const lockUserForShareQuery = `SELECT user_id AS "userId", clinic_id AS "clinicId", role, is_active AS "isActive"
 	FROM public.lock_user_for_share($1::uuid, $2::uuid)`;
-const lockUserForNoKeyUpdate = `SELECT user_id AS "userId", clinic_id AS "clinicId", role, is_active AS "isActive"
+const lockUserForNoKeyUpdateQuery = `SELECT user_id AS "userId", clinic_id AS "clinicId", role, is_active AS "isActive"
 	FROM public.lock_user_for_no_key_update($1::uuid, $2::uuid)`;
 
 const forbidden = () => {
 	return Object.assign(new Error("Operation forbidden"), { status: 403 });
 };
 
-const resolveReschedulingMetadata = async (
+const resolveRescheduleReferences = async (
 	client: TransactionClient,
 	actorUserId: string,
-	operation: RescheduleOperation,
+	appointmentId: string,
+	destinationProfessionalId: string,
 ) => {
-	const appointmentResult = await client.query<AppointmentReferences>(
+	const {
+		rows: [originalAppointment],
+	} = await client.query<AppointmentReferences>(
 		`SELECT professional_id AS "professionalId", patient_id AS "patientId", service_id AS "serviceId"
 		 FROM public.resolve_appointment_references($1::uuid, $2::uuid)`,
-		[actorUserId, operation.appointmentId],
+		[actorUserId, appointmentId],
 	);
-	const [originalAppointment] = appointmentResult.rows;
 	if (!originalAppointment) {
 		throw forbidden();
 	}
 
-	const destinationResult = await client.query<Pick<User, "userId">>(
+	const {
+		rows: [destinationUser],
+	} = await client.query<Pick<User, "userId">>(
 		`SELECT user_id AS "userId" FROM public.resolve_professional_user($1::uuid, $2::uuid)`,
-		[actorUserId, operation.destinationProfessionalId],
+		[actorUserId, destinationProfessionalId],
 	);
-	const [destination] = destinationResult.rows;
-	if (!destination) {
+	if (!destinationUser) {
 		throw forbidden();
 	}
 
-	return { originalAppointment, destinationUserId: destination.userId };
+	return { originalAppointment, destinationUserId: destinationUser.userId };
 };
 
 export const runAuthorizedTransaction = async <T>(
 	authentication: Authentication,
-	operation: TransactionOperation,
-	callback: (client: TransactionClient, actor: ActorContext, markProviderMutationSent: () => void) => Promise<T>,
+	operation: AuthorizedOperation,
+	callback: (client: TransactionClient, actor: ActorContext, markKeycloakRoleUpdateStarted: () => void) => Promise<T>,
 	pool?: Pool,
 ): Promise<T> => {
-	const request = typeof operation === "string" ? { name: operation } : operation;
-	const targetUserId = request.name === "updateUserPermissions" ? request.targetUserId.toLowerCase() : undefined;
-	const policy = operations[request.name];
+	const policy = operationPolicies[operation.name];
+	const targetUserId = operation.name === "updateUserPermissions" ? operation.targetUserId.toLowerCase() : undefined;
 
 	return runTransaction(
 		policy.isolation,
-		async (client, markProviderMutationSent) => {
-			const identityResult = await client.query<Identity>(
+		async (client, markKeycloakRoleUpdateStarted) => {
+			const {
+				rows: [actorIdentity],
+			} = await client.query<ActorIdentity>(
 				`SELECT user_id AS "userId", clinic_id AS "clinicId" FROM public.resolve_identity($1::text)`,
 				[authentication.identityId],
 			);
-			const [identity] = identityResult.rows;
-			if (!identity) {
+			if (!actorIdentity) {
 				throw forbidden();
 			}
 
-			const rescheduling =
-				request.name === "rescheduleAppointment"
-					? await resolveReschedulingMetadata(client, identity.userId, request)
+			const actorUserId = actorIdentity.userId;
+			const rescheduleReferences =
+				operation.name === "rescheduleAppointment"
+					? await resolveRescheduleReferences(
+							client,
+							actorUserId,
+							operation.appointmentId,
+							operation.destinationProfessionalId,
+						)
 					: undefined;
-			const userIds = new Set([identity.userId]);
+			const userIdsToLock = new Set([actorUserId]);
 			if (targetUserId !== undefined) {
-				userIds.add(targetUserId);
+				userIdsToLock.add(targetUserId);
 			}
-			if (rescheduling) {
-				userIds.add(rescheduling.destinationUserId);
+			if (rescheduleReferences) {
+				userIdsToLock.add(rescheduleReferences.destinationUserId);
 			}
 
 			const lockedUsers = new Map<string, LockedUser>();
-			for (const userId of [...userIds].sort()) {
-				const lockUser = userId === targetUserId ? lockUserForNoKeyUpdate : lockUserForShare;
-				const { rows } = await client.query<LockedUser>(lockUser, [identity.userId, userId]);
-				const [user] = rows;
-				if (!user) {
+			for (const userId of [...userIdsToLock].sort()) {
+				const lockQuery = userId === targetUserId ? lockUserForNoKeyUpdateQuery : lockUserForShareQuery;
+				const {
+					rows: [lockedUser],
+				} = await client.query<LockedUser>(lockQuery, [actorUserId, userId]);
+				if (!lockedUser) {
 					throw forbidden();
 				}
-				lockedUsers.set(userId, user);
+				lockedUsers.set(userId, lockedUser);
 			}
 
-			const actor = lockedUsers.get(identity.userId);
-			const role = policy.roles.find((role) => profiles[role].databaseRole === actor?.role);
-			const authorized =
-				actor?.isActive &&
-				actor.userId === identity.userId &&
-				actor.clinicId === identity.clinicId &&
-				role !== undefined &&
-				authentication.roles.includes(role);
-			if (!authorized) {
+			const lockedActor = lockedUsers.get(actorUserId);
+			const actorRole = policy.roles.find((role) => databaseProfiles[role].databaseRole === lockedActor?.role);
+			const actorIsAuthorized =
+				lockedActor?.isActive &&
+				lockedActor.userId === actorUserId &&
+				lockedActor.clinicId === actorIdentity.clinicId &&
+				actorRole !== undefined &&
+				authentication.roles.includes(actorRole);
+			if (!actorIsAuthorized) {
 				throw forbidden();
 			}
 
-			const context: ActorContext = { userId: actor.userId, clinicId: actor.clinicId, role };
+			const actor: ActorContext = { userId: lockedActor.userId, clinicId: lockedActor.clinicId, role: actorRole };
 			if (targetUserId !== undefined) {
-				context.targetUser = lockedUsers.get(targetUserId);
+				actor.targetUser = lockedUsers.get(targetUserId);
 			}
-			if (rescheduling) {
-				context.originalAppointment = rescheduling.originalAppointment;
-				context.destinationUser = lockedUsers.get(rescheduling.destinationUserId);
+			if (rescheduleReferences) {
+				actor.originalAppointment = rescheduleReferences.originalAppointment;
+				actor.destinationUser = lockedUsers.get(rescheduleReferences.destinationUserId);
 			}
-			if (policy.requiresProfessional) {
-				const { rows } = await client.query<ProfessionalAssociation>(
+			if (policy.requiresActorProfessionalId) {
+				const {
+					rows: [professional],
+				} = await client.query<Pick<Professional, "professionalId">>(
 					`SELECT professional_id AS "professionalId" FROM public.resolve_actor_professional($1::uuid)`,
 					[actor.userId],
 				);
-				const [professional] = rows;
 				if (!professional) {
 					throw forbidden();
 				}
-				context.professionalId = professional.professionalId;
+				actor.professionalId = professional.professionalId;
 			}
 
 			await client.query(
@@ -181,9 +198,9 @@ export const runAuthorizedTransaction = async <T>(
 				        pg_catalog.set_config('app.clinic_id', $2, true)`,
 				[actor.userId, actor.clinicId ?? ""],
 			);
-			await client.query(profiles[role].selectRole);
+			await client.query(databaseProfiles[actorRole].selectRole);
 
-			return callback(client, context, markProviderMutationSent);
+			return callback(client, actor, markKeycloakRoleUpdateStarted);
 		},
 		pool,
 	);

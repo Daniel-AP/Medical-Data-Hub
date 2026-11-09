@@ -9,7 +9,7 @@ type AuditRecordMetadata = Omit<AuditRecord, "resource"> & { resource: "patient_
 export const readAuditRecords = (authentication: Authentication, filters: AuditRecordFilters, pool?: Pool) => {
 	return runAuthorizedTransaction(
 		authentication,
-		"readAuditRecords",
+		{ name: "readAuditRecords" },
 		async (client, actor) => {
 			const { rows } = await client.query<AuditRecordMetadata>(
 				`SELECT audit_record_id AS "auditRecordId", clinic_id AS "clinicId", user_id AS "userId",

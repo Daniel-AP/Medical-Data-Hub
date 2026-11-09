@@ -51,7 +51,8 @@ export const classifyTransactionFailure = (
 		return new TransactionFailure(stage, "acquisition", cause);
 	}
 
-	const sqlState = cause instanceof DatabaseError ? cause.code : undefined;
+	const databaseError = cause instanceof DatabaseError ? cause : undefined;
+	const sqlState = databaseError?.code;
 	if (sqlState === "40001" || sqlState === "40P01") {
 		return new TransactionFailure(stage, "retryableAbort", cause);
 	}
@@ -78,8 +79,5 @@ export const classifyTransactionFailure = (
 	if (sqlState === "57014") {
 		return new TransactionFailure(stage, "queryCanceled", cause);
 	}
-	if (cause instanceof DatabaseError) {
-		return new TransactionFailure(stage, "database", cause);
-	}
-	return cause;
+	return databaseError ? new TransactionFailure(stage, "database", databaseError) : cause;
 };

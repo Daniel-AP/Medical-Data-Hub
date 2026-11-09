@@ -19,30 +19,36 @@ const beginStatements = {
 };
 
 type TransactionIsolation = keyof typeof beginStatements;
-type TransactionOperation<T> = (client: TransactionClient, markProviderMutationSent: () => void) => Promise<T>;
+type TransactionCallback<T> = (client: TransactionClient, markKeycloakRoleUpdateStarted: () => void) => Promise<T>;
+type TransactionAttempt<T> =
+	| { status: "committed"; result: T }
+	| { status: "retry"; failure: TransactionFailure }
+	| { status: "failed"; failure: unknown };
+
 const maxAttempts = 3;
 
 export const runTransaction = async <T>(
 	isolation: TransactionIsolation,
-	operation: TransactionOperation<T>,
+	callback: TransactionCallback<T>,
 	pool = runtimePool,
 ): Promise<T> => {
-	for (let attempt = 1; ; attempt++) {
-		const outcome = await runTransactionAttempt(isolation, operation, pool);
-		if ("result" in outcome) {
+	for (let attemptNumber = 1; ; attemptNumber++) {
+		const outcome = await runTransactionAttempt(isolation, callback, pool);
+		if (outcome.status === "committed") {
 			return outcome.result;
 		}
-		if (attempt === maxAttempts) {
-			throw outcome.retry;
+		if (outcome.status === "failed" || attemptNumber === maxAttempts) {
+			throw outcome.failure;
 		}
+
 		await delay(randomInt(101));
 	}
 };
 
 const rollbackTransaction = async (client: PoolClient) => {
 	try {
-		const rollback = await client.query("ROLLBACK");
-		return rollback.command === "ROLLBACK";
+		const { command } = await client.query("ROLLBACK");
+		return command === "ROLLBACK";
 	} catch {
 		// Keep the original failure and discard the connection
 		return false;
@@ -51,95 +57,106 @@ const rollbackTransaction = async (client: PoolClient) => {
 
 const runTransactionAttempt = async <T>(
 	isolation: TransactionIsolation,
-	operation: TransactionOperation<T>,
+	callback: TransactionCallback<T>,
 	pool: Pool,
-): Promise<{ result: T } | { retry: TransactionFailure }> => {
-	let checkedOutClient: PoolClient | undefined;
-	let stage: TransactionStage = "acquire";
-	let reusable = false;
-	let attemptOpen = true;
-	let providerMutationSent = false;
+): Promise<TransactionAttempt<T>> => {
+	let client: PoolClient;
+	try {
+		client = await pool.connect();
+	} catch (error) {
+		return { status: "failed", failure: classifyTransactionFailure("acquire", error) };
+	}
+
+	let stage: Exclude<TransactionStage, "acquire"> | "closed" = "begin";
+	let transactionEndConfirmed = false;
 	let connectionError: Error | undefined;
+	let keycloakRoleUpdateStarted = false;
+
 	const onConnectionError = (error: Error) => {
 		connectionError = error;
-		attemptOpen = false;
+	};
+
+	const assertOperationActive = () => {
+		if (stage !== "operation" || connectionError) {
+			throw new Error("Transaction attempt is closed");
+		}
+	};
+
+	const operationClient: TransactionClient = {
+		query: (...args: unknown[]) => {
+			assertOperationActive();
+			return Reflect.apply(client.query, client, args);
+		},
+	};
+
+	const markKeycloakRoleUpdateStarted = () => {
+		assertOperationActive();
+		keycloakRoleUpdateStarted = true;
 	};
 
 	try {
-		const client = await pool.connect();
-		checkedOutClient = client;
-		client.on("error", onConnectionError);
-		stage = "begin";
-		await client.query(beginStatements[isolation]);
-
-		stage = "operation";
-		await client.query(
-			`SELECT pg_catalog.set_config('lock_timeout', $1, true),
-			        pg_catalog.set_config('statement_timeout', $2, true),
-			        pg_catalog.set_config('app.user_id', '', true),
-			        pg_catalog.set_config('app.clinic_id', '', true)`,
-			[`${databaseTimeouts.lockMs}ms`, `${databaseTimeouts.statementMs}ms`],
-		);
-		const assertAttemptOpen = () => {
-			if (!attemptOpen) {
-				throw new Error("Transaction attempt is closed");
-			}
-		};
-		const scopedClient: TransactionClient = {
-			query: (...args: unknown[]) => {
-				assertAttemptOpen();
-				return Reflect.apply(client.query, client, args);
-			},
-		};
-		const markProviderMutationSent = () => {
-			assertAttemptOpen();
-			providerMutationSent = true;
-		};
-		let result: T;
+		let execution: { command: string; result: T } | { error: unknown };
 		try {
-			result = await operation(scopedClient, markProviderMutationSent);
-		} finally {
-			attemptOpen = false;
+			client.on("error", onConnectionError);
+			await client.query(beginStatements[isolation]);
+
+			stage = "operation";
+			await client.query(
+				`SELECT pg_catalog.set_config('lock_timeout', $1, true),
+				        pg_catalog.set_config('statement_timeout', $2, true),
+				        pg_catalog.set_config('app.user_id', '', true),
+				        pg_catalog.set_config('app.clinic_id', '', true)`,
+				[`${databaseTimeouts.lockMs}ms`, `${databaseTimeouts.statementMs}ms`],
+			);
+			const result = await callback(operationClient, markKeycloakRoleUpdateStarted);
+
+			stage = "commit";
+			const { command } = await client.query("COMMIT");
+			execution = { command, result };
+		} catch (error) {
+			execution = { error };
 		}
 
-		stage = "commit";
-		const commit = await client.query("COMMIT");
-		if (commit.command === "ROLLBACK") {
-			reusable = true;
-			throw new TransactionFailure(stage, "aborted");
+		const failureStage = stage;
+		stage = "closed";
+
+		let failure: unknown;
+		let retryableFailure: TransactionFailure | undefined;
+		if ("command" in execution) {
+			const { command, result } = execution;
+			if (command === "COMMIT") {
+				transactionEndConfirmed = true;
+				return { status: "committed", result };
+			}
+
+			transactionEndConfirmed = command === "ROLLBACK";
+			failure = new TransactionFailure("commit", transactionEndConfirmed ? "aborted" : "indeterminateCommit");
+		} else {
+			const { error } = execution;
+			const failedOnConnectionError = connectionError !== undefined && connectionError === error;
+			failure = classifyTransactionFailure(failureStage, error, failedOnConnectionError);
+			if (failure instanceof TransactionFailure && failure !== error && failure.kind === "retryableAbort") {
+				retryableFailure = failure;
+			}
 		}
-		if (commit.command !== "COMMIT") {
-			throw new TransactionFailure(stage, "indeterminateCommit");
+
+		const shouldRollback = !connectionError && (failureStage === "operation" || retryableFailure !== undefined);
+		if (shouldRollback) {
+			transactionEndConfirmed = await rollbackTransaction(client);
 		}
-		reusable = true;
-		return { result };
-	} catch (error) {
-		if (checkedOutClient && stage === "operation") {
-			reusable = await rollbackTransaction(checkedOutClient);
+
+		if (retryableFailure && transactionEndConfirmed && !connectionError && !keycloakRoleUpdateStarted) {
+			return { status: "retry", failure: retryableFailure };
 		}
-		const failure = classifyTransactionFailure(
-			stage,
-			error,
-			connectionError !== undefined && connectionError === error,
-		);
-		const retryableAbort =
-			failure instanceof TransactionFailure && failure !== error && failure.kind === "retryableAbort";
-		const operationFailure =
-			providerMutationSent && failure instanceof TransactionFailure
+
+		const outcomeFailure =
+			keycloakRoleUpdateStarted && failure instanceof TransactionFailure
 				? new OperationOutcomeUnknownError(failure)
 				: failure;
-		if (!retryableAbort || connectionError) {
-			throw operationFailure;
-		}
-		if (checkedOutClient && stage !== "operation") {
-			reusable = await rollbackTransaction(checkedOutClient);
-		}
-		if (!reusable || connectionError || providerMutationSent) {
-			throw operationFailure;
-		}
-		return { retry: failure };
+		return { status: "failed", failure: outcomeFailure };
 	} finally {
-		checkedOutClient?.off("error", onConnectionError);
-		checkedOutClient?.release(connectionError !== undefined || !reusable);
+		client.off("error", onConnectionError);
+		const discardConnection = !transactionEndConfirmed || connectionError !== undefined;
+		client.release(discardConnection);
 	}
 };

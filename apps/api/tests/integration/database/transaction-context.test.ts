@@ -46,7 +46,7 @@ it("authorizes a clinic administrator and scopes the callback to that clinic", a
 
 	const result = await runAuthorizedTransaction(
 		{ identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] },
-		"readAuditRecords",
+		{ name: "readAuditRecords" },
 		async (client, actor) => {
 			const { rows: isolation } = await client.query("SHOW transaction_isolation");
 			expect(isolation).toEqual([{ transaction_isolation: "read committed" }]);
@@ -73,7 +73,7 @@ it("authorizes a clinic administrator and scopes the callback to that clinic", a
 it("authorizes the platform administrator for clinic creation without a clinic context", async () => {
 	const result = await runAuthorizedTransaction(
 		{ identityId: platformAdmin.identityId, roles: [UserRole.platformAdministrator] },
-		"createClinic",
+		{ name: "createClinic" },
 		async (client, actor) => {
 			const { rows } = await client.query(`
 				SELECT current_user AS role, pg_catalog.current_setting('app.user_id') AS "userId",
@@ -111,7 +111,7 @@ it("passes the actor's professional association to the callback for own schedule
 
 	const result = await runAuthorizedTransaction(
 		{ identityId: professional.identityId, roles: [UserRole.healthcareProfessional] },
-		"replaceOwnWeeklySchedule",
+		{ name: "replaceOwnWeeklySchedule" },
 		async (client, actor) => {
 			const { rows } = await client.query(`
 				SELECT professional_id AS "professionalId" FROM public.lock_own_professional_for_no_key_update()
@@ -141,7 +141,7 @@ it("rejects a healthcare professional without a profile before invoking the call
 		await expect(
 			runAuthorizedTransaction(
 				{ identityId: clinicAdmin.identityId, roles: [UserRole.healthcareProfessional] },
-				"replaceOwnWeeklySchedule",
+				{ name: "replaceOwnWeeklySchedule" },
 				callback,
 				pool,
 			),
@@ -159,7 +159,7 @@ it("rejects an identity with no local user before invoking the callback", async 
 	await expect(
 		runAuthorizedTransaction(
 			{ identityId: randomUUID(), roles: [UserRole.clinicAdministrator] },
-			"readAuditRecords",
+			{ name: "readAuditRecords" },
 			callback,
 			pool,
 		),
@@ -174,7 +174,7 @@ it("rejects an inactive local actor before invoking the callback", async () => {
 		await expect(
 			runAuthorizedTransaction(
 				{ identityId: clinicAdmin.identityId, roles: [UserRole.clinicAdministrator] },
-				"readAuditRecords",
+				{ name: "readAuditRecords" },
 				callback,
 				pool,
 			),
@@ -190,7 +190,7 @@ it("rejects a token missing the current local role before invoking the callback"
 	await expect(
 		runAuthorizedTransaction(
 			{ identityId: clinicAdmin.identityId, roles: [UserRole.reception] },
-			"readAuditRecords",
+			{ name: "readAuditRecords" },
 			callback,
 			pool,
 		),
@@ -206,7 +206,7 @@ it("rejects a local role forbidden for the operation despite a matching token cl
 				identityId: clinicAdmin.identityId,
 				roles: [UserRole.clinicAdministrator, UserRole.platformAdministrator],
 			},
-			"createClinic",
+			{ name: "createClinic" },
 			callback,
 			pool,
 		),
@@ -339,7 +339,7 @@ it("holds actor authorization until commit and rejects a later phase after deact
 	try {
 		const visibleClinics = await runAuthorizedTransaction(
 			authentication,
-			"readAuditRecords",
+			{ name: "readAuditRecords" },
 			async (client) => {
 				const { rows: apiSession } = await client.query("SELECT pg_catalog.pg_backend_pid() AS pid");
 				deactivation = setup
@@ -367,7 +367,7 @@ it("holds actor authorization until commit and rejects a later phase after deact
 
 		const callback = vi.fn();
 		await expect(
-			runAuthorizedTransaction(authentication, "readAuditRecords", callback, pool),
+			runAuthorizedTransaction(authentication, { name: "readAuditRecords" }, callback, pool),
 		).rejects.toMatchObject({ status: 403 });
 		expect(callback).not.toHaveBeenCalled();
 	} finally {
@@ -395,7 +395,7 @@ it("reuses one connection across clinics after authorized commit and rollback", 
 		return rows[0];
 	};
 
-	const firstScope = await runAuthorizedTransaction(firstActor, "readAuditRecords", readAuditScope, pool);
+	const firstScope = await runAuthorizedTransaction(firstActor, { name: "readAuditRecords" }, readAuditScope, pool);
 	const { pid } = firstScope;
 	const baseline = [{ pid, role: "medical_data_hub_api", userId: "", clinicId: "" }];
 	expect(firstScope).toEqual({
@@ -409,7 +409,7 @@ it("reuses one connection across clinics after authorized commit and rollback", 
 	await expect(
 		runAuthorizedTransaction(
 			secondActor,
-			"readAuditRecords",
+			{ name: "readAuditRecords" },
 			async (client) => {
 				expect(await readAuditScope(client)).toEqual({
 					pid,
@@ -424,7 +424,9 @@ it("reuses one connection across clinics after authorized commit and rollback", 
 	).rejects.toBe(failure);
 	expect((await pool.query(baselineQuery)).rows).toEqual(baseline);
 
-	expect(await runAuthorizedTransaction(firstActor, "readAuditRecords", readAuditScope, pool)).toEqual(firstScope);
+	expect(await runAuthorizedTransaction(firstActor, { name: "readAuditRecords" }, readAuditScope, pool)).toEqual(
+		firstScope,
+	);
 });
 
 it.each([
@@ -465,7 +467,7 @@ it.each([
 				await setup.query(query);
 			}
 			await expect(
-				runAuthorizedTransaction(authentication, "readAuditRecords", callback, pool),
+				runAuthorizedTransaction(authentication, { name: "readAuditRecords" }, callback, pool),
 			).rejects.toMatchObject({ stage: "operation", kind, sqlState });
 		} finally {
 			if (holdLock) {
@@ -494,7 +496,7 @@ it("keeps the definitive availability version stable across a concurrent commit"
 	try {
 		const observed = await runAuthorizedTransaction(
 			authentication,
-			"readDefinitiveAvailability",
+			{ name: "readDefinitiveAvailability" },
 			async (client) => {
 				const { rows } = await client.query("SHOW transaction_isolation");
 				expect(rows).toEqual([{ transaction_isolation: "repeatable read" }]);
@@ -509,7 +511,12 @@ it("keeps the definitive availability version stable across a concurrent commit"
 			pool,
 		);
 		expect(observed).toEqual({ before: originalVersion, after: originalVersion });
-		const latest = await runAuthorizedTransaction(authentication, "readDefinitiveAvailability", readVersion, pool);
+		const latest = await runAuthorizedTransaction(
+			authentication,
+			{ name: "readDefinitiveAvailability" },
+			readVersion,
+			pool,
+		);
 		expect(latest).toBe((BigInt(originalVersion) + 1n).toString());
 	} finally {
 		await setup.query(
@@ -540,8 +547,8 @@ it.each([
 	try {
 		const operation = runAuthorizedTransaction(
 			authentication,
-			"readDefinitiveAvailability",
-			async (client, _actor, markProviderMutationSent) => {
+			{ name: "readDefinitiveAvailability" },
+			async (client, _actor, markKeycloakRoleUpdateStarted) => {
 				const previous = snapshots.at(-1);
 				if (previous) {
 					const { rows } = await setup.query("SELECT pg_catalog.pg_xact_status($1::xid8) AS status", [
@@ -558,7 +565,7 @@ it.each([
 				const [snapshot] = rows;
 				snapshots.push(snapshot);
 				if (markMutation) {
-					markProviderMutationSent();
+					markKeycloakRoleUpdateStarted();
 				}
 				if (snapshots.length <= conflicts) {
 					await setup.query(incrementQuery, clinic);
