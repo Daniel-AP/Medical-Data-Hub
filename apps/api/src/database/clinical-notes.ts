@@ -1,10 +1,11 @@
-import type { Appointment } from "../generated/prisma/client.js";
+import type { Appointment, ClinicalNote } from "../generated/prisma/client.js";
 import type { Authentication } from "../middleware/types.js";
-import { insertAuditEvent } from "./audit/record-events.js";
+import { createAuditReadRecorder, insertAuditEvent } from "./audit/record-events.js";
 import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
 import { TransactionFailure } from "./transactions/transaction-failure.js";
 
 type NoteAppointment = Pick<Appointment, "appointmentId" | "patientId" | "state">;
+type StoredNote = Pick<ClinicalNote, "appointmentId" | "content"> & Pick<Appointment, "patientId">;
 
 export const createClinicalNote = (authentication: Authentication, appointmentId: string, content: string) => {
 
@@ -45,6 +46,34 @@ export const createClinicalNote = (authentication: Authentication, appointmentId
 			throw Object.assign(new Error("Clinical note already exists"), { status: 409 });
 		}
 		throw error;
+
+	});
+
+};
+
+export const readClinicalNote = (authentication: Authentication, appointmentId: string) => {
+
+	return runAuthorizedTransaction(authentication, { name: "readClinicalNote" }, async (transaction, actor) => {
+
+		const { rows: [note] } = await transaction.query<StoredNote>(
+			`SELECT note.appointment_id AS "appointmentId", appointment.patient_id AS "patientId", note.content
+			 FROM public.clinical_notes AS note
+			 JOIN public.appointments AS appointment USING (clinic_id, appointment_id)
+			 WHERE note.appointment_id = $1::uuid AND note.clinic_id = $2::uuid AND appointment.professional_id = $3::uuid`,
+			[appointmentId, actor.clinicId, actor.professionalId],
+		);
+		if(!note) {
+			throw Object.assign(new Error("Clinical note not found"), { status: 404 });
+		}
+
+		const recordReads = createAuditReadRecorder(transaction, actor);
+		await recordReads([{
+			resource: "clinical_note",
+			appointmentId: note.appointmentId,
+			patientId: note.patientId,
+		}]);
+
+		return { appointmentId: note.appointmentId, content: note.content };
 
 	});
 

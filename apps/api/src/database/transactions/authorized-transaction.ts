@@ -67,6 +67,11 @@ const operationPolicies = {
 		requiresActorProfessionalId: true,
 		isolation: "readCommitted",
 	},
+	readClinicalNote: {
+		roles: [UserRole.healthcareProfessional],
+		requiresActorProfessionalId: true,
+		isolation: "readCommitted",
+	},
 	rescheduleAppointment: {
 		roles: [UserRole.clinicAdministrator, UserRole.reception],
 		requiresActorProfessionalId: false,

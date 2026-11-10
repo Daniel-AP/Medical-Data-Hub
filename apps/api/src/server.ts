@@ -5,7 +5,7 @@ import "./config/redis-timeouts.js";
 import { UserRole } from "./generated/prisma/enums.js";
 import { createAuthenticationMiddleware, requireRoles } from "./middleware/authentication.js";
 import { listAuditRecords } from "./routes/audit-records.js";
-import { registerClinicalNote } from "./routes/clinical-notes.js";
+import { getClinicalNote, registerClinicalNote } from "./routes/clinical-notes.js";
 import { createClinicRequestHandler } from "./routes/clinics.js";
 import { createLogoutRequestHandler } from "./routes/logout.js";
 import { editService, registerService } from "./routes/services.js";
@@ -50,6 +50,7 @@ router.post("/specialties", authenticate, requireRoles(UserRole.clinicAdministra
 router.post("/services", authenticate, requireRoles(UserRole.clinicAdministrator), registerService);
 router.patch("/services/:serviceId", authenticate, requireRoles(UserRole.clinicAdministrator), editService);
 router.post("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), registerClinicalNote);
+router.get("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), getClinicalNote);
 
 app.listen({ port, host }, (error) => {
 
