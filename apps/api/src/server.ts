@@ -1,7 +1,7 @@
 import { app, router } from "./app.js";
-import { createAccessTokenVerifier, createLogoutIdTokenVerifier } from "./clients/keycloak.js";
+import { createAccessTokenVerifier, createLogoutIdTokenVerifier } from "./clients/keycloak/token-verification.js";
 import "./config/database-timeouts.js";
-import "./config/redis-timeout.js";
+import "./config/redis-timeouts.js";
 import { UserRole } from "./generated/prisma/enums.js";
 import { createAuthenticationMiddleware, requireRoles } from "./middleware/authentication.js";
 import { listAuditRecords } from "./routes/audit-records.js";

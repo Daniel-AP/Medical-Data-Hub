@@ -1,7 +1,7 @@
 import { STATUS_CODES } from "node:http";
 import express from "express";
 import type { ErrorRequestHandler } from "express";
-import { getTransactionErrorResponse } from "./transaction-error-response.js";
+import { getTransactionErrorResponse } from "./middleware/transaction-error-response.js";
 
 export const app = express();
 export const router = express.Router();

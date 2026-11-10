@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { AppointmentState, AuditAction, AuditResource, UserRole } from "../src/generated/prisma/client.js";
-import { prisma } from "../src/database/client.js";
+import { prisma } from "../src/database/prisma-client.js";
 
 const realm = JSON.parse(
 	readFileSync(new URL("../../../infra/keycloak/development/medical-data-hub-realm.json", import.meta.url), "utf8"),

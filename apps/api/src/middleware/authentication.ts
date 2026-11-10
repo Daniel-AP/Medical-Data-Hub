@@ -1,15 +1,9 @@
-import { UserRole } from "../generated/prisma/enums.js";
 import type { RequestHandler } from "express";
-import type { createAccessTokenVerifier } from "../clients/keycloak.js";
+import { keycloakRoles } from "../clients/keycloak/roles.js";
+import type { createAccessTokenVerifier } from "../clients/keycloak/token-verification.js";
+import type { UserRole } from "../generated/prisma/enums.js";
 
 type AccessTokenVerifier = ReturnType<typeof createAccessTokenVerifier>;
-
-const roleMap = {
-	platform_administrator: UserRole.platformAdministrator,
-	clinic_administrator: UserRole.clinicAdministrator,
-	reception: UserRole.reception,
-	healthcare_professional: UserRole.healthcareProfessional,
-};
 
 export const createAuthenticationMiddleware = (verifyAccessToken: AccessTokenVerifier): RequestHandler => {
 
@@ -33,7 +27,7 @@ export const createAuthenticationMiddleware = (verifyAccessToken: AccessTokenVer
 		const hasClientAccess = typeof clientAccess === "object" && clientAccess !== null;
 		const tokenRoles = hasClientAccess ? (clientAccess as Record<string, unknown>).roles : undefined;
 		const roles = Array.isArray(tokenRoles)
-			? Object.entries(roleMap)
+			? Object.entries(keycloakRoles)
 					.filter(([tokenRole]) => tokenRoles.includes(tokenRole))
 					.map(([, domainRole]) => domainRole)
 			: [];

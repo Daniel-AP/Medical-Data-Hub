@@ -1,4 +1,4 @@
-import { prisma } from "../src/database/client.js";
+import { prisma } from "../src/database/prisma-client.js";
 
 try {
 

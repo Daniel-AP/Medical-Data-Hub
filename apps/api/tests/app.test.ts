@@ -4,8 +4,8 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { app, router } from "../src/app.js";
-import { TransactionFailure } from "../src/database/transaction-failure.js";
-import { OperationOutcomeUnknownError } from "../src/operation-outcome-unknown.js";
+import { TransactionFailure } from "../src/database/transactions/transaction-failure.js";
+import { OperationOutcomeUnknownError } from "../src/errors/operation-outcome-unknown.js";
 
 let server: Server;
 let url: string;

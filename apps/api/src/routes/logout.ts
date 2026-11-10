@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import type { createLogoutIdTokenVerifier } from "../clients/keycloak.js";
+import type { createLogoutIdTokenVerifier } from "../clients/keycloak/token-verification.js";
 
 type LogoutIdTokenVerifier = ReturnType<typeof createLogoutIdTokenVerifier>;
 

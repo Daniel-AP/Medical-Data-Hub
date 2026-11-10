@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import { readAuditRecords } from "../database/audit-records.js";
+import { readAuditRecords } from "../database/audit/read-records.js";
 
 const auditFilterNames = new Set(["userId", "patientId", "from", "to"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
