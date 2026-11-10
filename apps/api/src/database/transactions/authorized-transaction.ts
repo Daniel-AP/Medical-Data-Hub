@@ -62,6 +62,11 @@ const operationPolicies = {
 		requiresActorProfessionalId: false,
 		isolation: "readCommitted",
 	},
+	updateProfessionalSpecialty: {
+		roles: [UserRole.clinicAdministrator],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
 	replaceOwnWeeklySchedule: {
 		roles: [UserRole.healthcareProfessional],
 		requiresActorProfessionalId: true,
