@@ -22,6 +22,11 @@ const databaseProfiles = {
 };
 
 const operationPolicies = {
+	readPatientAppointmentHistory: {
+		roles: [UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
 	readAuditRecords: {
 		roles: [UserRole.clinicAdministrator],
 		requiresActorProfessionalId: false,

@@ -4,6 +4,7 @@ import "./config/database-timeouts.js";
 import "./config/redis-timeouts.js";
 import { UserRole } from "./generated/prisma/enums.js";
 import { createAuthenticationMiddleware, requireRoles } from "./middleware/authentication.js";
+import { listPatientAppointments } from "./routes/appointment-queries.js";
 import { listAuditRecords } from "./routes/audit-records.js";
 import { getClinicalNote, registerClinicalNote } from "./routes/clinical-notes.js";
 import { createClinicRequestHandler } from "./routes/clinics.js";
@@ -50,6 +51,7 @@ router.patch("/users/:userId", authenticate, requireRoles(UserRole.clinicAdminis
 router.post("/specialties", authenticate, requireRoles(UserRole.clinicAdministrator), registerSpecialty);
 router.post("/services", authenticate, requireRoles(UserRole.clinicAdministrator), registerService);
 router.patch("/services/:serviceId", authenticate, requireRoles(UserRole.clinicAdministrator), editService);
+router.get("/patients/:patientId/appointments", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), listPatientAppointments); 
 router.post("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), registerClinicalNote);
 router.get("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), getClinicalNote);
 router.post("/professionals", authenticate, requireRoles(UserRole.clinicAdministrator), registerProfessional);
