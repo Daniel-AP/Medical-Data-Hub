@@ -2,10 +2,7 @@ import type { RequestHandler } from "express";
 import { getKeycloakAdminAccess, isKeycloakIdentityId, keycloakUserExists, replaceKeycloakUserRole } from "../clients/keycloak/admin-api.js";
 import type { KeycloakAdminSettings } from "../clients/keycloak/admin-api.js";
 import { checkClinicCreationPermission, createClinic } from "../database/clinics.js";
-
-const isRequiredText = (value: unknown, maxLength: number): value is string => {
-	return typeof value === "string" && value.trim() !== "" && [...value].length <= maxLength && !value.includes("\0");
-};
+import { isRequiredText } from "../validation.js";
 
 const isNamedTimeZone = (timeZone: string) => {
 

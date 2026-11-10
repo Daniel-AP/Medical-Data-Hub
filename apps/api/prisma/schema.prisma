@@ -96,6 +96,7 @@ model Specialty {
   services Service[]
 
   @@unique([clinicId, specialtyId], map: "specialties_clinic_specialty_key")
+  @@unique([clinicId, name], map: "specialties_clinic_name_key")
   @@map("specialties")
 }
 

@@ -3,7 +3,7 @@ import { getKeycloakAdminAccess, isKeycloakIdentityId, keycloakUserExists, repla
 import type { KeycloakAdminSettings } from "../clients/keycloak/admin-api.js";
 import { isClinicUserRole } from "../clients/keycloak/roles.js";
 import { checkUserCreationPermission, createUser, updateUserPermissions } from "../database/users.js";
-import { isUuid } from "./uuid.js";
+import { isUuid } from "../validation.js";
 
 export const createUserRequestHandler = (settings: KeycloakAdminSettings, fetchKeycloak: typeof fetch = fetch): RequestHandler => {
 

@@ -1,6 +1,7 @@
 import { keycloakHttpTimeoutMs } from "../../config/keycloak-timeout.js";
 import { KeycloakRoleUpdatePartialError } from "../../errors/keycloak-role-update-partial.js";
 import { OperationOutcomeUnknownError } from "../../errors/operation-outcome-unknown.js";
+import { isRequiredText } from "../../validation.js";
 import { keycloakRoles } from "./roles.js";
 
 export type KeycloakAdminSettings = { issuer: URL; internalUrl: URL; applicationId: string; applicationSecret: string };
@@ -73,12 +74,7 @@ export const getKeycloakAdminAccess = async (
 };
 
 export const isKeycloakIdentityId = (value: unknown): value is string => {
-
-	const validText = typeof value === "string" && value.trim() !== "" &&
-		[...value].length <= 255 && !value.includes("\0");
-
-	return validText && value !== "." && value !== "..";
-
+	return isRequiredText(value, 255) && value !== "." && value !== "..";
 };
 
 export const keycloakUserExists = async ({ adminUrl, headers, fetchKeycloak }: KeycloakAdminAccess, identityId: string) => {

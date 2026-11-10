@@ -1,6 +1,6 @@
 import type { RequestHandler } from "express";
 import { readAuditRecords } from "../database/audit/read-records.js";
-import { isUuid } from "./uuid.js";
+import { isUuid } from "../validation.js";
 
 const auditFilterNames = new Set(["userId", "patientId", "from", "to"]);
 const timestampPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}(?::?\d{2})?)$/;

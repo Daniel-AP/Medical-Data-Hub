@@ -82,6 +82,7 @@ Initialize the row during clinic registration and increment `version` once per r
 ### Constraints
 
 - UNIQUE specialties_clinic_specialty_key: (clinic_id, specialty_id)
+- UNIQUE specialties_clinic_name_key: (clinic_id, name)
 - CHECK specialties_name_check: name <> ''
 
 ## professionals
