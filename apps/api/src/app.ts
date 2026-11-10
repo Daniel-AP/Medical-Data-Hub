@@ -1,19 +1,10 @@
 import { STATUS_CODES } from "node:http";
 import express from "express";
 import type { ErrorRequestHandler } from "express";
-import { TransactionFailure } from "./database/transaction-failure.js";
-import { OperationOutcomeUnknownError } from "./operation-outcome-unknown.js";
+import { getTransactionErrorResponse } from "./transaction-error-response.js";
 
 export const app = express();
 export const router = express.Router();
-
-const transientTransactionFailures = new Set([
-	"acquisition",
-	"connection",
-	"lockUnavailable",
-	"queryCanceled",
-	"retryableAbort",
-]);
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const handleError: ErrorRequestHandler = (error, _request, response, _next) => {
@@ -24,15 +15,14 @@ const handleError: ErrorRequestHandler = (error, _request, response, _next) => {
 		return;
 	}
 
-	const transactionFailure = error instanceof TransactionFailure ? error : undefined;
-	if(error instanceof OperationOutcomeUnknownError || transactionFailure?.kind === "indeterminateCommit") {
-		response.status(500).json({ error: STATUS_CODES[500], code: "OPERATION_OUTCOME_UNKNOWN" });
+	const transactionResponse = getTransactionErrorResponse(error);
+	if(transactionResponse) {
+		response.status(transactionResponse.status).json(transactionResponse.body);
 
 		return;
 	}
 
-	const isTransient = transactionFailure && transientTransactionFailures.has(transactionFailure.kind);
-	const status = isTransient ? 503 : (error.status ?? 500);
+	const status = error.status ?? 500;
 	response.status(status).json({ error: STATUS_CODES[status] });
 
 };

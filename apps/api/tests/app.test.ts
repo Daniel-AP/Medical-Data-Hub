@@ -10,7 +10,7 @@ import { OperationOutcomeUnknownError } from "../src/operation-outcome-unknown.j
 let server: Server;
 let url: string;
 const requestOptions = { method: "POST", headers: { "Content-Type": "application/json" } };
-const transientBody = { error: STATUS_CODES[503] };
+const serviceUnavailableBody = { error: STATUS_CODES[503] };
 const indeterminateBody = { error: STATUS_CODES[500], code: "OPERATION_OUTCOME_UNKNOWN" };
 const databaseErrors = [
 	{
@@ -18,14 +18,14 @@ const databaseErrors = [
 		path: "/runtime-acquisition-failure",
 		failure: new TransactionFailure("acquire", "acquisition"),
 		status: 503,
-		body: transientBody,
+		body: serviceUnavailableBody,
 	},
 	{
 		name: "returns 503 for a canceled database statement",
 		path: "/runtime-statement-canceled",
 		failure: new TransactionFailure("operation", "queryCanceled"),
 		status: 503,
-		body: transientBody,
+		body: serviceUnavailableBody,
 	},
 	{
 		name: "reports an indeterminate commit without exposing database details",
