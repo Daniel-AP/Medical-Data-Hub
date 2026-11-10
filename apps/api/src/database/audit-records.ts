@@ -7,10 +7,12 @@ type AuditRecordFilters = { userId?: string; patientId?: string; from?: Date; to
 type AuditRecordMetadata = Omit<AuditRecord, "resource"> & { resource: "patient_contact" | "clinical_note" };
 
 export const readAuditRecords = (authentication: Authentication, filters: AuditRecordFilters, pool?: Pool) => {
+
 	return runAuthorizedTransaction(
 		authentication,
 		{ name: "readAuditRecords" },
 		async (client, actor) => {
+
 			const { rows } = await client.query<AuditRecordMetadata>(
 				`SELECT audit_record_id AS "auditRecordId", clinic_id AS "clinicId", user_id AS "userId",
 				        patient_id AS "patientId", resource, appointment_id AS "appointmentId", action, occurred_at AS "occurredAt"
@@ -23,8 +25,11 @@ export const readAuditRecords = (authentication: Authentication, filters: AuditR
 				 ORDER BY occurred_at DESC, audit_record_id DESC`,
 				[actor.clinicId, filters.userId, filters.patientId, filters.from, filters.to],
 			);
+
 			return rows;
+
 		},
 		pool,
 	);
+
 };

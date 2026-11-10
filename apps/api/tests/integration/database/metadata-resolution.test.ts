@@ -8,7 +8,7 @@ type AppointmentMetadata = Pick<Appointment, "appointmentId" | "professionalId" 
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -28,6 +28,7 @@ let appointment: AppointmentMetadata;
 let otherAppointment: AppointmentMetadata;
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	const actors = await setup.query<Actor>(`
@@ -78,6 +79,7 @@ beforeAll(async () => {
 		[otherProfessional.professionalId],
 	);
 	otherAppointment = otherAppointmentResult.rows[0];
+
 });
 
 afterAll(async () => {
@@ -92,23 +94,28 @@ it("resolves only the actor's own professional identifier", async () => {
 });
 
 it("resolves only a same-clinic professional's user identifier", async () => {
+
 	const result = await api.query("SELECT * FROM public.resolve_professional_user($1::uuid, $2::uuid)", [
 		actor.userId,
 		professional.professionalId,
 	]);
 	expect(result.fields.map((field) => field.name)).toEqual(["user_id"]);
 	expect(result.rows).toEqual([{ user_id: professional.userId }]);
+
 });
 
 it("filters a professional belonging to another clinic", async () => {
+
 	const { rows } = await api.query("SELECT * FROM public.resolve_professional_user($1::uuid, $2::uuid)", [
 		actor.userId,
 		otherProfessional.professionalId,
 	]);
 	expect(rows).toEqual([]);
+
 });
 
 it("resolves only the professional, patient, and service references of a same-clinic appointment", async () => {
+
 	const result = await api.query("SELECT * FROM public.resolve_appointment_references($1::uuid, $2::uuid)", [
 		actor.userId,
 		appointment.appointmentId,
@@ -121,25 +128,31 @@ it("resolves only the professional, patient, and service references of a same-cl
 			service_id: appointment.serviceId,
 		},
 	]);
+
 });
 
 it("filters an appointment belonging to another clinic", async () => {
+
 	const { rows } = await api.query("SELECT * FROM public.resolve_appointment_references($1::uuid, $2::uuid)", [
 		actor.userId,
 		otherAppointment.appointmentId,
 	]);
 	expect(rows).toEqual([]);
+
 });
 
 it("gives no appointment metadata to a platform actor with a NULL clinic", async () => {
+
 	const { rows } = await api.query("SELECT * FROM public.resolve_appointment_references($1::uuid, $2::uuid)", [
 		platform.userId,
 		appointment.appointmentId,
 	]);
 	expect(rows).toEqual([]);
+
 });
 
 it("uses the dedicated metadata owner and a trusted search path for all metadata functions", async () => {
+
 	const names = functionCalls.map(([name]) => name);
 	const { rows } = await setup.query(
 		`
@@ -159,9 +172,11 @@ it("uses the dedicated metadata owner and a trusted search path for all metadata
 				proconfig: ["search_path=pg_catalog, pg_temp"],
 			})),
 	);
+
 });
 
 it("limits metadata owner SELECT privileges to the required identifier and relationship columns", async () => {
+
 	const { rows } = await setup.query(`
         SELECT table_definition.relname, column_definition.attname
         FROM pg_catalog.pg_class AS table_definition
@@ -185,10 +200,13 @@ it("limits metadata owner SELECT privileges to the required identifier and relat
 		{ relname: "users", attname: "clinic_id" },
 		{ relname: "users", attname: "user_id" },
 	]);
+
 });
 
 it("denies metadata execution to the reception profile", async () => {
-	for (const [name, query] of functionCalls) {
+
+	for(const [name, query] of functionCalls) {
+
 		await api.query("BEGIN");
 		try {
 			await api.query("SET LOCAL ROLE reception");
@@ -196,5 +214,7 @@ it("denies metadata execution to the reception profile", async () => {
 		} finally {
 			await api.query("ROLLBACK");
 		}
+
 	}
+
 });

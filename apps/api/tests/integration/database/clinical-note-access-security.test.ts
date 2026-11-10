@@ -11,7 +11,7 @@ type NoteAppointment = Pick<
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -34,6 +34,7 @@ let fixtureAppointmentId: string;
 let appointmentValues: (string | Date)[];
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	await contender.connect();
@@ -74,7 +75,7 @@ beforeAll(async () => {
 	)!;
 	foreignNote = notes.find((note) => note.clinicId !== actor.clinicId)!;
 	const startAt = new Date("2020-01-06T15:00:00.000Z");
-	const endAt = new Date(startAt.getTime() + (ownAppointment.endAt.getTime() - ownAppointment.startAt.getTime()));
+	const endAt = new Date(startAt.getTime()+(ownAppointment.endAt.getTime()-ownAppointment.startAt.getTime()));
 	appointmentValues = [
 		ownAppointment.clinicId,
 		ownAppointment.patientId,
@@ -85,9 +86,11 @@ beforeAll(async () => {
 	];
 	const fixture = await setup.query(appointmentInsertQuery, [...appointmentValues, "attended", null, null]);
 	fixtureAppointmentId = fixture.rows[0].appointment_id;
+
 });
 
 beforeEach(async () => {
+
 	await api.query("BEGIN ISOLATION LEVEL READ COMMITTED");
 	await api.query(
 		`SELECT pg_catalog.set_config('app.user_id', $1, true),
@@ -95,6 +98,7 @@ beforeEach(async () => {
 		[actor.userId, actor.clinicId],
 	);
 	await api.query("SET LOCAL ROLE healthcare_professional");
+
 });
 
 afterEach(async () => {
@@ -103,14 +107,17 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
+
 	await setup.query("DELETE FROM public.clinical_notes WHERE appointment_id = $1::uuid", [fixtureAppointmentId]);
 	await setup.query("DELETE FROM public.appointments WHERE appointment_id = $1::uuid", [fixtureAppointmentId]);
 	await contender.end();
 	await api.end();
 	await setup.end();
+
 });
 
 it("reads only clinical notes belonging to the context professional", async () => {
+
 	const { rows } = await api.query(`
         SELECT appointment_id AS "appointmentId", clinic_id AS "clinicId", content FROM public.clinical_notes ORDER BY appointment_id
     `);
@@ -125,10 +132,12 @@ it("reads only clinical notes belonging to the context professional", async () =
 				),
 		),
 	);
+
 });
 
 it("inserts a clinical note for an owned attended appointment", async () => {
-	const inserted = await api.query(insertQuery + " RETURNING appointment_id, clinic_id", [
+
+	const inserted = await api.query(insertQuery+" RETURNING appointment_id, clinic_id", [
 		fixtureAppointmentId,
 		actor.clinicId,
 		"Synthetic clinical note",
@@ -138,9 +147,11 @@ it("inserts a clinical note for an owned attended appointment", async () => {
 		fixtureAppointmentId,
 	]);
 	expect(rows).toEqual([{ content: "Synthetic clinical note" }]);
+
 });
 
 it("rejects clinical note insertion for owned reserved appointments", async () => {
+
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [administrator.userId]);
 	await api.query("SET LOCAL ROLE clinic_administrator");
 	const appointment = await api.query(appointmentInsertQuery, [...appointmentValues, "reserved", null, null]);
@@ -152,27 +163,33 @@ it("rejects clinical note insertion for owned reserved appointments", async () =
 		code: "42501",
 		message: 'new row violates row-level security policy for table "clinical_notes"',
 	});
+
 });
 
 it("rejects clinical note insertion for another professional in the same clinic", async () => {
+
 	await expect(
 		api.query(insertQuery, [otherNote.appointmentId, actor.clinicId, "Synthetic clinical note"]),
 	).rejects.toMatchObject({
 		code: "42501",
 		message: 'new row violates row-level security policy for table "clinical_notes"',
 	});
+
 });
 
 it("rejects a foreign appointment identifier under the local note clinic", async () => {
+
 	await expect(
 		api.query(insertQuery, [foreignNote.appointmentId, actor.clinicId, "Synthetic clinical note"]),
 	).rejects.toMatchObject({
 		code: "42501",
 		message: 'new row violates row-level security policy for table "clinical_notes"',
 	});
+
 });
 
 it("resolves concurrent clinical note inserts after the first writer's COMMIT", async () => {
+
 	await api.query(insertQuery, [fixtureAppointmentId, actor.clinicId, "First synthetic note"]);
 	const apiPid = (await api.query("SELECT pg_catalog.pg_backend_pid() AS pid")).rows[0].pid;
 	await contender.query("BEGIN ISOLATION LEVEL READ COMMITTED");
@@ -188,17 +205,20 @@ it("resolves concurrent clinical note inserts after the first writer's COMMIT", 
 		.query(insertQuery, [fixtureAppointmentId, actor.clinicId, "Second synthetic note"])
 		.catch((error: unknown) => error);
 	try {
+
 		let isWaiting = false;
-		for (let attempt = 0; attempt < 100; attempt++) {
+		for(let attempt = 0; attempt < 100; attempt++) {
+
 			const { rows } = await setup.query(
 				"SELECT $2::int = ANY(pg_catalog.pg_blocking_pids($1::int)) AS waiting",
 				[contenderPid, apiPid],
 			);
-			if (rows[0].waiting) {
+			if(rows[0].waiting) {
 				isWaiting = true;
 				break;
 			}
 			await setTimeout(10);
+
 		}
 		expect(isWaiting).toBe(true);
 		await api.query("COMMIT");
@@ -207,15 +227,20 @@ it("resolves concurrent clinical note inserts after the first writer's COMMIT", 
 			fixtureAppointmentId,
 		]);
 		expect(stored.rows).toEqual([{ content: "First synthetic note" }]);
+
 	} finally {
+
 		await api.query("ROLLBACK");
 		await pendingInsert;
 		await contender.query("ROLLBACK");
 		await setup.query("DELETE FROM public.clinical_notes WHERE appointment_id = $1::uuid", [fixtureAppointmentId]);
+
 	}
+
 });
 
 it("grants only clinical note SELECT and INSERT to healthcare professionals", async () => {
+
 	const roles = [
 		"medical_data_hub_api",
 		"platform_administrator",
@@ -240,4 +265,5 @@ it("grants only clinical note SELECT and INSERT to healthcare professionals", as
 		[roles],
 	);
 	expect(updateGrants.rows).toEqual([]);
+
 });

@@ -61,11 +61,14 @@ router.get("/cold-start-check", createAuthenticationMiddleware(verifyColdStart),
 });
 
 app.listen({ host: "127.0.0.1", port: 3001 }, (error) => {
-	if (error) {
+
+	if(error) {
 		console.error(error.message);
 		process.exitCode = 1;
+
 		return;
 	}
 
 	console.info("Authentication probe listening on http://127.0.0.1:3001");
+
 });

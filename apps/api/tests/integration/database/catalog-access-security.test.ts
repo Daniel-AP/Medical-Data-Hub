@@ -6,7 +6,7 @@ type LocalUser = Pick<User, "userId" | "clinicId"> & { role: string };
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -24,6 +24,7 @@ let foreignSpecialty: Specialty;
 let foreignService: Service;
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	const userResult = await setup.query<LocalUser>(`
@@ -49,9 +50,11 @@ beforeAll(async () => {
 	localSpecialty = specialties.find((specialty) => specialty.clinicId === administrator.clinicId)!;
 	foreignSpecialty = specialties.find((specialty) => specialty.clinicId === otherAdministrator.clinicId)!;
 	foreignService = services.find((service) => service.clinicId === otherAdministrator.clinicId)!;
+
 });
 
 beforeEach(async () => {
+
 	await api.query("BEGIN");
 	await api.query(
 		`SELECT pg_catalog.set_config('app.user_id', $1, true),
@@ -59,6 +62,7 @@ beforeEach(async () => {
 		[administrator.userId, administrator.clinicId],
 	);
 	await api.query("SET LOCAL ROLE clinic_administrator");
+
 });
 
 afterEach(async () => {
@@ -74,26 +78,33 @@ it.each([
 	{ tableName: "specialties", profileName: "clinic_administrator" },
 	{ tableName: "services", profileName: "reception" },
 ])("reads only same-clinic $tableName rows as $profileName", async ({ tableName, profileName }) => {
+
 	const actor = users.find((user) => user.role === profileName && user.clinicId === administrator.clinicId)!;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
-	if (tableName === "specialties") {
+	if(tableName === "specialties") {
+
 		const { rows } = await api.query(
 			`SELECT specialty_id AS "specialtyId", clinic_id AS "clinicId", name
             FROM public.specialties ORDER BY specialty_id`,
 		);
 		expect(rows).toEqual(specialties.filter((specialty) => specialty.clinicId === actor.clinicId));
+
 	} else {
+
 		const { rows } = await api.query(
 			`SELECT service_id AS "serviceId", clinic_id AS "clinicId", name, duration_minutes AS "durationMinutes",
                 specialty_id AS "specialtyId", is_active AS "isActive"
             FROM public.services ORDER BY service_id`,
 		);
 		expect(rows).toEqual(services.filter((service) => service.clinicId === actor.clinicId));
+
 	}
+
 });
 
 it("allows same-clinic specialty insertion by clinic administrators", async () => {
+
 	const { rows } = await api.query(
 		"INSERT INTO public.specialties (clinic_id, name) VALUES ($1::uuid, $2) RETURNING specialty_id, clinic_id, name",
 		[administrator.clinicId, "Synthetic specialty"],
@@ -101,9 +112,11 @@ it("allows same-clinic specialty insertion by clinic administrators", async () =
 	expect(rows).toEqual([
 		{ specialty_id: expect.any(String), clinic_id: administrator.clinicId, name: "Synthetic specialty" },
 	]);
+
 });
 
 it("allows same-clinic service insertion by clinic administrators", async () => {
+
 	const { rows } = await api.query(
 		`INSERT INTO public.services (clinic_id, name, duration_minutes, specialty_id)
         VALUES ($1::uuid, $2, $3, $4::uuid) RETURNING service_id, clinic_id, name, duration_minutes, specialty_id, is_active`,
@@ -119,9 +132,11 @@ it("allows same-clinic service insertion by clinic administrators", async () => 
 			is_active: true,
 		},
 	]);
+
 });
 
 it("allows updates to all four editable service fields", async () => {
+
 	const inserted = await api.query(
 		`INSERT INTO public.services (clinic_id, name, duration_minutes, specialty_id)
         VALUES ($1::uuid, 'Synthetic service', 30, $2::uuid) RETURNING service_id`,
@@ -146,16 +161,20 @@ it("allows updates to all four editable service fields", async () => {
 			is_active: false,
 		},
 	]);
+
 });
 
 it("filters service updates targeting another clinic", async () => {
+
 	const result = await api.query("UPDATE public.services SET is_active = false WHERE service_id = $1::uuid", [
 		foreignService.serviceId,
 	]);
 	expect(result.rowCount).toBe(0);
+
 });
 
 it("rejects foreign-clinic inserts into specialties through RLS", async () => {
+
 	const tableName = "specialties";
 	const query =
 		tableName === "specialties"
@@ -170,9 +189,11 @@ it("rejects foreign-clinic inserts into specialties through RLS", async () => {
 		code: "42501",
 		message: `new row violates row-level security policy for table "${tableName}"`,
 	});
+
 });
 
 it("grants only the designed catalog table and column privileges", async () => {
+
 	const roles = [
 		"medical_data_hub_api",
 		"platform_administrator",
@@ -215,4 +236,5 @@ it("grants only the designed catalog table and column privileges", async () => {
 			is_grantable: "NO",
 		},
 	]);
+
 });

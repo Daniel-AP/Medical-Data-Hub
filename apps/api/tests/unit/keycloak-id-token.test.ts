@@ -11,6 +11,7 @@ let publicJwk: JWK;
 let verifyIdToken: ReturnType<typeof createLogoutIdTokenVerifier>;
 
 const createToken = (payload: JWTPayload = {}) => {
+
 	return new SignJWT({
 		iss: issuer,
 		aud: context.clientId,
@@ -18,11 +19,12 @@ const createToken = (payload: JWTPayload = {}) => {
 		sid: context.sessionId,
 		azp: context.clientId,
 		typ: "ID",
-		exp: Math.floor(Date.now() / 1000) + 300,
+		exp: Math.floor(Date.now()/1000)+300,
 		...payload,
 	})
 		.setProtectedHeader({ alg: "RS256", kid: "test-key" })
 		.sign(privateKey);
+
 };
 
 beforeAll(async () => {
@@ -32,6 +34,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+
 	fetchKeys.mockReset();
 	fetchKeys.mockImplementation(async () => Response.json({ keys: [publicJwk] }));
 	vi.stubGlobal("fetch", fetchKeys);
@@ -39,6 +42,7 @@ beforeEach(() => {
 		issuer,
 		jwksUrl: "http://keycloak:8080/realms/medical-data-hub/protocol/openid-connect/certs",
 	});
+
 });
 
 afterEach(() => {
@@ -46,12 +50,14 @@ afterEach(() => {
 });
 
 it("accepts an ID token matching the authenticated user, session, and client", async () => {
+
 	const token = await createToken();
 	await expect(verifyIdToken(token, context)).resolves.toMatchObject({
 		sub: context.identityId,
 		sid: context.sessionId,
 		aud: context.clientId,
 	});
+
 });
 
 it("accepts an expired ID token as a logout hint for the matching session", async () => {
@@ -81,11 +87,13 @@ it("rejects a malformed ID token with 401", async () => {
 });
 
 it.each([300, -300])("rejects an invalid ID token signature with expiration offset %i", async (offset) => {
+
 	const otherKeyPair = await generateKeyPair("RS256");
 	const otherJwk = { ...(await exportJWK(otherKeyPair.publicKey)), kid: "test-key" };
 	fetchKeys.mockResolvedValueOnce(Response.json({ keys: [otherJwk] }));
-	const token = await createToken({ exp: Math.floor(Date.now() / 1000) + offset });
+	const token = await createToken({ exp: Math.floor(Date.now()/1000)+offset });
 	await expect(verifyIdToken(token, context)).rejects.toMatchObject({ status: 401 });
+
 });
 
 it("reports unavailable ID token verification keys with 503", async () => {

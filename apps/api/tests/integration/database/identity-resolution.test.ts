@@ -7,7 +7,7 @@ type LocalIdentity = Pick<User, "identityId" | "userId" | "clinicId">;
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -18,6 +18,7 @@ let reception: LocalIdentity;
 let platform: LocalIdentity;
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	const receptionResult = await setup.query<LocalIdentity>(`
@@ -30,6 +31,7 @@ beforeAll(async () => {
         FROM public.users WHERE role = 'platform_administrator' ORDER BY user_id LIMIT 1
     `);
 	platform = platformResult.rows[0];
+
 });
 
 afterAll(async () => {
@@ -54,19 +56,24 @@ it("returns no association for an unknown provider identity", async () => {
 });
 
 it("denies identity resolution to the platform_administrator profile", async () => {
+
 	const profileName = "platform_administrator";
 	await api.query("BEGIN");
 	try {
+
 		await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
 		await expect(
 			api.query("SELECT * FROM public.resolve_identity($1::text)", [reception.identityId]),
 		).rejects.toMatchObject({ code: "42501" });
+
 	} finally {
 		await api.query("ROLLBACK");
 	}
+
 });
 
 it("uses a dedicated function owner and a trusted search path", async () => {
+
 	const { rows } = await setup.query(`
         SELECT pg_catalog.pg_get_userbyid(proowner) AS owner, prosecdef, proconfig
         FROM pg_catalog.pg_proc WHERE oid = 'public.resolve_identity(text)'::regprocedure
@@ -74,9 +81,11 @@ it("uses a dedicated function owner and a trusted search path", async () => {
 	expect(rows).toEqual([
 		{ owner: "medical_data_hub_identity_owner", prosecdef: true, proconfig: ["search_path=pg_catalog, pg_temp"] },
 	]);
+
 });
 
 it("keeps application roles outside identity owner membership", async () => {
+
 	const { rows } = await setup.query(
 		`
         SELECT rolname, pg_catalog.pg_has_role(rolname, 'medical_data_hub_identity_owner', 'MEMBER') AS member
@@ -87,11 +96,14 @@ it("keeps application roles outside identity owner membership", async () => {
 	expect(rows).toEqual(
 		["medical_data_hub_api", ...profileNames].sort().map((rolname) => ({ rolname, member: false })),
 	);
+
 });
 
 it("ignores a caller temporary table and search path during identity resolution", async () => {
+
 	await api.query("BEGIN");
 	try {
+
 		await api.query("CREATE TEMP TABLE users (identity_id text, user_id uuid, clinic_id uuid) ON COMMIT DROP");
 		await api.query("INSERT INTO pg_temp.users (identity_id, user_id, clinic_id) VALUES ($1, $2::uuid, $3::uuid)", [
 			reception.identityId,
@@ -102,7 +114,9 @@ it("ignores a caller temporary table and search path during identity resolution"
 		await api.query("SET LOCAL search_path = pg_temp, public");
 		const { rows } = await api.query("SELECT * FROM public.resolve_identity($1::text)", [reception.identityId]);
 		expect(rows).toEqual([{ user_id: reception.userId, clinic_id: reception.clinicId }]);
+
 	} finally {
 		await api.query("ROLLBACK");
 	}
+
 });

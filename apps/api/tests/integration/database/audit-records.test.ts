@@ -11,7 +11,7 @@ type ContactEvent = Omit<AuditRecord, "resource"> & { resource: "patient_contact
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -33,6 +33,7 @@ let otherPatientEvent: ContactEvent;
 let foreignEvent: ContactEvent;
 
 beforeAll(async () => {
+
 	await setup.connect();
 	const { rows: administrators } = await setup.query<ClinicAdmin>(`
 		SELECT clinic_id AS "clinicId", identity_id AS "identityId"
@@ -69,6 +70,7 @@ beforeAll(async () => {
 	otherUserEvent = await insertContactEvent(otherActor, patientId, new Date("2000-01-01T11:30:00Z"));
 	otherPatientEvent = await insertContactEvent(actor, otherPatientId, new Date("2000-01-01T11:15:00Z"));
 	foreignEvent = await insertContactEvent(foreignActor, foreignPatientId, tiedAt);
+
 });
 
 afterAll(async () => {
@@ -77,6 +79,7 @@ afterAll(async () => {
 });
 
 const insertContactEvent = async (actor: AuditActor, patientId: string, occurredAt: Date): Promise<ContactEvent> => {
+
 	const {
 		rows: [{ auditRecordId }],
 	} = await setup.query<Pick<AuditRecord, "auditRecordId">>(
@@ -85,6 +88,7 @@ const insertContactEvent = async (actor: AuditActor, patientId: string, occurred
 		 RETURNING audit_record_id AS "auditRecordId"`,
 		[actor.clinicId, actor.userId, patientId, occurredAt],
 	);
+
 	return {
 		auditRecordId,
 		clinicId: actor.clinicId,
@@ -95,6 +99,7 @@ const insertContactEvent = async (actor: AuditActor, patientId: string, occurred
 		action: "read",
 		occurredAt,
 	};
+
 };
 
 const readForAdmin = (actor: ClinicAdmin, filters: Parameters<typeof readAuditRecords>[1]) => {
@@ -102,6 +107,7 @@ const readForAdmin = (actor: ClinicAdmin, filters: Parameters<typeof readAuditRe
 };
 
 it("filters audit records by user, patient, or date range independently", async () => {
+
 	const { userId } = startEvent;
 	const userRecords = await readForAdmin(administrator, { userId });
 	expect(userRecords).toEqual(expect.arrayContaining([endEvent, otherPatientEvent, ...tiedEvents, startEvent]));
@@ -118,21 +124,26 @@ it("filters audit records by user, patient, or date range independently", async 
 		...tiedEvents,
 		startEvent,
 	]);
+
 });
 
 it("combines audit filters with an inclusive start, exclusive end, and stable ordering", async () => {
+
 	const filters = { userId: startEvent.userId, patientId, from, to };
 	expect(await readForAdmin(administrator, filters)).toEqual([...tiedEvents, startEvent]);
 
 	expect(await readForAdmin(administrator, { patientId, from: to })).toEqual([endEvent]);
 	expect(await readForAdmin(administrator, { ...filters, from: undefined })).toEqual([...tiedEvents, startEvent]);
+
 });
 
 it("scopes audit results to the authenticated clinic even with foreign identifiers", async () => {
+
 	const records = await readForAdmin(administrator, {});
 	expect(records).toContainEqual(startEvent);
 	expect(new Set(records.map((record) => record.clinicId))).toEqual(new Set([administrator.clinicId]));
 	expect(await readForAdmin(administrator, { userId: foreignEvent.userId })).toEqual([]);
 	expect(await readForAdmin(administrator, { patientId: foreignPatientId })).toEqual([]);
 	expect(await readForAdmin(foreignAdministrator, { patientId: foreignPatientId })).toEqual([foreignEvent]);
+
 });

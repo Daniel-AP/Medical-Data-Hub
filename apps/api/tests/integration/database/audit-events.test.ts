@@ -11,7 +11,7 @@ type Contact = Pick<Patient, "patientId" | "email" | "phone">;
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -28,6 +28,7 @@ afterAll(async () => {
 });
 
 const readAuditFixture = async (resource: "patient_contact" | "clinical_note") => {
+
 	const {
 		rows: [fixture],
 	} = await setup.query<AuditFixture>(
@@ -38,7 +39,9 @@ const readAuditFixture = async (resource: "patient_contact" | "clinical_note") =
 		 ORDER BY record.audit_record_id LIMIT 1`,
 		[resource, resource === "patient_contact" ? "reception" : "healthcare_professional"],
 	);
+
 	return fixture;
+
 };
 
 const runAuditPhase = async <T>(
@@ -46,9 +49,11 @@ const runAuditPhase = async <T>(
 	selectRole: string,
 	operation: (client: TransactionClient) => Promise<T>,
 ) => {
+
 	return runTransaction(
 		"readCommitted",
 		async (client) => {
+
 			await client.query(
 				"SELECT pg_catalog.set_config('app.user_id', $1, true), pg_catalog.set_config('app.clinic_id', $2, true)",
 				[userId, clinicId],
@@ -56,40 +61,52 @@ const runAuditPhase = async <T>(
 			await client.query(selectRole);
 
 			const result = await operation(client);
+
 			return { result, transactionId: await readTransactionId(client) };
+
 		},
 		pool,
 	);
+
 };
 
 const readTransactionId = async (client: TransactionClient) => {
+
 	const { rows } = await client.query<{ transactionId: string }>(
 		'SELECT pg_catalog.pg_current_xact_id()::xid::text AS "transactionId"',
 	);
+
 	return rows[0].transactionId;
+
 };
 
 const readCommittedEvents = async (transactionId: string) => {
+
 	const { rows } = await setup.query(
 		`SELECT audit_record_id AS "auditRecordId", clinic_id AS "clinicId", user_id AS "userId",
 		        patient_id AS "patientId", resource, appointment_id AS "appointmentId", action, occurred_at AS "occurredAt"
 		 FROM public.audit_records WHERE xmin = $1::xid ORDER BY patient_id, action`,
 		[transactionId],
 	);
+
 	return rows;
+
 };
 
 const readContact = (client: TransactionClient, patientId: string) => {
+
 	return client.query<Contact>(
 		'SELECT patient_id AS "patientId", email, phone FROM public.patients WHERE patient_id = $1::uuid',
 		[patientId],
 	);
+
 };
 
 it.each([
 	{ resource: "patient_contact", action: "read", selectRole: "SET LOCAL ROLE reception" },
 	{ resource: "clinical_note", action: "write", selectRole: "SET LOCAL ROLE healthcare_professional" },
 ] as const)("commits a $resource $action event with authorized metadata", async ({ resource, action, selectRole }) => {
+
 	const actor = await readAuditFixture(resource);
 	const { clinicId, userId, patientId, appointmentId } = actor;
 	const target =
@@ -111,11 +128,14 @@ it.each([
 			occurredAt: expect.any(Date),
 		},
 	]);
+
 });
 
 it("records one read per distinct patient contact across queries in the same attempt", async () => {
+
 	const actor = await readAuditFixture("patient_contact");
 	const { result, transactionId } = await runAuditPhase(actor, "SET LOCAL ROLE reception", async (client) => {
+
 		const recordReads = createAuditReadRecorder(client, actor);
 		const { rows } = await client.query<Contact>(
 			'SELECT patient_id AS "patientId", email, phone FROM public.patients ORDER BY patient_id LIMIT 2',
@@ -125,7 +145,9 @@ it("records one read per distinct patient contact across queries in the same att
 		const repeated = await readContact(client, rows[0].patientId);
 		expect(repeated.rowCount).toBe(1);
 		await recordReads(repeated.rows.map(({ patientId }) => ({ resource: "patient_contact", patientId })));
+
 		return rows;
+
 	});
 
 	expect(result).toHaveLength(2);
@@ -140,14 +162,17 @@ it("records one read per distinct patient contact across queries in the same att
 			action: "read",
 		})),
 	);
+
 });
 
 it("records a clinical note read with the patient from its appointment", async () => {
+
 	const actor = await readAuditFixture("clinical_note");
 	const { result, transactionId } = await runAuditPhase(
 		actor,
 		"SET LOCAL ROLE healthcare_professional",
 		async (client) => {
+
 			const recordReads = createAuditReadRecorder(client, actor);
 			const { rows } = await client.query<
 				Pick<ClinicalNote, "appointmentId" | "content"> & Pick<Patient, "patientId">
@@ -161,7 +186,9 @@ it("records a clinical note read with the patient from its appointment", async (
 			await recordReads(
 				rows.map(({ appointmentId, patientId }) => ({ resource: "clinical_note", appointmentId, patientId })),
 			);
+
 			return rows;
+
 		},
 	);
 
@@ -177,24 +204,32 @@ it("records a clinical note read with the patient from its appointment", async (
 			action: "read",
 		},
 	]);
+
 });
 
 it("commits no read events for an empty contact result", async () => {
+
 	const actor = await readAuditFixture("patient_contact");
 	const { result, transactionId } = await runAuditPhase(actor, "SET LOCAL ROLE reception", async (client) => {
+
 		const recordReads = createAuditReadRecorder(client, actor);
 		const { rows } = await readContact(client, randomUUID());
 		await recordReads(rows.map(({ patientId }) => ({ resource: "patient_contact", patientId })));
+
 		return rows;
+
 	});
 
 	expect(result).toHaveLength(0);
 	expect(await readCommittedEvents(transactionId)).toEqual([]);
+
 });
 
 it("rejects retrieved contact content when the audit insert is denied", async () => {
+
 	const actor = await readAuditFixture("patient_contact");
 	const phase = runAuditPhase(actor, "SET LOCAL ROLE reception", async (client) => {
+
 		const recordReads = createAuditReadRecorder(client, actor);
 		const { rows } = await readContact(client, actor.patientId);
 		expect(rows.length).toBe(1);
@@ -202,7 +237,9 @@ it("rejects retrieved contact content when the audit insert is denied", async ()
 
 		await client.query("RESET ROLE");
 		await recordReads(rows.map(({ patientId }) => ({ resource: "patient_contact", patientId })));
+
 		return rows;
+
 	});
 
 	await expect(phase.then(({ result }) => result.length)).rejects.toMatchObject({
@@ -210,9 +247,11 @@ it("rejects retrieved contact content when the audit insert is denied", async ()
 		kind: "database",
 		sqlState: "42501",
 	});
+
 });
 
 it("rolls back a contact update and its read and write events after a rejection", async () => {
+
 	const actor = await readAuditFixture("patient_contact");
 	const { patientId } = actor;
 	const original = (await readContact(setup, patientId)).rows[0];
@@ -221,6 +260,7 @@ it("rolls back a contact update and its read and write events after a rejection"
 	let transactionId = "";
 
 	const phase = runAuditPhase(actor, "SET LOCAL ROLE reception", async (client) => {
+
 		const recordReads = createAuditReadRecorder(client, actor);
 		const { rows } = await readContact(client, patientId);
 		expect(rows.length).toBe(1);
@@ -234,42 +274,54 @@ it("rolls back a contact update and its read and write events after a rejection"
 		await insertAuditEvent(client, actor, { resource: "patient_contact", patientId }, "write");
 		transactionId = await readTransactionId(client);
 		throw rejection;
+
 	});
 
 	await expect(phase).rejects.toBe(rejection);
 	const stored = (await readContact(setup, patientId)).rows[0];
 	expect(stored.email === original.email && stored.phone === original.phone).toBe(true);
 	expect(await readCommittedEvents(transactionId)).toEqual([]);
+
 });
 
 it("withholds audited contact content without retry when commit confirmation is lost", async () => {
+
 	const actor = await readAuditFixture("patient_contact");
 	const connection = await pool.connect();
 	const query = connection.query.bind(connection);
 	const lostConfirmation = new Error("Synthetic loss of commit confirmation");
 	const interceptedQuery = vi.spyOn(connection, "query").mockImplementation((...args: unknown[]) => {
-		if (args[0] === "COMMIT") {
+
+		if(args[0] === "COMMIT") {
+
 			return query("COMMIT").then((commit) => {
 				expect(commit.command).toBe("COMMIT");
 				throw lostConfirmation;
 			});
+
 		}
+
 		return Reflect.apply(query, connection, args);
+
 	});
 	connection.release();
 
 	let transactionId = "";
 	const read = vi.fn(async (client: TransactionClient) => {
+
 		const recordReads = createAuditReadRecorder(client, actor);
 		const { rows } = await readContact(client, actor.patientId);
 		expect(rows.length).toBe(1);
 		expect(Boolean(rows[0].email || rows[0].phone)).toBe(true);
 		await recordReads(rows.map(({ patientId }) => ({ resource: "patient_contact", patientId })));
 		transactionId = await readTransactionId(client);
+
 		return rows;
+
 	});
 
 	try {
+
 		const phase = runAuditPhase(actor, "SET LOCAL ROLE reception", read);
 		await expect(phase.then(({ result }) => result.length)).rejects.toMatchObject({
 			stage: "commit",
@@ -287,16 +339,20 @@ it("withholds audited contact content without retry when commit confirmation is 
 				action: "read",
 			},
 		]);
+
 	} finally {
 		interceptedQuery.mockRestore();
 	}
+
 });
 
 it("commits a new patient and its contact write event together", async () => {
+
 	const actor = await readAuditFixture("patient_contact");
 	const identification = randomUUID();
 	const email = `${identification}@example.test`;
 	const { result, transactionId } = await runAuditPhase(actor, "SET LOCAL ROLE reception", async (client) => {
+
 		const {
 			rows: [patient],
 		} = await client.query<Pick<Patient, "patientId">>(
@@ -305,7 +361,9 @@ it("commits a new patient and its contact write event together", async () => {
 			[actor.clinicId, identification, email],
 		);
 		await insertAuditEvent(client, actor, { resource: "patient_contact", patientId: patient.patientId }, "write");
+
 		return patient;
+
 	});
 
 	expect(result).toEqual({ patientId: expect.any(String) });
@@ -324,9 +382,11 @@ it("commits a new patient and its contact write event together", async () => {
 			action: "write",
 		},
 	]);
+
 });
 
 it("commits a new clinical note and its write event together", async () => {
+
 	const actor = await readAuditFixture("clinical_note");
 	const {
 		rows: [{ appointmentId }],
@@ -343,6 +403,7 @@ it("commits a new clinical note and its write event together", async () => {
 		actor,
 		"SET LOCAL ROLE healthcare_professional",
 		async (client) => {
+
 			const {
 				rows: [{ patientId }],
 			} = await client.query<Pick<Patient, "patientId">>(
@@ -357,7 +418,9 @@ it("commits a new clinical note and its write event together", async () => {
 				[appointmentId, actor.clinicId, content],
 			);
 			await insertAuditEvent(client, actor, { resource: "clinical_note", appointmentId, patientId }, "write");
+
 			return note;
+
 		},
 	);
 
@@ -377,17 +440,20 @@ it("commits a new clinical note and its write event together", async () => {
 			action: "write",
 		},
 	]);
+
 });
 
 it.each([
 	{ label: "an unchanged email assignment", assignsContact: true, actions: ["read", "write"] },
 	{ label: "a name-only edit", assignsContact: false, actions: ["read"] },
 ])("commits the expected contact audit events for $label", async ({ assignsContact, actions }) => {
+
 	const actor = await readAuditFixture("patient_contact");
 	const { patientId } = actor;
 	const original = (await readContact(setup, patientId)).rows[0];
 	const name = `Synthetic name ${randomUUID()}`;
 	const { result, transactionId } = await runAuditPhase(actor, "SET LOCAL ROLE reception", async (client) => {
+
 		const recordReads = createAuditReadRecorder(client, actor);
 		const { rows } = await readContact(client, patientId);
 		expect(rows.length).toBe(1);
@@ -401,10 +467,12 @@ it.each([
 			assignsContact ? original.email : name,
 			patientId,
 		]);
-		if (assignsContact) {
+		if(assignsContact) {
 			await insertAuditEvent(client, actor, { resource: "patient_contact", patientId }, "write");
 		}
+
 		return update.rows[0];
+
 	});
 
 	expect(result).toEqual({ patientId });
@@ -425,4 +493,5 @@ it.each([
 			action,
 		})),
 	);
+
 });

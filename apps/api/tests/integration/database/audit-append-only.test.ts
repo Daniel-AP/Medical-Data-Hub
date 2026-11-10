@@ -2,7 +2,7 @@ import { Client } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
-if (!setupConnectionString) {
+if(!setupConnectionString) {
 	throw new Error("DATABASE_SETUP_URL is required for isolated database tests");
 }
 
@@ -38,6 +38,7 @@ afterAll(async () => {
 it.each(mutations)(
 	"rejects audit $label through the append-only trigger despite temporary grants",
 	async ({ query }) => {
+
 		await setup.query("GRANT UPDATE, DELETE, TRUNCATE ON public.audit_records TO clinic_administrator");
 		await setup.query("SET LOCAL ROLE clinic_administrator");
 		await expect(setup.query(query)).rejects.toMatchObject({
@@ -46,10 +47,12 @@ it.each(mutations)(
 		});
 		await setup.query("ROLLBACK");
 		expect((await setup.query(auditQuery)).rows).toEqual(originalRecords);
+
 	},
 );
 
 it("allows audit insertion and removes the uncommitted event on rollback", async () => {
+
 	const inserted = await setup.query(`
         INSERT INTO public.audit_records (clinic_id, user_id, patient_id, resource, appointment_id, action)
         SELECT clinic_id, user_id, patient_id, resource, appointment_id, action
@@ -68,9 +71,11 @@ it("allows audit insertion and removes the uncommitted event on rollback", async
 			.rows,
 	).toEqual([]);
 	expect((await setup.query(auditQuery)).rows).toEqual(originalRecords);
+
 });
 
 it("keeps audit mutation privileges absent after rolling back temporary test grants", async () => {
+
 	const { rows } = await setup.query(
 		`
         SELECT role_name, privilege
@@ -82,4 +87,5 @@ it("keeps audit mutation privileges absent after rolling back temporary test gra
 		[applicationRoles],
 	);
 	expect(rows).toEqual([]);
+
 });

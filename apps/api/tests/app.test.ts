@@ -44,13 +44,14 @@ const databaseErrors = [
 ];
 
 beforeAll(async () => {
+
 	router.post("/runtime-json-check", (request, response) => {
 		response.json(request.body);
 	});
 	router.get("/runtime-error-check", async () => {
 		throw new Error("Synthetic internal detail");
 	});
-	for (const { path, failure } of databaseErrors) {
+	for(const { path, failure } of databaseErrors) {
 		router.get(path, async () => {
 			throw failure;
 		});
@@ -59,6 +60,7 @@ beforeAll(async () => {
 	server = app.listen(0, "127.0.0.1");
 	await once(server, "listening");
 	url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
 });
 
 afterAll(async () => {
@@ -67,6 +69,7 @@ afterAll(async () => {
 });
 
 it("rejects malformed JSON and parses a later request", async () => {
+
 	const invalidResponse = await fetch(`${url}/runtime-json-check`, { ...requestOptions, body: '{"value":' });
 	expect(invalidResponse.status).toBe(400);
 	expect(await invalidResponse.json()).toEqual({ error: "Invalid JSON" });
@@ -77,6 +80,7 @@ it("rejects malformed JSON and parses a later request", async () => {
 	});
 	expect(validResponse.status).toBe(200);
 	expect(await validResponse.json()).toEqual({ value: "synthetic" });
+
 });
 
 it("returns a generic JSON response for unknown routes", async () => {
@@ -86,6 +90,7 @@ it("returns a generic JSON response for unknown routes", async () => {
 });
 
 it("returns a generic JSON response for unexpected errors and remains usable", async () => {
+
 	const errorResponse = await fetch(`${url}/runtime-error-check`);
 	expect(errorResponse.status).toBe(500);
 	expect(await errorResponse.json()).toEqual({ error: STATUS_CODES[500] });
@@ -96,15 +101,18 @@ it("returns a generic JSON response for unexpected errors and remains usable", a
 	});
 	expect(validResponse.status).toBe(200);
 	expect(await validResponse.json()).toEqual({ value: "synthetic" });
+
 });
 
 it("preserves the payload size error status", async () => {
+
 	const response = await fetch(`${url}/runtime-json-check`, {
 		...requestOptions,
-		body: JSON.stringify({ value: "x".repeat(101 * 1024) }),
+		body: JSON.stringify({ value: "x".repeat(101*1024) }),
 	});
 	expect(response.status).toBe(413);
 	expect(await response.json()).toEqual({ error: STATUS_CODES[413] });
+
 });
 
 it.each(databaseErrors)("$name", async ({ path, status, body }) => {

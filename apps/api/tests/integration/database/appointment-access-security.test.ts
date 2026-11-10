@@ -6,7 +6,7 @@ type LocalUser = Pick<User, "userId" | "clinicId"> & { role: string };
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -27,6 +27,7 @@ let endAt: Date;
 let appointmentValues: (string | Date)[];
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	const userResult = await setup.query<LocalUser>(`
@@ -55,11 +56,13 @@ beforeAll(async () => {
 	)!;
 	foreignAppointment = appointments.find((appointment) => appointment.clinicId !== administrator.clinicId)!;
 	startAt = new Date("2030-01-07T15:00:00.000Z");
-	endAt = new Date(startAt.getTime() + (target.endAt.getTime() - target.startAt.getTime()));
+	endAt = new Date(startAt.getTime()+(target.endAt.getTime()-target.startAt.getTime()));
 	appointmentValues = [target.clinicId, target.patientId, target.professionalId, target.serviceId, startAt, endAt];
+
 });
 
 beforeEach(async () => {
+
 	await api.query("BEGIN");
 	await api.query(
 		`SELECT pg_catalog.set_config('app.user_id', $1, true),
@@ -67,6 +70,7 @@ beforeEach(async () => {
 		[administrator.userId, administrator.clinicId],
 	);
 	await api.query("SET LOCAL ROLE clinic_administrator");
+
 });
 
 afterEach(async () => {
@@ -79,6 +83,7 @@ afterAll(async () => {
 });
 
 it("reads only same-clinic appointment records as reception", async () => {
+
 	const profileName = "reception";
 	const actor = users.find((user) => user.role === profileName && user.clinicId === administrator.clinicId)!;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
@@ -90,14 +95,16 @@ it("reads only same-clinic appointment records as reception", async () => {
         FROM public.appointments ORDER BY appointment_id
     `);
 	expect(rows).toEqual(appointments.filter((appointment) => appointment.clinicId === actor.clinicId));
+
 });
 
 it("allows appointment insertion and the three editable fields as reception", async () => {
+
 	const profileName = "reception";
 	const actor = users.find((user) => user.role === profileName && user.clinicId === administrator.clinicId)!;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
-	const inserted = await api.query(insertQuery + " RETURNING *", appointmentValues);
+	const inserted = await api.query(insertQuery+" RETURNING *", appointmentValues);
 	expect(inserted.rows).toEqual([
 		{
 			appointment_id: expect.any(String),
@@ -126,13 +133,15 @@ it("allows appointment insertion and the three editable fields as reception", as
 			cancellation_reason: "Synthetic cancellation",
 		},
 	]);
+
 });
 
 it("allows healthcare professionals to update state to attended", async () => {
+
 	const state = "attended";
 	const pastStart = new Date("2020-01-06T15:00:00.000Z");
-	const pastEnd = new Date(pastStart.getTime() + (endAt.getTime() - startAt.getTime()));
-	const inserted = await api.query(insertQuery + " RETURNING *", [
+	const pastEnd = new Date(pastStart.getTime()+(endAt.getTime()-startAt.getTime()));
+	const inserted = await api.query(insertQuery+" RETURNING *", [
 		target.clinicId,
 		target.patientId,
 		target.professionalId,
@@ -150,9 +159,11 @@ it("allows healthcare professionals to update state to attended", async () => {
 		[inserted.rows[0].appointment_id, state],
 	);
 	expect(updated.rows).toEqual([{ ...inserted.rows[0], state }]);
+
 });
 
 it("rejects foreign-clinic appointment inserts through RLS as reception", async () => {
+
 	const profileName = "reception";
 	const actor = users.find((user) => user.role === profileName && user.clinicId === administrator.clinicId)!;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
@@ -170,9 +181,11 @@ it("rejects foreign-clinic appointment inserts through RLS as reception", async 
 		code: "42501",
 		message: 'new row violates row-level security policy for table "appointments"',
 	});
+
 });
 
 it("filters foreign appointment state updates as healthcare_professional", async () => {
+
 	const profileName = "healthcare_professional";
 	const actor = users.find((user) => user.role === profileName && user.clinicId === administrator.clinicId)!;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
@@ -181,9 +194,11 @@ it("filters foreign appointment state updates as healthcare_professional", async
 		foreignAppointment.appointmentId,
 	]);
 	expect(result.rowCount).toBe(0);
+
 });
 
 it("rejects foreign-clinic patient references during appointment insertion as reception", async () => {
+
 	const actor = users.find((user) => user.role === "reception" && user.clinicId === administrator.clinicId)!;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
 	await api.query("SET LOCAL ROLE reception");
@@ -199,14 +214,16 @@ it("rejects foreign-clinic patient references during appointment insertion as re
 		code: "23503",
 		constraint: "appointments_clinic_id_patient_id_fkey",
 	});
+
 });
 
 it("preserves the unique replacement appointment reference as reception", async () => {
+
 	const profileName = "reception";
 	const actor = users.find((user) => user.role === profileName && user.clinicId === administrator.clinicId)!;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
-	const original = await api.query(insertQuery + " RETURNING appointment_id", appointmentValues);
+	const original = await api.query(insertQuery+" RETURNING appointment_id", appointmentValues);
 	await api.query("UPDATE public.appointments SET state = 'rescheduled' WHERE appointment_id = $1::uuid", [
 		original.rows[0].appointment_id,
 	]);
@@ -215,8 +232,8 @@ it("preserves the unique replacement appointment reference as reception", async 
 		target.patientId,
 		target.professionalId,
 		target.serviceId,
-		new Date(startAt.getTime() + 86400000),
-		new Date(endAt.getTime() + 86400000),
+		new Date(startAt.getTime()+86400000),
+		new Date(endAt.getTime()+86400000),
 		original.rows[0].appointment_id,
 	];
 	expect((await api.query(replacementQuery, values)).rowCount).toBe(1);
@@ -224,9 +241,11 @@ it("preserves the unique replacement appointment reference as reception", async 
 		code: "23505",
 		constraint: "appointments_previous_key",
 	});
+
 });
 
 it("rejects missing cancellation reasons during appointment UPDATE as reception", async () => {
+
 	const actor = users.find((user) => user.role === "reception" && user.clinicId === administrator.clinicId)!;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
 	await api.query("SET LOCAL ROLE reception");
@@ -236,9 +255,11 @@ it("rejects missing cancellation reasons during appointment UPDATE as reception"
 			[target.appointmentId, actor.userId],
 		),
 	).rejects.toMatchObject({ code: "23514", constraint: "appointments_cancellation_check" });
+
 });
 
 it("grants only the designed appointment table and column privileges", async () => {
+
 	const roles = [
 		"medical_data_hub_api",
 		"platform_administrator",
@@ -291,4 +312,5 @@ it("grants only the designed appointment table and column privileges", async () 
 			is_grantable: "NO",
 		})),
 	);
+
 });

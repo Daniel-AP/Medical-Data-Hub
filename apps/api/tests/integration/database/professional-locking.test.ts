@@ -4,7 +4,7 @@ import type { Professional, User } from "../../../src/generated/prisma/client.js
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -29,6 +29,7 @@ let foreignProfessional: Professional;
 let otherSpecialtyId: string;
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	await contender.connect();
@@ -48,9 +49,11 @@ beforeAll(async () => {
 		[target.clinicId, target.specialtyId],
 	);
 	otherSpecialtyId = specialty.rows[0].specialty_id;
+
 });
 
 beforeEach(async () => {
+
 	await api.query("BEGIN ISOLATION LEVEL READ COMMITTED");
 	await api.query(
 		`SELECT pg_catalog.set_config('app.user_id', $1, true),
@@ -58,6 +61,7 @@ beforeEach(async () => {
 		[actor.userId, actor.clinicId],
 	);
 	await api.query("SET LOCAL ROLE reception");
+
 });
 
 afterEach(async () => {
@@ -75,6 +79,7 @@ afterAll(async () => {
 it.each(lockFunctions)(
 	"returns only four professional identifiers through $functionName",
 	async ({ profileName, query }) => {
+
 		const actorId = profileName === "reception" ? actor.userId : target.userId;
 		await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actorId]);
 		await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
@@ -93,10 +98,12 @@ it.each(lockFunctions)(
 				specialty_id: target.specialtyId,
 			},
 		]);
+
 	},
 );
 
 it("filters and does not lock another clinic's professional", async () => {
+
 	expect((await api.query(lockFunctions[0].query, [foreignProfessional.professionalId])).rows).toEqual([]);
 	await setup.query("BEGIN");
 	const unlocked = await setup.query(
@@ -104,9 +111,11 @@ it("filters and does not lock another clinic's professional", async () => {
 		[foreignProfessional.professionalId],
 	);
 	expect(unlocked.rows).toEqual([{ professional_id: foreignProfessional.professionalId }]);
+
 });
 
 it("filters own professional locking when the context clinic does not match the user's profile", async () => {
+
 	await api.query(
 		`SELECT pg_catalog.set_config('app.user_id', $1, true),
             pg_catalog.set_config('app.clinic_id', $2, true)`,
@@ -120,9 +129,11 @@ it("filters own professional locking when the context clinic does not match the 
 		[target.professionalId],
 	);
 	expect(unlocked.rows).toEqual([{ professional_id: target.professionalId }]);
+
 });
 
 it.each(lockFunctions)("acquires FOR NO KEY UPDATE through $functionName", async ({ profileName, query }) => {
+
 	const actorId = profileName === "reception" ? actor.userId : target.userId;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actorId]);
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
@@ -139,9 +150,11 @@ it.each(lockFunctions)("acquires FOR NO KEY UPDATE through $functionName", async
 			[target.professionalId],
 		),
 	).rejects.toMatchObject({ code: "55P03" });
+
 });
 
 it("rejects changed specialty writes by the locking owner", async () => {
+
 	const kind = "changed";
 	await setup.query("BEGIN");
 	await setup.query(
@@ -166,9 +179,11 @@ it("rejects changed specialty writes by the locking owner", async () => {
 		code: "42501",
 		message: 'new row violates row-level security policy for table "professionals"',
 	});
+
 });
 
 it("grants each professional locking function only to its operating profile besides the owner", async () => {
+
 	const names = lockFunctions.map((lock) => lock.functionName);
 	const { rows } = await setup.query(
 		`SELECT function_definition.proname, pg_catalog.pg_get_userbyid(privilege.grantee) AS grantee,
@@ -190,4 +205,5 @@ it("grants each professional locking function only to its operating profile besi
 				is_grantable: false,
 			})),
 	);
+
 });

@@ -8,7 +8,7 @@ type CreationResult = Pick<Clinic, "clinicId"> & Pick<User, "userId">;
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -30,6 +30,7 @@ let existingAdministrator: SeedUser;
 let otherAdministrator: SeedUser;
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	const { rows } = await setup.query<SeedUser>(`
@@ -40,6 +41,7 @@ beforeAll(async () => {
     `);
 	platformActor = rows.find((user) => user.role === "platform_administrator")!;
 	[existingAdministrator, otherAdministrator] = rows.filter((user) => user.role === "clinic_administrator");
+
 });
 
 beforeEach(async () => {
@@ -58,6 +60,7 @@ afterAll(async () => {
 });
 
 it("creates a clinic, its active administrator, and its zero availability version in the caller transaction", async () => {
+
 	const priorCounts = (await setup.query(countsQuery)).rows;
 	const requestedName = "Synthetic clinic";
 	const timeZone = "America/Costa_Rica";
@@ -131,9 +134,11 @@ it("creates a clinic, its active administrator, and its zero availability versio
 			])
 		).rows,
 	).toEqual([{ user_id: existingAdministrator.userId }]);
+
 });
 
 it("rejects a duplicate administrator identity without leaving a partial clinic", async () => {
+
 	const priorCounts = (await setup.query(countsQuery)).rows;
 	await api.query("SET LOCAL ROLE platform_administrator");
 	await expect(
@@ -149,17 +154,21 @@ it("rejects a duplicate administrator identity without leaving a partial clinic"
 			])
 		).rows,
 	).toEqual([{ clinic_id: existingAdministrator.clinicId }]);
+
 });
 
 it("denies clinic creation execution to medical_data_hub_api", async () => {
+
 	const roleName = "medical_data_hub_api";
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(roleName)}`);
 	await expect(
 		api.query(createQuery, ["Synthetic clinic", "UTC", existingAdministrator.identityId]),
 	).rejects.toMatchObject({ code: "42501", message: "permission denied for function create_clinic" });
+
 });
 
 it("keeps the API login and its operating roles outside clinic creation owner membership", async () => {
+
 	const { rows } = await setup.query(
 		`SELECT role_name FROM unnest($1::text[]) AS role_name
         WHERE pg_catalog.pg_has_role(role_name, $2, 'MEMBER')`,
@@ -169,9 +178,11 @@ it("keeps the API login and its operating roles outside clinic creation owner me
 	await expect(api.query("SET LOCAL ROLE medical_data_hub_clinic_creation_owner")).rejects.toMatchObject({
 		code: "42501",
 	});
+
 });
 
 it("uses a restricted clinic creation owner and grants function execution only to platform", async () => {
+
 	const { rows } = await setup.query(`
         SELECT owner.rolname, owner.rolcanlogin, owner.rolsuper, owner.rolbypassrls,
             owner.rolcreatedb, owner.rolcreaterole, owner.rolreplication, routine.prosecdef, routine.proconfig,
@@ -196,16 +207,20 @@ it("uses a restricted clinic creation owner and grants function execution only t
 			executors: ["platform_administrator"],
 		},
 	]);
+
 });
 
 it("denies direct platform insertion into clinics", async () => {
+
 	await api.query("SET LOCAL ROLE platform_administrator");
 	await expect(
 		api.query("INSERT INTO public.clinics (name, time_zone) VALUES ('Synthetic clinic', 'UTC')"),
 	).rejects.toMatchObject({ code: "42501" });
+
 });
 
 it("limits clinic creation owner reads to the scoped identifiers", async () => {
+
 	await setup.query(setCreationContext, [existingAdministrator.clinicId, existingAdministrator.userId]);
 	await setup.query("SET LOCAL ROLE medical_data_hub_clinic_creation_owner");
 	expect((await setup.query("SELECT clinic_id FROM public.clinics")).rows).toEqual([
@@ -216,9 +231,11 @@ it("limits clinic creation owner reads to the scoped identifiers", async () => {
 	]);
 	await setup.query(setCreationContext, [existingAdministrator.clinicId, otherAdministrator.userId]);
 	expect((await setup.query("SELECT user_id FROM public.users")).rows).toEqual([]);
+
 });
 
 it("grants the clinic creation owner only its required table columns", async () => {
+
 	const { rows } = await setup.query(
 		`SELECT table_name, column_name, privilege_type, is_grantable FROM information_schema.column_privileges
         WHERE table_schema = 'public' AND grantee = $1 ORDER BY table_name, column_name, privilege_type`,
@@ -241,4 +258,5 @@ it("grants the clinic creation owner only its required table columns", async () 
 		{ table_name: "users", column_name: "user_id", privilege_type: "INSERT", is_grantable: "NO" },
 		{ table_name: "users", column_name: "user_id", privilege_type: "SELECT", is_grantable: "NO" },
 	]);
+
 });

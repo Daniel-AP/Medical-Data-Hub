@@ -7,7 +7,7 @@ type AuditReference = Pick<AuditRecord, "clinicId" | "userId" | "patientId" | "a
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -28,6 +28,7 @@ let otherNote: AuditReference;
 let users: LocalUser[];
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 
@@ -47,6 +48,7 @@ beforeAll(async () => {
 			'SELECT clinic_id AS "clinicId", user_id AS "userId", role::text FROM public.users',
 		)
 	).rows;
+
 });
 
 beforeEach(async () => {
@@ -63,6 +65,7 @@ afterAll(async () => {
 });
 
 const setLocalProfile = async (profileName: string) => {
+
 	const actor =
 		profileName === "healthcare_professional"
 			? ownNote
@@ -72,7 +75,9 @@ const setLocalProfile = async (profileName: string) => {
 		[actor.userId, actor.clinicId],
 	);
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
+
 	return actor.userId;
+
 };
 
 const contactValues = (userId: string, action = "read") => {
@@ -84,12 +89,14 @@ const noteValues = (note: AuditReference, userId: string, action = "read") => {
 };
 
 it("reads all audit events from the administrator's context clinic", async () => {
+
 	await setLocalProfile("clinic_administrator");
 	const { rows } = await setup.query<Pick<AuditRecord, "clinicId">>(readQuery);
 	expect(rows.some((record) => record.clinicId !== localContact.clinicId)).toBe(true);
 	expect((await api.query(readQuery)).rows).toEqual(
 		rows.filter((record) => record.clinicId === localContact.clinicId),
 	);
+
 });
 
 it("allows reception to insert a patient contact read event", async () => {
@@ -99,19 +106,23 @@ it("allows reception to insert a patient contact read event", async () => {
 });
 
 it("rejects a patient contact event with a different actor for reception", async () => {
+
 	const profileName = "reception";
 	const userId = await setLocalProfile(profileName);
 	const otherUserId = userId === localContact.userId ? ownNote.userId : localContact.userId;
 	await expect(api.query(insertQuery, contactValues(otherUserId))).rejects.toMatchObject(rlsViolation);
+
 });
 
 it("rejects a patient contact event outside the context clinic", async () => {
+
 	await setLocalProfile("reception");
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [foreignContact.userId]);
 	const { clinicId, userId, patientId } = foreignContact;
 	await expect(
 		api.query(insertQuery, [clinicId, userId, patientId, "patient_contact", null, "read"]),
 	).rejects.toMatchObject(rlsViolation);
+
 });
 
 it("allows a healthcare professional to insert an owned clinical note write event", async () => {
@@ -138,6 +149,7 @@ it("rejects an owned clinical note event with a different local patient", async 
 });
 
 it("limits effective audit access to administrator reads and six insert columns for clinic profiles", async () => {
+
 	const roles = [
 		...clinicProfiles,
 		...excludedProfiles,
@@ -165,4 +177,5 @@ it("limits effective audit access to administrator reads and six insert columns 
 			insertColumns: clinicProfiles.includes(roleName) ? insertColumns.toSorted() : [],
 		})),
 	);
+
 });

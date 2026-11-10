@@ -20,11 +20,13 @@ export class TransactionFailure extends Error {
 		readonly kind: FailureKind,
 		cause?: unknown,
 	) {
+
 		super("Database transaction failed", { cause });
-		if (cause instanceof DatabaseError) {
+		if(cause instanceof DatabaseError) {
 			this.sqlState = cause.code;
 			this.constraint = cause.constraint;
 		}
+
 	}
 }
 
@@ -39,26 +41,24 @@ const connectionErrorCodes = new Set([
 	"ETIMEDOUT",
 ]);
 
-export const classifyTransactionFailure = (
-	stage: TransactionStage,
-	cause: unknown,
-	connectionLost = false,
-): unknown => {
-	if (cause instanceof TransactionFailure) {
+export const classifyTransactionFailure = (stage: TransactionStage, cause: unknown, connectionLost = false) => {
+
+	if(cause instanceof TransactionFailure) {
 		return cause;
 	}
-	if (stage === "acquire") {
+	if(stage === "acquire") {
 		return new TransactionFailure(stage, "acquisition", cause);
 	}
 
 	const databaseError = cause instanceof DatabaseError ? cause : undefined;
 	const sqlState = databaseError?.code;
-	if (sqlState === "40001" || sqlState === "40P01") {
+	if(sqlState === "40001" || sqlState === "40P01") {
 		return new TransactionFailure(stage, "retryableAbort", cause);
 	}
 
-	if (stage === "commit") {
+	if(stage === "commit") {
 		const kind = sqlState?.startsWith("23") ? "aborted" : "indeterminateCommit";
+
 		return new TransactionFailure(stage, kind, cause);
 	}
 
@@ -70,14 +70,16 @@ export const classifyTransactionFailure = (
 		"code" in cause &&
 		typeof cause.code === "string" &&
 		connectionErrorCodes.has(cause.code);
-	if (connectionLost || serverConnectionFailure || transportFailure) {
+	if(connectionLost || serverConnectionFailure || transportFailure) {
 		return new TransactionFailure(stage, "connection", cause);
 	}
-	if (sqlState === "55P03") {
+	if(sqlState === "55P03") {
 		return new TransactionFailure(stage, "lockUnavailable", cause);
 	}
-	if (sqlState === "57014") {
+	if(sqlState === "57014") {
 		return new TransactionFailure(stage, "queryCanceled", cause);
 	}
+
 	return databaseError ? new TransactionFailure(stage, "database", databaseError) : cause;
+
 };

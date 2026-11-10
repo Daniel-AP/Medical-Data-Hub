@@ -13,10 +13,10 @@ const localDate = new Intl.DateTimeFormat("en-CA", {
 	day: "2-digit",
 }).format(new Date());
 const weekStartAt = new Date(`${localDate}T00:00:00-06:00`);
-weekStartAt.setUTCDate(weekStartAt.getUTCDate() - ((weekStartAt.getUTCDay() + 6) % 7));
+weekStartAt.setUTCDate(weekStartAt.getUTCDate()-((weekStartAt.getUTCDay()+6)%7));
 
 const dateAt = (weekOffset: number, weekday: number, minute: number) => {
-	return new Date(weekStartAt.getTime() + ((weekOffset * 7 + weekday - 1) * 1440 + minute) * 60_000);
+	return new Date(weekStartAt.getTime()+((weekOffset*7+weekday-1)*1440+minute)*60_000);
 };
 
 const numberedUsername = (username: string, number: number) => {
@@ -38,34 +38,39 @@ const appointmentFixtures = [
 ];
 
 try {
+
 	const inserted = await prisma.$transaction(async (tx) => {
+
 		const existingClinic = await tx.clinic.findFirst({ select: { clinicId: true } });
 		const existingUser = await tx.user.findFirst({ select: { userId: true } });
-		if (existingClinic || existingUser) {
+		if(existingClinic || existingUser) {
 			return false;
 		}
 
 		const createUser = async (username: string, role: UserRole, clinicId: string | null) => {
+
 			const identity = realm.users.find((user) => user.username === username);
-			if (!identity?.id) {
+			if(!identity?.id) {
 				throw new Error(`Missing seed identity: ${username}`);
 			}
 
 			return tx.user.create({ data: { identityId: identity.id, clinicId, role } });
+
 		};
 
 		await createUser("platform-administrator", UserRole.platformAdministrator, null);
 
-		for (const [clinicIndex, name] of clinicNames.entries()) {
+		for(const [clinicIndex, name] of clinicNames.entries()) {
+
 			const { clinicId } = await tx.clinic.create({ data: { name, timeZone: "America/Costa_Rica" } });
 			await tx.clinicAvailabilityVersion.create({ data: { clinicId } });
 			await createUser(
-				numberedUsername("clinic-administrator", clinicIndex + 1),
+				numberedUsername("clinic-administrator", clinicIndex+1),
 				UserRole.clinicAdministrator,
 				clinicId,
 			);
 			const receptionUser = await createUser(
-				numberedUsername("reception", clinicIndex + 1),
+				numberedUsername("reception", clinicIndex+1),
 				UserRole.reception,
 				clinicId,
 			);
@@ -86,14 +91,15 @@ try {
 			);
 
 			const patientIds: string[] = [];
-			for (const [patientIndex, name] of patientNames.entries()) {
+			for(const [patientIndex, name] of patientNames.entries()) {
+
 				const { patientId } = await tx.patient.create({
 					data: {
 						clinicId,
-						identification: `DEMO-${patientIndex + 1}`,
+						identification: `DEMO-${patientIndex+1}`,
 						name,
-						dateOfBirth: new Date(`${1985 + patientIndex}-05-15T00:00:00Z`),
-						email: `patient-${clinicIndex + 1}-${patientIndex + 1}@example.test`,
+						dateOfBirth: new Date(`${1985+patientIndex}-05-15T00:00:00Z`),
+						email: `patient-${clinicIndex+1}-${patientIndex+1}@example.test`,
 					},
 				});
 				patientIds.push(patientId);
@@ -107,15 +113,17 @@ try {
 						occurredAt: dateAt(-2, 1, 480),
 					},
 				});
+
 			}
 
-			for (const [professionalIndex, services] of [
+			for(const [professionalIndex, services] of [
 				[generalService, followUpService],
 				[generalService, followUpService],
 				[physiotherapyService],
 			].entries()) {
+
 				const professionalUser = await createUser(
-					numberedUsername("healthcare-professional", clinicIndex * 3 + professionalIndex + 1),
+					numberedUsername("healthcare-professional", clinicIndex*3+professionalIndex+1),
 					UserRole.healthcareProfessional,
 					clinicId,
 				);
@@ -134,17 +142,18 @@ try {
 					data: { clinicId, professionalId, startAt: dateAt(1, 5, 840), endAt: dateAt(1, 5, 900) },
 				});
 
-				for (const [appointmentIndex, { startAt, state }] of appointmentFixtures.entries()) {
-					const { serviceId, durationMinutes } = services[appointmentIndex % services.length];
-					const patientId = patientIds[professionalIndex * 2 + (appointmentIndex % 2)];
-					const durationMs = durationMinutes * 60_000;
+				for(const [appointmentIndex, { startAt, state }] of appointmentFixtures.entries()) {
+
+					const { serviceId, durationMinutes } = services[appointmentIndex%services.length];
+					const patientId = patientIds[professionalIndex*2+(appointmentIndex%2)];
+					const durationMs = durationMinutes*60_000;
 					const appointmentData = {
 						clinicId,
 						professionalId,
 						patientId,
 						serviceId,
 						startAt,
-						endAt: new Date(startAt.getTime() + durationMs),
+						endAt: new Date(startAt.getTime()+durationMs),
 					};
 					const isCancelled = state === AppointmentState.cancelled;
 					const { appointmentId, endAt } = await tx.appointment.create({
@@ -158,7 +167,8 @@ try {
 						},
 					});
 
-					if (state === AppointmentState.attended) {
+					if(state === AppointmentState.attended) {
+
 						await tx.clinicalNote.create({
 							data: {
 								clinicId,
@@ -178,26 +188,34 @@ try {
 								occurredAt: endAt,
 							},
 						});
+
 					}
-					if (state === AppointmentState.rescheduled) {
+					if(state === AppointmentState.rescheduled) {
+
 						const replacementStartAt = dateAt(1, 4, 600);
 						await tx.appointment.create({
 							data: {
 								...appointmentData,
 								startAt: replacementStartAt,
-								endAt: new Date(replacementStartAt.getTime() + durationMs),
+								endAt: new Date(replacementStartAt.getTime()+durationMs),
 								state: AppointmentState.reserved,
 								previousAppointmentId: appointmentId,
 							},
 						});
+
 					}
+
 				}
+
 			}
+
 		}
 
 		return true;
+
 	});
 	console.log(inserted ? "Database seed completed." : "Seed skipped: domain tables already contain data.");
+
 } catch {
 	console.error("Database seed failed.");
 	process.exitCode = 1;

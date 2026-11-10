@@ -5,7 +5,7 @@ import type { Service, User } from "../../../src/generated/prisma/client.js";
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -18,6 +18,7 @@ let target: Service;
 let foreignService: Service;
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	await contender.connect();
@@ -33,9 +34,11 @@ beforeAll(async () => {
     `);
 	target = services.rows.find((service) => service.clinicId === actor.clinicId)!;
 	foreignService = services.rows.find((service) => service.clinicId !== actor.clinicId)!;
+
 });
 
 beforeEach(async () => {
+
 	await api.query("BEGIN ISOLATION LEVEL READ COMMITTED");
 	await api.query(
 		`SELECT pg_catalog.set_config('app.user_id', $1, true),
@@ -43,6 +46,7 @@ beforeEach(async () => {
 		[actor.userId, actor.clinicId],
 	);
 	await api.query("SET LOCAL ROLE reception");
+
 });
 
 afterEach(async () => {
@@ -58,6 +62,7 @@ afterAll(async () => {
 });
 
 it("returns only the protected service identifiers, duration, specialty, and activity", async () => {
+
 	const result = await api.query(lockQuery, [target.serviceId]);
 	expect(result.fields.map((field) => field.name)).toEqual([
 		"service_id",
@@ -75,9 +80,11 @@ it("returns only the protected service identifiers, duration, specialty, and act
 			is_active: target.isActive,
 		},
 	]);
+
 });
 
 it("filters and does not lock another clinic's service", async () => {
+
 	const { rows } = await api.query(lockQuery, [foreignService.serviceId]);
 	expect(rows).toEqual([]);
 	await setup.query("BEGIN");
@@ -86,9 +93,11 @@ it("filters and does not lock another clinic's service", async () => {
 		[foreignService.serviceId],
 	);
 	expect(unlocked.rows).toEqual([{ service_id: foreignService.serviceId }]);
+
 });
 
 it("acquires FOR SHARE rather than a weaker or exclusive service lock", async () => {
+
 	await api.query(lockQuery, [target.serviceId]);
 	await setup.query("BEGIN");
 	const shared = await setup.query(
@@ -101,9 +110,11 @@ it("acquires FOR SHARE rather than a weaker or exclusive service lock", async ()
 			target.serviceId,
 		]),
 	).rejects.toMatchObject({ code: "55P03" });
+
 });
 
 it("returns committed service values after waiting for a concurrent edit", async () => {
+
 	const fixture = await setup.query(
 		`INSERT INTO public.services (clinic_id, name, duration_minutes, specialty_id)
         VALUES ($1::uuid, 'Synthetic lock fixture', 30, $2::uuid) RETURNING service_id`,
@@ -119,17 +130,20 @@ it("returns committed service values after waiting for a concurrent edit", async
 	);
 	const pendingRead = api.query(lockQuery, [serviceId]).catch((error: unknown) => error);
 	try {
+
 		let isWaiting = false;
-		for (let attempt = 0; attempt < 100; attempt++) {
+		for(let attempt = 0; attempt < 100; attempt++) {
+
 			const { rows } = await setup.query(
 				"SELECT $2::int = ANY(pg_catalog.pg_blocking_pids($1::int)) AS waiting",
 				[apiPid, setupPid],
 			);
-			if (rows[0].waiting) {
+			if(rows[0].waiting) {
 				isWaiting = true;
 				break;
 			}
 			await setTimeout(10);
+
 		}
 		expect(isWaiting).toBe(true);
 		await setup.query("COMMIT");
@@ -144,15 +158,20 @@ it("returns committed service values after waiting for a concurrent edit", async
 				},
 			],
 		});
+
 	} finally {
+
 		await setup.query("ROLLBACK");
 		await pendingRead;
 		await api.query("ROLLBACK");
 		await setup.query("DELETE FROM public.services WHERE service_id = $1::uuid", [serviceId]);
+
 	}
+
 });
 
 it("rejects locking owner service writes using is_active = false", async () => {
+
 	const assignment = "is_active = false";
 	await setup.query("BEGIN");
 	await setup.query(
@@ -171,9 +190,11 @@ it("rejects locking owner service writes using is_active = false", async () => {
 		code: "42501",
 		message: 'new row violates row-level security policy for table "services"',
 	});
+
 });
 
 it("grants service locking execution only to reception besides the owner", async () => {
+
 	const { rows } = await setup.query(`
         SELECT pg_catalog.pg_get_userbyid(privilege.grantee) AS grantee, privilege.privilege_type, privilege.is_grantable
         FROM pg_catalog.pg_proc AS function_definition
@@ -183,4 +204,5 @@ it("grants service locking execution only to reception besides the owner", async
         ORDER BY privilege.grantee
     `);
 	expect(rows).toEqual([{ grantee: "reception", privilege_type: "EXECUTE", is_grantable: false }]);
+
 });

@@ -11,7 +11,7 @@ type LocalUser = Pick<User, "userId" | "clinicId"> & { role: string };
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -36,6 +36,7 @@ let blocks: ProfessionalBlock[];
 let otherSchedule: ProfessionalSchedule;
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	const userResult = await setup.query<LocalUser>(`
@@ -72,9 +73,11 @@ beforeAll(async () => {
 	schedules = scheduleResult.rows;
 	blocks = blockResult.rows;
 	otherSchedule = schedules.find((schedule) => schedule.professionalId === otherProfessional.professionalId)!;
+
 });
 
 beforeEach(async () => {
+
 	await api.query("BEGIN");
 	await api.query(
 		`SELECT pg_catalog.set_config('app.user_id', $1, true),
@@ -82,6 +85,7 @@ beforeEach(async () => {
 		[administrator.userId, administrator.clinicId],
 	);
 	await api.query("SET LOCAL ROLE clinic_administrator");
+
 });
 
 afterEach(async () => {
@@ -97,33 +101,40 @@ it.each([
 	{ tableName: "professional_schedules", profileName: "reception" },
 	{ tableName: "professional_blocks", profileName: "reception" },
 ] as const)("reads all same-clinic $tableName rows as $profileName", async ({ tableName, profileName }) => {
+
 	const actor = users.find((user) => user.role === profileName && user.clinicId === administrator.clinicId)!;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
-	if (tableName === "professional_schedules") {
+	if(tableName === "professional_schedules") {
+
 		const { rows } = await api.query(
 			`SELECT professional_schedule_id AS "professionalScheduleId", clinic_id AS "clinicId", professional_id AS "professionalId",
                 weekday, start_minute AS "startMinute", end_minute AS "endMinute"
             FROM public.professional_schedules ORDER BY professional_schedule_id`,
 		);
 		expect(rows).toEqual(schedules.filter((schedule) => schedule.clinicId === actor.clinicId));
+
 	} else {
+
 		const { rows } = await api.query(
 			`SELECT professional_block_id AS "professionalBlockId", clinic_id AS "clinicId", professional_id AS "professionalId",
                 start_at AS "startAt", end_at AS "endAt"
             FROM public.professional_blocks ORDER BY professional_block_id`,
 		);
 		expect(rows).toEqual(blocks.filter((block) => block.clinicId === actor.clinicId));
+
 	}
+
 });
 
 it("allows permitted schedule insertion, editing, and deletion as healthcare_professional", async () => {
+
 	const profileName = "healthcare_professional";
 	const actor = users.find((user) => user.role === profileName && user.clinicId === administrator.clinicId)!;
 	const target = localProfessional;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
-	const inserted = await api.query(insertQueries.professional_schedules + " RETURNING professional_schedule_id", [
+	const inserted = await api.query(insertQueries.professional_schedules+" RETURNING professional_schedule_id", [
 		actor.clinicId,
 		target.professionalId,
 	]);
@@ -150,16 +161,18 @@ it("allows permitted schedule insertion, editing, and deletion as healthcare_pro
 		[scheduleId],
 	);
 	expect(deleted.rowCount).toBe(1);
+
 });
 
 it("allows permitted block insertion as healthcare_professional", async () => {
+
 	const profileName = "healthcare_professional";
 	const actor = users.find((user) => user.role === profileName && user.clinicId === administrator.clinicId)!;
 	const target = localProfessional;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
 	const { rows } = await api.query(
-		insertQueries.professional_blocks +
+		insertQueries.professional_blocks+
 			" RETURNING professional_block_id, clinic_id, professional_id, start_at, end_at",
 		[actor.clinicId, target.professionalId],
 	);
@@ -172,11 +185,13 @@ it("allows permitted block insertion as healthcare_professional", async () => {
 			end_at: new Date("2030-01-06T21:00:00.000Z"),
 		},
 	]);
+
 });
 
 it.each(tableNames)(
 	"rejects another local professional's %s insertion by healthcare professionals",
 	async (tableName) => {
+
 		await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [professionalActor.userId]);
 		await api.query("SET LOCAL ROLE healthcare_professional");
 		await expect(
@@ -185,10 +200,12 @@ it.each(tableNames)(
 			code: "42501",
 			message: `new row violates row-level security policy for table "${tableName}"`,
 		});
+
 	},
 );
 
 it("filters another local professional's schedule UPDATE", async () => {
+
 	const operation = "UPDATE";
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [professionalActor.userId]);
 	await api.query("SET LOCAL ROLE healthcare_professional");
@@ -198,9 +215,11 @@ it("filters another local professional's schedule UPDATE", async () => {
 			: "DELETE FROM public.professional_schedules WHERE professional_schedule_id = $1::uuid";
 	const result = await api.query(query, [otherSchedule.professionalScheduleId]);
 	expect(result.rowCount).toBe(0);
+
 });
 
 it("grants only the designed schedule and block table and column privileges", async () => {
+
 	const roles = [
 		"medical_data_hub_api",
 		"platform_administrator",
@@ -295,4 +314,5 @@ it("grants only the designed schedule and block table and column privileges", as
 			})),
 		),
 	);
+
 });

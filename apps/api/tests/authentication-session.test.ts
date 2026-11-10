@@ -11,6 +11,7 @@ let server: Server;
 let url: string;
 
 beforeAll(async () => {
+
 	router.get("/session-check", createAuthenticationMiddleware(verifyAccessToken), (request, response) => {
 		response.json(request.authentication);
 	});
@@ -18,6 +19,7 @@ beforeAll(async () => {
 	server = app.listen(0, "127.0.0.1");
 	await once(server, "listening");
 	url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/session-check`;
+
 });
 
 beforeEach(() => {
@@ -30,6 +32,7 @@ afterAll(async () => {
 });
 
 it("passes the verified session and authorized client to the route", async () => {
+
 	verifyAccessToken.mockResolvedValueOnce({ sub: "demo-user", sid: "demo-session", azp: "medical-data-hub-postman" });
 
 	const response = await fetch(url, { headers: { Authorization: "Bearer demo-token" } });
@@ -41,22 +44,27 @@ it("passes the verified session and authorized client to the route", async () =>
 		sessionId: "demo-session",
 		clientId: "medical-data-hub-postman",
 	});
+
 });
 
 it("authenticates an access token without session metadata", async () => {
+
 	verifyAccessToken.mockResolvedValueOnce({ sub: "demo-user" });
 
 	const response = await fetch(url, { headers: { Authorization: "Bearer demo-token" } });
 
 	expect(response.status).toBe(200);
 	expect(await response.json()).toEqual({ identityId: "demo-user", roles: [] });
+
 });
 
 it("omits non-string session and client claims from the authenticated identity", async () => {
+
 	verifyAccessToken.mockResolvedValueOnce({ sub: "demo-user", sid: 42, azp: null });
 
 	const response = await fetch(url, { headers: { Authorization: "Bearer demo-token" } });
 
 	expect(response.status).toBe(200);
 	expect(await response.json()).toEqual({ identityId: "demo-user", roles: [] });
+
 });

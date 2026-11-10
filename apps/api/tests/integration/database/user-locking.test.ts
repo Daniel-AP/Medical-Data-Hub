@@ -6,7 +6,7 @@ type LocalUser = Pick<User, "userId" | "clinicId" | "isActive"> & { role: string
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -23,6 +23,7 @@ let otherActor: LocalUser;
 let platform: LocalUser;
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	await contender.connect();
@@ -44,6 +45,7 @@ beforeAll(async () => {
         FROM public.users WHERE role = 'platform_administrator' ORDER BY user_id LIMIT 1
     `);
 	platform = platformResult.rows[0];
+
 });
 
 afterAll(async () => {
@@ -55,16 +57,20 @@ afterAll(async () => {
 it.each(lockFunctions)(
 	"returns only protected user identifiers, role, and activity through %s",
 	async (_name, query) => {
+
 		await api.query("BEGIN");
 		try {
+
 			const result = await api.query(query, [actor.userId, target.userId]);
 			expect(result.fields.map((field) => field.name)).toEqual(["user_id", "clinic_id", "role", "is_active"]);
 			expect(result.rows).toEqual([
 				{ user_id: target.userId, clinic_id: target.clinicId, role: target.role, is_active: target.isActive },
 			]);
+
 		} finally {
 			await api.query("ROLLBACK");
 		}
+
 	},
 );
 
@@ -76,24 +82,30 @@ it.each(lockFunctions.slice(0, 1))("filters another clinic's user through %s", a
 it.each(lockFunctions.slice(0, 1))(
 	"allows a platform actor to lock only its own NULL-clinic row through %s",
 	async (_name, query) => {
+
 		await api.query("BEGIN");
 		try {
+
 			const ownRow = await api.query(query, [platform.userId, platform.userId]);
 			expect(ownRow.rows).toEqual([
 				{ user_id: platform.userId, clinic_id: null, role: platform.role, is_active: platform.isActive },
 			]);
 			const clinicRow = await api.query(query, [platform.userId, target.userId]);
 			expect(clinicRow.rows).toEqual([]);
+
 		} finally {
 			await api.query("ROLLBACK");
 		}
+
 	},
 );
 
 it("acquires FOR SHARE locks compatible with shared readers and conflicting with user updates", async () => {
+
 	await api.query("BEGIN");
 	await setup.query("BEGIN");
 	try {
+
 		await api.query("SELECT * FROM public.lock_user_for_share($1::uuid, $2::uuid)", [actor.userId, target.userId]);
 		const compatible = await setup.query(
 			"SELECT user_id FROM public.users WHERE user_id = $1::uuid FOR SHARE NOWAIT",
@@ -105,16 +117,20 @@ it("acquires FOR SHARE locks compatible with shared readers and conflicting with
 				target.userId,
 			]),
 		).rejects.toMatchObject({ code: "55P03" });
+
 	} finally {
 		await setup.query("ROLLBACK");
 		await api.query("ROLLBACK");
 	}
+
 });
 
 it("acquires FOR NO KEY UPDATE locks compatible with key readers and conflicting with shared readers", async () => {
+
 	await api.query("BEGIN");
 	await setup.query("BEGIN");
 	try {
+
 		await api.query("SELECT * FROM public.lock_user_for_no_key_update($1::uuid, $2::uuid)", [
 			actor.userId,
 			target.userId,
@@ -127,15 +143,19 @@ it("acquires FOR NO KEY UPDATE locks compatible with key readers and conflicting
 		await expect(
 			setup.query("SELECT user_id FROM public.users WHERE user_id = $1::uuid FOR SHARE NOWAIT", [target.userId]),
 		).rejects.toMatchObject({ code: "55P03" });
+
 	} finally {
 		await setup.query("ROLLBACK");
 		await api.query("ROLLBACK");
 	}
+
 });
 
 it("rejects an actual activity update by the locking owner through RLS", async () => {
+
 	await setup.query("BEGIN");
 	try {
+
 		await setup.query("SET LOCAL ROLE medical_data_hub_locking_owner");
 		const visible = await setup.query("SELECT user_id FROM public.users WHERE user_id = $1::uuid", [target.userId]);
 		expect(visible.rows).toEqual([{ user_id: target.userId }]);
@@ -145,12 +165,15 @@ it("rejects an actual activity update by the locking owner through RLS", async (
 			code: "42501",
 			message: 'new row violates row-level security policy for table "users"',
 		});
+
 	} finally {
 		await setup.query("ROLLBACK");
 	}
+
 });
 
 it("limits locking owner SELECT and UPDATE grants to the required user columns", async () => {
+
 	const { rows } = await setup.query(`
         SELECT table_definition.relname, column_definition.attname,
                pg_catalog.has_column_privilege('medical_data_hub_locking_owner', table_definition.oid, column_definition.attnum, 'SELECT') AS can_select,
@@ -170,9 +193,11 @@ it("limits locking owner SELECT and UPDATE grants to the required user columns",
 		{ relname: "users", attname: "role", can_select: true, can_update: false },
 		{ relname: "users", attname: "user_id", can_select: true, can_update: false },
 	]);
+
 });
 
 it("uses the dedicated locking owner and trusted search path for both volatile functions", async () => {
+
 	const names = lockFunctions.map(([name]) => name);
 	const { rows } = await setup.query(
 		`
@@ -192,10 +217,13 @@ it("uses the dedicated locking owner and trusted search path for both volatile f
 				proconfig: ["search_path=pg_catalog, pg_temp"],
 			})),
 	);
+
 });
 
 it("denies preparatory user locking to the reception profile", async () => {
-	for (const [name, query] of lockFunctions) {
+
+	for(const [name, query] of lockFunctions) {
+
 		await api.query("BEGIN");
 		try {
 			await api.query("SET LOCAL ROLE reception");
@@ -203,5 +231,7 @@ it("denies preparatory user locking to the reception profile", async () => {
 		} finally {
 			await api.query("ROLLBACK");
 		}
+
 	}
+
 });

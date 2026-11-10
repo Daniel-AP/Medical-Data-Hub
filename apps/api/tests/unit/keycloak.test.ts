@@ -15,15 +15,17 @@ let publicJwk: JWK;
 let verifyAccessToken: ReturnType<typeof createAccessTokenVerifier>;
 
 const createToken = (payload: JWTPayload = {}, kid = "test-key") => {
+
 	return new SignJWT({
 		iss: issuer,
 		aud: audience,
 		sub: "demo-user",
-		exp: Math.floor(Date.now() / 1000) + 300,
+		exp: Math.floor(Date.now()/1000)+300,
 		...payload,
 	})
 		.setProtectedHeader({ alg: "RS256", kid })
 		.sign(privateKey);
+
 };
 
 beforeAll(async () => {
@@ -33,6 +35,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+
 	fetchKeys.mockReset();
 	fetchKeys.mockImplementation(async () => Response.json({ keys: [publicJwk] }));
 	vi.stubGlobal("fetch", fetchKeys);
@@ -41,6 +44,7 @@ beforeEach(() => {
 		audience,
 		jwksUrl: "http://keycloak:8080/realms/medical-data-hub/protocol/openid-connect/certs",
 	});
+
 });
 
 afterEach(() => {
@@ -70,11 +74,13 @@ it("rejects a malformed access token with 401", async () => {
 });
 
 it("rejects an invalid signature with 401", async () => {
+
 	const otherKeyPair = await generateKeyPair("RS256");
 	const otherJwk = { ...(await exportJWK(otherKeyPair.publicKey)), kid: "test-key" };
 	fetchKeys.mockResolvedValueOnce(Response.json({ keys: [otherJwk] }));
 	const token = await createToken();
 	await expect(verifyAccessToken(token)).rejects.toMatchObject({ status: 401 });
+
 });
 
 it("rejects an unknown signing key with 401", async () => {
@@ -89,18 +95,22 @@ it("reports unavailable verification keys with 503", async () => {
 });
 
 it("reports a delayed JWKS response as unavailable with 503", async () => {
+
 	vi.unstubAllGlobals();
 	const requestKeys = vi.fn<RequestListener>((_request, response) => {
+
 		response.writeHead(200, { "Content-Type": "application/json" });
 		response.flushHeaders();
 		const timer = setTimeout(() => response.end(JSON.stringify({ keys: [publicJwk] })), 1000);
 		response.once("close", () => clearTimeout(timer));
+
 	});
 	const server = createServer(requestKeys);
 	server.listen(0, "127.0.0.1");
 	await once(server, "listening");
 
 	try {
+
 		const { port } = server.address() as AddressInfo;
 		const verify = createAccessTokenVerifier({
 			issuer,
@@ -111,10 +121,12 @@ it("reports a delayed JWKS response as unavailable with 503", async () => {
 		const token = await createToken();
 		await expect(verify(token)).rejects.toMatchObject({ status: 503 });
 		expect(requestKeys).toHaveBeenCalledTimes(1);
+
 	} finally {
 		server.close();
 		await once(server, "close");
 	}
+
 });
 
 it("reports an unsuccessful JWKS response with 503", async () => {
@@ -130,14 +142,17 @@ it("reports a malformed JWKS with 503", async () => {
 });
 
 it("reuses fresh cached keys while the provider is unavailable", async () => {
+
 	const token = await createToken();
 	await verifyAccessToken(token);
 	fetchKeys.mockRejectedValue(new TypeError("fetch failed"));
 	await expect(verifyAccessToken(token)).resolves.toMatchObject({ sub: "demo-user" });
 	expect(fetchKeys).toHaveBeenCalledTimes(1);
+
 });
 
 it("refreshes cached keys after signing-key rotation", async () => {
+
 	vi.useFakeTimers({ toFake: ["Date"] });
 	const originalToken = await createToken();
 	await verifyAccessToken(originalToken);
@@ -145,7 +160,7 @@ it("refreshes cached keys after signing-key rotation", async () => {
 	const rotatedKeyPair = await generateKeyPair("RS256");
 	const rotatedJwk = { ...(await exportJWK(rotatedKeyPair.publicKey)), kid: "rotated-key" };
 	fetchKeys.mockResolvedValueOnce(Response.json({ keys: [publicJwk, rotatedJwk] }));
-	vi.setSystemTime(Date.now() + 31_000);
+	vi.setSystemTime(Date.now()+31_000);
 
 	const rotatedToken = await new SignJWT({ sub: "demo-user" })
 		.setProtectedHeader({ alg: "RS256", kid: "rotated-key" })
@@ -157,4 +172,5 @@ it("refreshes cached keys after signing-key rotation", async () => {
 	await expect(verifyAccessToken(rotatedToken)).resolves.toMatchObject({ sub: "demo-user" });
 	await expect(verifyAccessToken(originalToken)).resolves.toMatchObject({ sub: "demo-user" });
 	expect(fetchKeys).toHaveBeenCalledTimes(2);
+
 });

@@ -3,6 +3,7 @@ import { expect, it, vi } from "vitest";
 import { runTransaction } from "../../src/database/transaction.js";
 
 it("does not run the operation when the pool rejects acquisition", async () => {
+
 	const pool = new Pool();
 	await pool.end();
 	const operation = vi.fn(async () => undefined);
@@ -12,4 +13,5 @@ it("does not run the operation when the pool rejects acquisition", async () => {
 		kind: "acquisition",
 	});
 	expect(operation).not.toHaveBeenCalled();
+
 });

@@ -4,14 +4,16 @@ import type { createLogoutIdTokenVerifier } from "../clients/keycloak.js";
 type LogoutIdTokenVerifier = ReturnType<typeof createLogoutIdTokenVerifier>;
 
 export const createLogoutRequestHandler = (verifyIdToken: LogoutIdTokenVerifier, issuer: string): RequestHandler => {
+
 	return async (request, response) => {
+
 		const authentication = request.authentication;
-		if (!authentication?.sessionId || !authentication.clientId) {
+		if(!authentication?.sessionId || !authentication.clientId) {
 			throw Object.assign(new Error("Missing session context"), { status: 401 });
 		}
 
 		const idToken: unknown = request.body?.idToken;
-		if (typeof idToken !== "string" || idToken.length === 0) {
+		if(typeof idToken !== "string" || idToken.length === 0) {
 			throw Object.assign(new Error("Missing or invalid ID token field"), { status: 400 });
 		}
 
@@ -27,5 +29,7 @@ export const createLogoutRequestHandler = (verifyIdToken: LogoutIdTokenVerifier,
 
 		response.set("Cache-Control", "no-store");
 		response.json({ logoutUrl: logoutUrl.toString() });
+
 	};
+
 };

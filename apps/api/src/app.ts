@@ -17,14 +17,15 @@ const transientTransactionFailures = new Set([
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const handleError: ErrorRequestHandler = (error, _request, response, _next) => {
-	if (error.type === "entity.parse.failed") {
+
+	if(error.type === "entity.parse.failed") {
 		response.status(400).json({ error: "Invalid JSON" });
 
 		return;
 	}
 
 	const transactionFailure = error instanceof TransactionFailure ? error : undefined;
-	if (error instanceof OperationOutcomeUnknownError || transactionFailure?.kind === "indeterminateCommit") {
+	if(error instanceof OperationOutcomeUnknownError || transactionFailure?.kind === "indeterminateCommit") {
 		response.status(500).json({ error: STATUS_CODES[500], code: "OPERATION_OUTCOME_UNKNOWN" });
 
 		return;
@@ -33,6 +34,7 @@ const handleError: ErrorRequestHandler = (error, _request, response, _next) => {
 	const isTransient = transactionFailure && transientTransactionFailures.has(transactionFailure.kind);
 	const status = isTransient ? 503 : (error.status ?? 500);
 	response.status(status).json({ error: STATUS_CODES[status] });
+
 };
 
 app.use(express.json());

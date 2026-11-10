@@ -6,7 +6,7 @@ type LocalUser = Pick<User, "userId" | "identityId" | "clinicId" | "isActive"> &
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -21,6 +21,7 @@ let target: LocalUser;
 let foreignTarget: LocalUser;
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	const result = await setup.query<LocalUser>(`
@@ -36,6 +37,7 @@ beforeAll(async () => {
 	foreignTarget = users.find(
 		(user) => user.role === "healthcare_professional" && user.clinicId === otherAdministrator.clinicId,
 	)!;
+
 });
 
 afterAll(async () => {
@@ -44,10 +46,12 @@ afterAll(async () => {
 });
 
 it("reads only same-clinic user metadata as reception", async () => {
+
 	const profileName = "reception";
 	const actor = users.find((user) => user.role === profileName && user.clinicId === administrator.clinicId)!;
 	await api.query("BEGIN");
 	try {
+
 		await api.query(
 			`SELECT pg_catalog.set_config('app.user_id', $1, true),
             pg_catalog.set_config('app.clinic_id', $2, true)`,
@@ -67,14 +71,18 @@ it("reads only same-clinic user metadata as reception", async () => {
 					is_active: user.isActive,
 				})),
 		);
+
 	} finally {
 		await api.query("ROLLBACK");
 	}
+
 });
 
 it("allows same-clinic role and activity updates by clinic administrators", async () => {
+
 	await api.query("BEGIN");
 	try {
+
 		await api.query(
 			`SELECT pg_catalog.set_config('app.user_id', $1, true),
             pg_catalog.set_config('app.clinic_id', $2, true)`,
@@ -95,14 +103,18 @@ it("allows same-clinic role and activity updates by clinic administrators", asyn
 				is_active: false,
 			},
 		]);
+
 	} finally {
 		await api.query("ROLLBACK");
 	}
+
 });
 
 it("filters administrative user updates targeting another clinic", async () => {
+
 	await api.query("BEGIN");
 	try {
+
 		await api.query(
 			`SELECT pg_catalog.set_config('app.user_id', $1, true),
             pg_catalog.set_config('app.clinic_id', $2, true)`,
@@ -115,14 +127,18 @@ it("filters administrative user updates targeting another clinic", async () => {
 		);
 		expect(result.rowCount).toBe(0);
 		expect(result.rows).toEqual([]);
+
 	} finally {
 		await api.query("ROLLBACK");
 	}
+
 });
 
 it("allows same-clinic inserts using an existing realm identity", async () => {
+
 	await setup.query("BEGIN");
 	try {
+
 		// Free an existing realm identity only within this rolled-back fixture transaction
 		await setup.query("DELETE FROM public.users WHERE user_id = $1::uuid", [otherAdministrator.userId]);
 		await setup.query(
@@ -145,14 +161,18 @@ it("allows same-clinic inserts using an existing realm identity", async () => {
 				is_active: true,
 			},
 		]);
+
 	} finally {
 		await setup.query("ROLLBACK");
 	}
+
 });
 
 it("rejects user inserts into another clinic through RLS", async () => {
+
 	await api.query("BEGIN");
 	try {
+
 		await api.query(
 			`SELECT pg_catalog.set_config('app.user_id', $1, true),
             pg_catalog.set_config('app.clinic_id', $2, true)`,
@@ -168,14 +188,18 @@ it("rejects user inserts into another clinic through RLS", async () => {
 			code: "42501",
 			message: 'new row violates row-level security policy for table "users"',
 		});
+
 	} finally {
 		await api.query("ROLLBACK");
 	}
+
 });
 
 it("preserves provider identity uniqueness for ordinary user inserts", async () => {
+
 	await api.query("BEGIN");
 	try {
+
 		await api.query(
 			`SELECT pg_catalog.set_config('app.user_id', $1, true),
             pg_catalog.set_config('app.clinic_id', $2, true)`,
@@ -188,12 +212,15 @@ it("preserves provider identity uniqueness for ordinary user inserts", async () 
 				administrator.clinicId,
 			]),
 		).rejects.toMatchObject({ code: "23505", constraint: "users_identity_id_key" });
+
 	} finally {
 		await api.query("ROLLBACK");
 	}
+
 });
 
 it("grants only the designed ordinary user table and column privileges", async () => {
+
 	const tableGrants = await setup.query(
 		`
         SELECT grantee, privilege_type, is_grantable FROM information_schema.table_privileges
@@ -234,4 +261,5 @@ it("grants only the designed ordinary user table and column privileges", async (
 			{ grantee, column_name: "user_id", is_grantable: "NO" },
 		]),
 	);
+
 });

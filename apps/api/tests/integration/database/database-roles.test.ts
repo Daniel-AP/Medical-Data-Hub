@@ -4,7 +4,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -29,11 +29,13 @@ const domainTables = [
 const probeTable = escapeIdentifier(`database_roles_${randomUUID().replaceAll("-", "")}`);
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	await setup.query(`CREATE TABLE public.${probeTable} (marker integer NOT NULL)`);
 	await setup.query(`INSERT INTO public.${probeTable} (marker) VALUES (1)`);
 	await setup.query(`GRANT SELECT ON public.${probeTable} TO clinic_administrator`);
+
 });
 
 afterAll(async () => {
@@ -43,6 +45,7 @@ afterAll(async () => {
 });
 
 it("connects with a restricted API login", async () => {
+
 	const { rows } = await api.query(`
         SELECT rolname, rolcanlogin, rolinherit, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
         FROM pg_catalog.pg_roles WHERE rolname = current_user
@@ -59,9 +62,11 @@ it("connects with a restricted API login", async () => {
 			rolbypassrls: false,
 		},
 	]);
+
 });
 
 it("creates four profiles without login or administrative privileges", async () => {
+
 	const { rows } = await setup.query(
 		`
         SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
@@ -82,9 +87,11 @@ it("creates four profiles without login or administrative privileges", async () 
 				rolbypassrls: false,
 			})),
 	);
+
 });
 
 it("permits profile selection without inheritance or membership administration", async () => {
+
 	const { rows } = await setup.query(`
         SELECT profile.rolname, membership.inherit_option, membership.set_option, membership.admin_option
         FROM pg_catalog.pg_auth_members AS membership
@@ -97,9 +104,11 @@ it("permits profile selection without inheritance or membership administration",
 			.sort()
 			.map((rolname) => ({ rolname, inherit_option: false, set_option: true, admin_option: false })),
 	);
+
 });
 
 it("requires explicit profile selection to use a granted privilege", async () => {
+
 	await expect(api.query(`SELECT marker FROM public.${probeTable}`)).rejects.toMatchObject({ code: "42501" });
 	await api.query("BEGIN");
 	try {
@@ -110,6 +119,7 @@ it("requires explicit profile selection to use a granted privilege", async () =>
 		await api.query("ROLLBACK");
 	}
 	await expect(api.query(`SELECT marker FROM public.${probeTable}`)).rejects.toMatchObject({ code: "42501" });
+
 });
 
 it("denies selection of the setup role", async () => {
@@ -118,6 +128,7 @@ it("denies selection of the setup role", async () => {
 });
 
 it("keeps the API login and profiles from owning domain tables", async () => {
+
 	const { rows } = await setup.query(
 		`
         SELECT table_definition.relname
@@ -130,4 +141,5 @@ it("keeps the API login and profiles from owning domain tables", async () => {
 		[domainTables, ["medical_data_hub_api", ...profileNames]],
 	);
 	expect(rows).toEqual([]);
+
 });

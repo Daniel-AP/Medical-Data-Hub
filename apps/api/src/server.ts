@@ -13,7 +13,7 @@ const issuer = process.env.KEYCLOAK_ISSUER;
 const jwksUrl = process.env.KEYCLOAK_JWKS_URL;
 const audience = process.env.KEYCLOAK_AUDIENCE;
 
-if (!issuer || !jwksUrl || !audience) {
+if(!issuer || !jwksUrl || !audience) {
 	throw new Error("KEYCLOAK_ISSUER, KEYCLOAK_JWKS_URL, and KEYCLOAK_AUDIENCE are required");
 }
 
@@ -25,7 +25,8 @@ router.post("/auth/logout-request", authenticate, prepareLogout);
 router.get("/audit-records", authenticate, requireRoles(UserRole.clinicAdministrator), listAuditRecords);
 
 app.listen({ port, host }, (error) => {
-	if (error) {
+
+	if(error) {
 		console.error(error.message);
 		process.exitCode = 1;
 
@@ -33,4 +34,5 @@ app.listen({ port, host }, (error) => {
 	}
 
 	console.info(`API listening on ${host}:${port}`);
+
 });

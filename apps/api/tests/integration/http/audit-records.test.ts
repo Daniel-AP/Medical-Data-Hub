@@ -8,17 +8,20 @@ const apiUrl = process.env.AUDIT_TEST_API_URL;
 const administratorToken = process.env.AUDIT_TEST_ADMIN_TOKEN;
 const foreignAdministratorToken = process.env.AUDIT_TEST_FOREIGN_ADMIN_TOKEN;
 const receptionToken = process.env.AUDIT_TEST_RECEPTION_TOKEN;
-if (!apiUrl || !administratorToken || !foreignAdministratorToken || !receptionToken) {
+if(!apiUrl || !administratorToken || !foreignAdministratorToken || !receptionToken) {
 	throw new Error("Set AUDIT_TEST_API_URL and the three AUDIT_TEST_*_TOKEN variables for isolated HTTP tests");
 }
 const auditUrl = new URL("/audit-records", apiUrl);
 
 const requestAudit = (token?: string, query?: string | URLSearchParams) => {
+
 	const url = new URL(auditUrl);
-	if (query) {
+	if(query) {
 		url.search = query.toString();
 	}
+
 	return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+
 };
 
 it("requires a valid bearer token to query audit records", async () => {
@@ -31,6 +34,7 @@ it("rejects a real reception token for the audit route", async () => {
 });
 
 it("returns filtered audit metadata with UTC timestamps to a clinic administrator", async () => {
+
 	const response = await requestAudit(administratorToken);
 	expect(response.status).toBe(200);
 	const { records }: AuditResponse = await response.json();
@@ -47,8 +51,8 @@ it("returns filtered audit metadata with UTC timestamps to a clinic administrato
 		occurredAt: occurredAt.toISOString(),
 	});
 
-	const from = new Date(occurredAt.getTime() + 3_600_000).toISOString().replace("Z", "+01:00");
-	const to = new Date(occurredAt.getTime() + 1).toISOString();
+	const from = new Date(occurredAt.getTime()+3_600_000).toISOString().replace("Z", "+01:00");
+	const to = new Date(occurredAt.getTime()+1).toISOString();
 	const filtered = await requestAudit(
 		administratorToken,
 		new URLSearchParams({ userId: record.userId, patientId: record.patientId, from, to }),
@@ -62,9 +66,11 @@ it("returns filtered audit metadata with UTC timestamps to a clinic administrato
 				event.occurredAt === record.occurredAt,
 		),
 	});
+
 });
 
 it("rejects invalid, repeated, and unknown audit filters", async () => {
+
 	const timestamp = "2000-02-01T10:00:00Z";
 	const invalidQueries = [
 		"userId=invalid",
@@ -78,12 +84,14 @@ it("rejects invalid, repeated, and unknown audit filters", async () => {
 		`from=${timestamp}&from=${timestamp}`,
 		"unknown=1",
 	];
-	for (const query of invalidQueries) {
+	for(const query of invalidQueries) {
 		expect((await requestAudit(administratorToken, query)).status, query).toBe(400);
 	}
+
 });
 
 it("prevents clinic overrides and hides audit records matching foreign identifiers", async () => {
+
 	const local = await requestAudit(administratorToken);
 	const foreign = await requestAudit(foreignAdministratorToken);
 	expect(local.status).toBe(200);
@@ -97,9 +105,10 @@ it("prevents clinic overrides and hides audit records matching foreign identifie
 
 	const override = await requestAudit(administratorToken, new URLSearchParams({ clinicId }));
 	expect(override.status).toBe(400);
-	for (const filter of [new URLSearchParams({ userId }), new URLSearchParams({ patientId })]) {
+	for(const filter of [new URLSearchParams({ userId }), new URLSearchParams({ patientId })]) {
 		const response = await requestAudit(administratorToken, filter);
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({ records: [] });
 	}
+
 });

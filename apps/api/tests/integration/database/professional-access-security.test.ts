@@ -12,7 +12,7 @@ type LocalUser = Pick<User, "userId" | "clinicId"> & { role: string };
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -34,6 +34,7 @@ let foreignService: Service;
 let localSpecialty: Specialty;
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	const userResult = await setup.query<LocalUser>(`
@@ -71,9 +72,11 @@ beforeAll(async () => {
 	foreignProfessional = professionals.find((professional) => professional.clinicId === otherAdministrator.clinicId)!;
 	foreignService = services.find((service) => service.clinicId === otherAdministrator.clinicId)!;
 	localSpecialty = specialties.find((specialty) => specialty.clinicId === administrator.clinicId)!;
+
 });
 
 beforeEach(async () => {
+
 	await api.query("BEGIN");
 	await api.query(
 		`SELECT pg_catalog.set_config('app.user_id', $1, true),
@@ -81,6 +84,7 @@ beforeEach(async () => {
 		[administrator.userId, administrator.clinicId],
 	);
 	await api.query("SET LOCAL ROLE clinic_administrator");
+
 });
 
 afterEach(async () => {
@@ -96,27 +100,35 @@ it.each([
 	{ tableName: "professionals", profileName: "reception" },
 	{ tableName: "professional_services", profileName: "healthcare_professional" },
 ])("reads only same-clinic $tableName rows as $profileName", async ({ tableName, profileName }) => {
+
 	const actor = users.find((user) => user.role === profileName && user.clinicId === administrator.clinicId)!;
 	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
 	await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
-	if (tableName === "professionals") {
+	if(tableName === "professionals") {
+
 		const { rows } = await api.query(
 			`SELECT professional_id AS "professionalId", clinic_id AS "clinicId", user_id AS "userId", specialty_id AS "specialtyId"
             FROM public.professionals ORDER BY professional_id`,
 		);
 		expect(rows).toEqual(professionals.filter((professional) => professional.clinicId === actor.clinicId));
+
 	} else {
+
 		const { rows } = await api.query(
 			`SELECT clinic_id AS "clinicId", professional_id AS "professionalId", service_id AS "serviceId", is_active AS "isActive"
             FROM public.professional_services ORDER BY professional_id, service_id`,
 		);
 		expect(rows).toEqual(associations.filter((association) => association.clinicId === actor.clinicId));
+
 	}
+
 });
 
 it("allows same-clinic professional insertion and specialty updates", async () => {
+
 	await setup.query("BEGIN");
 	try {
+
 		await setup.query("UPDATE public.users SET role = 'healthcare_professional' WHERE user_id = $1::uuid", [
 			unassignedUser.userId,
 		]);
@@ -149,12 +161,15 @@ it("allows same-clinic professional insertion and specialty updates", async () =
 			[inserted.rows[0].professional_id, nextSpecialty.specialtyId],
 		);
 		expect(updated.rows).toEqual([{ ...inserted.rows[0], specialty_id: nextSpecialty.specialtyId }]);
+
 	} finally {
 		await setup.query("ROLLBACK");
 	}
+
 });
 
 it("allows same-clinic professional service insertion and activity updates", async () => {
+
 	const service = await api.query(
 		`INSERT INTO public.services (clinic_id, name, duration_minutes, specialty_id)
         VALUES ($1::uuid, 'Synthetic service', 30, $2::uuid) RETURNING service_id`,
@@ -179,18 +194,22 @@ it("allows same-clinic professional service insertion and activity updates", asy
 		[localProfessional.professionalId, service.rows[0].service_id],
 	);
 	expect(updated.rows).toEqual([{ ...inserted.rows[0], is_active: false }]);
+
 });
 
 it.each(tableNames)("filters foreign-clinic %s updates", async (tableName) => {
+
 	const assignment = tableName === "professionals" ? "specialty_id = specialty_id" : "is_active = false";
 	const result = await api.query(
 		`UPDATE public.${escapeIdentifier(tableName)} SET ${assignment} WHERE professional_id = $1::uuid`,
 		[foreignProfessional.professionalId],
 	);
 	expect(result.rowCount).toBe(0);
+
 });
 
 it("rejects foreign-clinic inserts into professionals through RLS", async () => {
+
 	const tableName = "professionals";
 	const query =
 		tableName === "professionals"
@@ -204,9 +223,11 @@ it("rejects foreign-clinic inserts into professionals through RLS", async () => 
 		code: "42501",
 		message: `new row violates row-level security policy for table "${tableName}"`,
 	});
+
 });
 
 it("grants only the designed professional table and column privileges", async () => {
+
 	const roles = [
 		"medical_data_hub_api",
 		"platform_administrator",
@@ -269,4 +290,5 @@ it("grants only the designed professional table and column privileges", async ()
 			is_grantable: "NO",
 		})),
 	);
+
 });

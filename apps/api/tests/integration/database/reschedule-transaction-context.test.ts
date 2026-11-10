@@ -10,7 +10,7 @@ type SeedDestination = Pick<Professional, "professionalId" | "userId"> & Pick<Us
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -23,6 +23,7 @@ let foreignDestination: SeedDestination;
 let clinicActors: SeedActor[];
 
 beforeAll(async () => {
+
 	await setup.connect();
 	const appointments = await setup.query<SeedAppointment>(`
 		SELECT DISTINCT ON (clinic_id) appointment_id AS "appointmentId", clinic_id AS "clinicId",
@@ -48,6 +49,7 @@ beforeAll(async () => {
 		[originalAppointment.clinicId],
 	);
 	clinicActors = actors.rows;
+
 });
 
 afterAll(async () => {
@@ -61,6 +63,7 @@ it.each([
 ])(
 	"prepares rescheduling with the current local profile $databaseRole and a shared destination user lock",
 	async ({ databaseRole, role }) => {
+
 		const actor = clinicActors.find((user) => user.role === databaseRole)!;
 		const result = await runAuthorizedTransaction(
 			{ identityId: actor.identityId, roles: [UserRole.clinicAdministrator, UserRole.reception] },
@@ -70,6 +73,7 @@ it.each([
 				destinationProfessionalId: destination.professionalId,
 			},
 			async (client, context) => {
+
 				const { rows } = await setup.query(
 					"SELECT user_id FROM public.users WHERE user_id = $1::uuid FOR SHARE NOWAIT",
 					[destination.userId],
@@ -82,7 +86,9 @@ it.each([
 				).rejects.toMatchObject({ code: "55P03" });
 
 				const { rows: profiles } = await client.query("SELECT current_user AS role");
+
 				return { context, databaseRole: profiles[0].role };
+
 			},
 			pool,
 		);
@@ -106,10 +112,12 @@ it.each([
 			},
 			databaseRole,
 		});
+
 	},
 );
 
 it("rejects rescheduling when the token contains only the other permitted role", async () => {
+
 	const actor = clinicActors.find((user) => user.role === "reception")!;
 	const callback = vi.fn();
 
@@ -126,11 +134,13 @@ it("rejects rescheduling when the token contains only the other permitted role",
 		),
 	).rejects.toMatchObject({ status: 403 });
 	expect(callback).not.toHaveBeenCalled();
+
 });
 
 it.each(["original appointment", "destination professional"])(
 	"rejects rescheduling with a foreign %s before invoking the callback",
 	async (foreignResource) => {
+
 		const actor = clinicActors.find((user) => user.role === "reception")!;
 		const appointment = foreignResource === "original appointment" ? foreignAppointment : originalAppointment;
 		const professional = foreignResource === "destination professional" ? foreignDestination : destination;
@@ -149,5 +159,6 @@ it.each(["original appointment", "destination professional"])(
 			),
 		).rejects.toMatchObject({ status: 403 });
 		expect(callback).not.toHaveBeenCalled();
+
 	},
 );

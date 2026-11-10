@@ -31,28 +31,35 @@ export const runTransaction = async <T>(
 	isolation: TransactionIsolation,
 	callback: TransactionCallback<T>,
 	pool = runtimePool,
-): Promise<T> => {
-	for (let attemptNumber = 1; ; attemptNumber++) {
+) => {
+
+	for(let attemptNumber = 1; ; attemptNumber++) {
+
 		const outcome = await runTransactionAttempt(isolation, callback, pool);
-		if (outcome.status === "committed") {
+		if(outcome.status === "committed") {
 			return outcome.result;
 		}
-		if (outcome.status === "failed" || attemptNumber === maxAttempts) {
+		if(outcome.status === "failed" || attemptNumber === maxAttempts) {
 			throw outcome.failure;
 		}
 
 		await delay(randomInt(101));
+
 	}
+
 };
 
 const rollbackTransaction = async (client: PoolClient) => {
+
 	try {
 		const { command } = await client.query("ROLLBACK");
+
 		return command === "ROLLBACK";
 	} catch {
 		// Keep the original failure and discard the connection
 		return false;
 	}
+
 };
 
 const runTransactionAttempt = async <T>(
@@ -60,6 +67,7 @@ const runTransactionAttempt = async <T>(
 	callback: TransactionCallback<T>,
 	pool: Pool,
 ): Promise<TransactionAttempt<T>> => {
+
 	let client: PoolClient;
 	try {
 		client = await pool.connect();
@@ -77,7 +85,7 @@ const runTransactionAttempt = async <T>(
 	};
 
 	const assertOperationActive = () => {
-		if (stage !== "operation" || connectionError) {
+		if(stage !== "operation" || connectionError) {
 			throw new Error("Transaction attempt is closed");
 		}
 	};
@@ -85,6 +93,7 @@ const runTransactionAttempt = async <T>(
 	const operationClient: TransactionClient = {
 		query: (...args: unknown[]) => {
 			assertOperationActive();
+
 			return Reflect.apply(client.query, client, args);
 		},
 	};
@@ -95,8 +104,10 @@ const runTransactionAttempt = async <T>(
 	};
 
 	try {
+
 		let execution: { command: string; result: T } | { error: unknown };
 		try {
+
 			client.on("error", onConnectionError);
 			await client.query(beginStatements[isolation]);
 
@@ -113,6 +124,7 @@ const runTransactionAttempt = async <T>(
 			stage = "commit";
 			const { command } = await client.query("COMMIT");
 			execution = { command, result };
+
 		} catch (error) {
 			execution = { error };
 		}
@@ -122,41 +134,48 @@ const runTransactionAttempt = async <T>(
 
 		let failure: unknown;
 		let retryableFailure: TransactionFailure | undefined;
-		if ("command" in execution) {
+		if("command" in execution) {
+
 			const { command, result } = execution;
-			if (command === "COMMIT") {
+			if(command === "COMMIT") {
 				transactionEndConfirmed = true;
+
 				return { status: "committed", result };
 			}
 
 			transactionEndConfirmed = command === "ROLLBACK";
 			failure = new TransactionFailure("commit", transactionEndConfirmed ? "aborted" : "indeterminateCommit");
+
 		} else {
+
 			const { error } = execution;
 			const failedOnConnectionError = connectionError !== undefined && connectionError === error;
 			failure = classifyTransactionFailure(failureStage, error, failedOnConnectionError);
-			if (failure instanceof TransactionFailure && failure !== error && failure.kind === "retryableAbort") {
+			if(failure instanceof TransactionFailure && failure !== error && failure.kind === "retryableAbort") {
 				retryableFailure = failure;
 			}
+
 		}
 
 		const shouldRollback = !connectionError && (failureStage === "operation" || retryableFailure !== undefined);
-		if (shouldRollback) {
+		if(shouldRollback) {
 			transactionEndConfirmed = await rollbackTransaction(client);
 		}
 
-		if (retryableFailure && transactionEndConfirmed && !connectionError && !keycloakRoleUpdateStarted) {
+		if(retryableFailure && transactionEndConfirmed && !connectionError && !keycloakRoleUpdateStarted) {
 			return { status: "retry", failure: retryableFailure };
 		}
 
-		const outcomeFailure =
-			keycloakRoleUpdateStarted && failure instanceof TransactionFailure
-				? new OperationOutcomeUnknownError(failure)
-				: failure;
-		return { status: "failed", failure: outcomeFailure };
+		if(keycloakRoleUpdateStarted && failure instanceof TransactionFailure) {
+			return { status: "failed", failure: new OperationOutcomeUnknownError(failure) };
+		}
+
+		return { status: "failed", failure };
+
 	} finally {
 		client.off("error", onConnectionError);
 		const discardConnection = !transactionEndConfirmed || connectionError !== undefined;
 		client.release(discardConnection);
 	}
+
 };

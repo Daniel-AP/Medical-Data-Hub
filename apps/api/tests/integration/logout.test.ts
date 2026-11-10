@@ -11,7 +11,7 @@ type TokenResponse = { access_token: string; id_token: string; refresh_token: st
 
 const refreshTokenA = process.env.KEYCLOAK_LOGOUT_REFRESH_TOKEN;
 const refreshTokenB = process.env.KEYCLOAK_OTHER_REFRESH_TOKEN;
-if (!refreshTokenA || !refreshTokenB) {
+if(!refreshTokenA || !refreshTokenB) {
 	throw new Error("Set KEYCLOAK_LOGOUT_REFRESH_TOKEN and KEYCLOAK_OTHER_REFRESH_TOKEN to two active sessions");
 }
 
@@ -23,13 +23,16 @@ let server: Server;
 let url: string;
 
 const requestRefresh = (refreshToken: string) => {
+
 	return fetch(`${issuer}/protocol/openid-connect/token`, {
 		method: "POST",
 		body: new URLSearchParams({ grant_type: "refresh_token", client_id: clientId, refresh_token: refreshToken }),
 	});
+
 };
 
 beforeAll(async () => {
+
 	router.post(
 		"/auth/logout-request",
 		createAuthenticationMiddleware(verifyAccessToken),
@@ -39,6 +42,7 @@ beforeAll(async () => {
 	server = app.listen(0, "127.0.0.1");
 	await once(server, "listening");
 	url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/auth/logout-request`;
+
 });
 
 afterAll(async () => {
@@ -47,6 +51,7 @@ afterAll(async () => {
 });
 
 it("closes only the requested Keycloak session while preserving another session and issued access tokens", async () => {
+
 	const initialRefreshA = await requestRefresh(refreshTokenA);
 	expect(initialRefreshA.status).toBe(200);
 	let tokensA: TokenResponse = await initialRefreshA.json();
@@ -107,4 +112,5 @@ it("closes only the requested Keycloak session while preserving another session 
 	expect(survivingIdentity.sub).toBe(identityB.sub);
 	expect(survivingIdentity.sid).toBe(identityB.sid);
 	expect(survivingIdentity.resource_access).toEqual(identityB.resource_access);
+
 }, 30_000);

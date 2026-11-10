@@ -19,6 +19,7 @@ const payloadWithRoles = (roles: string[]): JWTPayload => {
 };
 
 beforeAll(async () => {
+
 	const authenticate = createAuthenticationMiddleware(verifyAccessToken);
 	router.get("/role-mapping-check", authenticate, (request, response) => {
 		response.json(request.authentication);
@@ -38,6 +39,7 @@ beforeAll(async () => {
 	server = app.listen(0, "127.0.0.1");
 	await once(server, "listening");
 	url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
 });
 
 beforeEach(() => {
@@ -56,19 +58,23 @@ it.each([
 	["reception", UserRole.reception],
 	["healthcare_professional", UserRole.healthcareProfessional],
 ] as const)("maps the API role %s to its domain role", async (tokenRole, domainRole) => {
+
 	verifyAccessToken.mockResolvedValueOnce(payloadWithRoles([tokenRole]));
 	const response = await fetch(`${url}/role-mapping-check`, requestOptions);
 	expect(response.status).toBe(200);
 	expect(await response.json()).toEqual({ identityId: "demo-user", roles: [domainRole] });
+
 });
 
 it("retains recognized API roles and ignores unknown roles", async () => {
+
 	verifyAccessToken.mockResolvedValueOnce(payloadWithRoles(["reception", "unknown_role", "clinic_administrator"]));
 	const response = await fetch(`${url}/role-mapping-check`, requestOptions);
 	expect(response.status).toBe(200);
 	const authentication = await response.json();
 	expect(authentication.roles).toEqual(expect.arrayContaining([UserRole.reception, UserRole.clinicAdministrator]));
 	expect(authentication.roles).toHaveLength(2);
+
 });
 
 it.each(["clinic_administrator", "reception"])("accepts an allowed token role (%s)", async (role) => {
@@ -80,10 +86,12 @@ it.each(["clinic_administrator", "reception"])("accepts an allowed token role (%
 it.each(["platform_administrator", "healthcare_professional"])(
 	"rejects an insufficient token role (%s) with 403",
 	async (role) => {
+
 		verifyAccessToken.mockResolvedValueOnce(payloadWithRoles([role]));
 		const response = await fetch(`${url}/role-check`, requestOptions);
 		expect(response.status).toBe(403);
 		expect(await response.json()).toEqual({ error: STATUS_CODES[403] });
+
 	},
 );
 
@@ -99,6 +107,7 @@ it("rejects missing token roles with 403", async () => {
 });
 
 it("rejects realm roles and other client roles as API permissions", async () => {
+
 	verifyAccessToken.mockResolvedValueOnce({
 		sub: "demo-user",
 		realm_access: { roles: ["clinic_administrator"] },
@@ -106,6 +115,7 @@ it("rejects realm roles and other client roles as API permissions", async () => 
 	});
 	const response = await fetch(`${url}/role-check`, requestOptions);
 	expect(response.status).toBe(403);
+
 });
 
 it("rejects unknown API roles with 403", async () => {

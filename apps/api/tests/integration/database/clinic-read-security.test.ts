@@ -7,7 +7,7 @@ type ClinicActor = Pick<User, "userId" | "clinicId"> & { role: string };
 
 const setupConnectionString = process.env.DATABASE_SETUP_URL;
 const apiConnectionString = process.env.DATABASE_URL;
-if (!setupConnectionString || !apiConnectionString) {
+if(!setupConnectionString || !apiConnectionString) {
 	throw new Error("DATABASE_SETUP_URL and DATABASE_URL are required for isolated database tests");
 }
 
@@ -18,6 +18,7 @@ let clinics: ClinicMetadata[];
 let actors: ClinicActor[];
 
 beforeAll(async () => {
+
 	await setup.connect();
 	await api.connect();
 	const clinicResult = await setup.query<ClinicMetadata>(`
@@ -30,6 +31,7 @@ beforeAll(async () => {
         ORDER BY clinic_id, user_id
     `);
 	actors = actorResult.rows;
+
 });
 
 afterAll(async () => {
@@ -38,9 +40,11 @@ afterAll(async () => {
 });
 
 it("filters clinic reads when context settings have never been set", async () => {
+
 	const fresh = new Client({ connectionString: apiConnectionString });
 	await fresh.connect();
 	try {
+
 		await fresh.query("BEGIN");
 		await fresh.query("SET LOCAL ROLE reception");
 		const context = await fresh.query(`
@@ -50,18 +54,22 @@ it("filters clinic reads when context settings have never been set", async () =>
 		expect(context.rows).toEqual([{ user_id: null, clinic_id: null }]);
 		const { rows } = await fresh.query("SELECT clinic_id, time_zone FROM public.clinics");
 		expect(rows).toEqual([]);
+
 	} finally {
 		await fresh.query("ROLLBACK");
 		await fresh.end();
 	}
+
 });
 
 it("reads only the contextual clinic and allowed columns as reception", async () => {
+
 	const profileName = "reception";
 	const clinic = clinics[0];
 	const actor = actors.find((user) => user.role === profileName && user.clinicId === clinic.clinicId)!;
 	await api.query("BEGIN");
 	try {
+
 		await api.query(
 			`SELECT pg_catalog.set_config('app.user_id', $1, true),
             pg_catalog.set_config('app.clinic_id', $2, true)`,
@@ -71,23 +79,28 @@ it("reads only the contextual clinic and allowed columns as reception", async ()
 		const result = await api.query("SELECT clinic_id, time_zone FROM public.clinics");
 		expect(result.fields.map((field) => field.name)).toEqual(["clinic_id", "time_zone"]);
 		expect(result.rows).toEqual([{ clinic_id: clinic.clinicId, time_zone: clinic.timeZone }]);
+
 	} finally {
 		await api.query("ROLLBACK");
 	}
+
 });
 
 it("filters empty and NULL context fields as reception", async () => {
+
 	const profileName = "reception";
 	const clinic = clinics[0];
 	const actor = actors.find((user) => user.role === profileName && user.clinicId === clinic.clinicId)!;
-	for (const [userId, clinicId] of [
+	for(const [userId, clinicId] of [
 		["", clinic.clinicId],
 		[actor.userId, ""],
 		[null, clinic.clinicId],
 		[actor.userId, null],
 	]) {
+
 		await api.query("BEGIN");
 		try {
+
 			await api.query(
 				`SELECT pg_catalog.set_config('app.user_id', $1, true),
                 pg_catalog.set_config('app.clinic_id', $2, true)`,
@@ -96,22 +109,28 @@ it("filters empty and NULL context fields as reception", async () => {
 			await api.query(`SET LOCAL ROLE ${escapeIdentifier(profileName)}`);
 			const { rows } = await api.query("SELECT clinic_id, time_zone FROM public.clinics");
 			expect(rows).toEqual([]);
+
 		} finally {
 			await api.query("ROLLBACK");
 		}
+
 	}
+
 });
 
 it("rejects malformed context UUIDs as reception", async () => {
+
 	const profileName = "reception";
 	const clinic = clinics[0];
 	const actor = actors.find((user) => user.role === profileName && user.clinicId === clinic.clinicId)!;
-	for (const [userId, clinicId] of [
+	for(const [userId, clinicId] of [
 		["not-a-uuid", clinic.clinicId],
 		[actor.userId, "not-a-uuid"],
 	]) {
+
 		await api.query("BEGIN");
 		try {
+
 			await api.query(
 				`SELECT pg_catalog.set_config('app.user_id', $1, true),
                 pg_catalog.set_config('app.clinic_id', $2, true)`,
@@ -121,13 +140,17 @@ it("rejects malformed context UUIDs as reception", async () => {
 			await expect(api.query("SELECT clinic_id, time_zone FROM public.clinics")).rejects.toMatchObject({
 				code: "22P02",
 			});
+
 		} finally {
 			await api.query("ROLLBACK");
 		}
+
 	}
+
 });
 
 it("grants only the two clinic SELECT columns without table privileges or grant options", async () => {
+
 	const columnGrants = await setup.query(
 		`
         SELECT grantee, column_name, privilege_type, is_grantable FROM information_schema.column_privileges
@@ -150,14 +173,17 @@ it("grants only the two clinic SELECT columns without table privileges or grant 
 		[profileNames],
 	);
 	expect(tableGrants.rows).toEqual([]);
+
 });
 
 it("ends transaction-local clinic context after COMMIT", async () => {
+
 	const boundary = "COMMIT";
 	const clinic = clinics[0];
 	const actor = actors.find((user) => user.role === "reception" && user.clinicId === clinic.clinicId)!;
 	await api.query("BEGIN");
 	try {
+
 		await api.query(
 			`SELECT pg_catalog.set_config('app.user_id', $1, true),
             pg_catalog.set_config('app.clinic_id', $2, true)`,
@@ -171,7 +197,9 @@ it("ends transaction-local clinic context after COMMIT", async () => {
 		await api.query("SET LOCAL ROLE reception");
 		const next = await api.query("SELECT clinic_id, time_zone FROM public.clinics");
 		expect(next.rows).toEqual([]);
+
 	} finally {
 		await api.query("ROLLBACK");
 	}
+
 });

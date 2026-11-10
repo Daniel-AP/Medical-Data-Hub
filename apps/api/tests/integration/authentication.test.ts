@@ -13,7 +13,7 @@ import { UserRole } from "../../src/generated/prisma/enums.js";
 import { createAuthenticationMiddleware, requireRoles } from "../../src/middleware/authentication.js";
 
 const accessToken = process.env.KEYCLOAK_TEST_ACCESS_TOKEN;
-if (!accessToken) {
+if(!accessToken) {
 	throw new Error("Set KEYCLOAK_TEST_ACCESS_TOKEN to a fresh reception access token");
 }
 
@@ -29,6 +29,7 @@ let server: Server;
 let url: string;
 
 beforeAll(async () => {
+
 	const authenticate = createAuthenticationMiddleware(createAccessTokenVerifier(configuration));
 	router.get("/authentication-check", authenticate, (request, response) => {
 		response.json(request.authentication);
@@ -62,6 +63,7 @@ beforeAll(async () => {
 	await once(server, "listening");
 	url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 	await createAccessTokenVerifier(configuration)(accessToken);
+
 });
 
 afterAll(async () => {
@@ -70,6 +72,7 @@ afterAll(async () => {
 });
 
 it("accepts a real Keycloak token and returns the reception identity", async () => {
+
 	const response = await fetch(`${url}/authentication-check`, requestOptions);
 	expect(response.status).toBe(200);
 	expect(await response.json()).toEqual({
@@ -78,6 +81,7 @@ it("accepts a real Keycloak token and returns the reception identity", async () 
 		sessionId: expect.any(String),
 		clientId: "medical-data-hub-postman",
 	});
+
 });
 
 it("rejects a missing bearer token with 401 in the real-provider fixture", async () => {
@@ -91,12 +95,14 @@ it("rejects a malformed token with 401 in the real-provider fixture", async () =
 });
 
 it("rejects a modified signature against real Keycloak keys with 401", async () => {
+
 	const [header, payload, signature] = accessToken.split(".");
-	const modifiedSignature = (signature[0] === "A" ? "B" : "A") + signature.slice(1);
+	const modifiedSignature = (signature[0] === "A" ? "B" : "A")+signature.slice(1);
 	const response = await fetch(`${url}/authentication-check`, {
 		headers: { Authorization: `Bearer ${header}.${payload}.${modifiedSignature}` },
 	});
 	expect(response.status).toBe(401);
+
 });
 
 it("accepts a permitted role from a real Keycloak token", async () => {
@@ -120,26 +126,30 @@ it("rejects an audience mismatch for a real Keycloak token with 401", async () =
 });
 
 it("rejects a real Keycloak token after expiration with a simulated clock", async () => {
+
 	const { exp } = decodeJwt(accessToken);
-	if (typeof exp !== "number") {
+	if(typeof exp !== "number") {
 		throw new Error("The test token must contain a numeric expiration");
 	}
 
 	vi.useFakeTimers({ toFake: ["Date"] });
 	try {
-		vi.setSystemTime((exp + 1) * 1000);
+		vi.setSystemTime((exp+1)*1000);
 		const response = await fetch(`${url}/authentication-check`, requestOptions);
 		expect(response.status).toBe(401);
 	} finally {
 		vi.useRealTimers();
 	}
+
 });
 
 it("uses cached keys during a Keycloak outage and recovers cold verification", async () => {
+
 	const warmResponse = await fetch(`${url}/authentication-check`, requestOptions);
 	expect(warmResponse.status).toBe(200);
 
 	try {
+
 		await execFileAsync("docker", [...composeArguments, "stop", "keycloak"], { timeout: 30_000 });
 		const cachedResponse = await fetch(`${url}/authentication-check`, requestOptions);
 		expect(cachedResponse.status).toBe(200);
@@ -147,6 +157,7 @@ it("uses cached keys during a Keycloak outage and recovers cold verification", a
 		const coldResponse = await fetch(`${url}/cold-start-check`, requestOptions);
 		expect(coldResponse.status).toBe(503);
 		expect(await coldResponse.json()).toEqual({ error: STATUS_CODES[503] });
+
 	} finally {
 		await execFileAsync("docker", [...composeArguments, "up", "--wait", "--wait-timeout", "180", "keycloak"], {
 			timeout: 190_000,
@@ -155,4 +166,5 @@ it("uses cached keys during a Keycloak outage and recovers cold verification", a
 
 	const recoveredResponse = await fetch(`${url}/cold-start-check`, requestOptions);
 	expect(recoveredResponse.status).toBe(204);
+
 }, 300_000);

@@ -20,6 +20,7 @@ let server: Server;
 let url: string;
 
 beforeAll(async () => {
+
 	router.post(
 		"/auth/logout-request",
 		createAuthenticationMiddleware(verifyAccessToken),
@@ -29,13 +30,16 @@ beforeAll(async () => {
 	server = app.listen(0, "127.0.0.1");
 	await once(server, "listening");
 	url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/auth/logout-request`;
+
 });
 
 beforeEach(() => {
+
 	verifyAccessToken.mockReset();
 	verifyAccessToken.mockResolvedValue({ sub: context.identityId, sid: context.sessionId, azp: context.clientId });
 	verifyIdToken.mockReset();
 	verifyIdToken.mockResolvedValue({});
+
 });
 
 afterAll(async () => {
@@ -44,6 +48,7 @@ afterAll(async () => {
 });
 
 it("returns a non-cacheable Keycloak logout URL after verifying the ID token against the authenticated session", async () => {
+
 	const response = await fetch(url, { ...requestOptions, body: JSON.stringify({ idToken: "demo-id-token" }) });
 
 	expect(response.status).toBe(200);
@@ -52,9 +57,11 @@ it("returns a non-cacheable Keycloak logout URL after verifying the ID token aga
 		logoutUrl: `${issuer}/protocol/openid-connect/logout?id_token_hint=demo-id-token&client_id=medical-data-hub-postman`,
 	});
 	expect(verifyIdToken).toHaveBeenCalledWith("demo-id-token", context);
+
 });
 
 it("ignores user, session, and client identifiers supplied in the logout body", async () => {
+
 	const response = await fetch(url, {
 		...requestOptions,
 		body: JSON.stringify({
@@ -67,9 +74,11 @@ it("ignores user, session, and client identifiers supplied in the logout body", 
 
 	expect(response.status).toBe(200);
 	expect(verifyIdToken).toHaveBeenCalledWith("demo-id-token", context);
+
 });
 
 it("rejects a logout request without a bearer token with 401", async () => {
+
 	const response = await fetch(url, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -78,6 +87,7 @@ it("rejects a logout request without a bearer token with 401", async () => {
 
 	expect(response.status).toBe(401);
 	expect(verifyIdToken).not.toHaveBeenCalled();
+
 });
 
 it.each([undefined, null, 42, ""])("rejects an unusable logout ID token field (%s) with 400", async (idToken) => {
@@ -93,6 +103,7 @@ it.each([
 	["a missing client", { azp: undefined }],
 	["an empty client", { azp: "" }],
 ] as const)("rejects a logout request with %s with 401", async (_case, claims) => {
+
 	verifyAccessToken.mockResolvedValueOnce({
 		sub: context.identityId,
 		sid: context.sessionId,
@@ -103,9 +114,11 @@ it.each([
 
 	expect(response.status).toBe(401);
 	expect(verifyIdToken).not.toHaveBeenCalled();
+
 });
 
 it("preserves ID token verification failures as a generic 401 logout response", async () => {
+
 	verifyIdToken.mockRejectedValueOnce(
 		Object.assign(new Error("ID token belongs to another session"), { status: 401 }),
 	);
@@ -113,12 +126,15 @@ it("preserves ID token verification failures as a generic 401 logout response", 
 
 	expect(response.status).toBe(401);
 	expect(await response.json()).toEqual({ error: STATUS_CODES[401] });
+
 });
 
 it("preserves unavailable ID token verification keys as a generic 503 logout response", async () => {
+
 	verifyIdToken.mockRejectedValueOnce(Object.assign(new Error("Verification keys unavailable"), { status: 503 }));
 	const response = await fetch(url, { ...requestOptions, body: JSON.stringify({ idToken: "demo-id-token" }) });
 
 	expect(response.status).toBe(503);
 	expect(await response.json()).toEqual({ error: STATUS_CODES[503] });
+
 });

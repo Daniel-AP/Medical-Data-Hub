@@ -6,15 +6,18 @@ export class RedisBatchTimeoutError extends Error {
 	}
 }
 
-export const runRedisBatch = async <T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+export const runRedisBatch = async <T>(operation: (signal: AbortSignal) => Promise<T>) => {
+
 	const controller = new AbortController();
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const deadline = new Promise<never>((_resolve, reject) => {
+
 		timer = setTimeout(() => {
 			const error = new RedisBatchTimeoutError();
 			reject(error);
 			controller.abort(error);
 		}, redisBatchTimeoutMs);
+
 	});
 
 	try {
@@ -22,4 +25,5 @@ export const runRedisBatch = async <T>(operation: (signal: AbortSignal) => Promi
 	} finally {
 		clearTimeout(timer);
 	}
+
 };
