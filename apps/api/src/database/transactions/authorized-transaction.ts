@@ -57,6 +57,11 @@ const operationPolicies = {
 		requiresActorProfessionalId: false,
 		isolation: "readCommitted",
 	},
+	createProfessional: {
+		roles: [UserRole.clinicAdministrator],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
 	replaceOwnWeeklySchedule: {
 		roles: [UserRole.healthcareProfessional],
 		requiresActorProfessionalId: true,
@@ -94,8 +99,8 @@ type ActorContext = Pick<User, "userId" | "clinicId" | "role"> & {
 	destinationUser?: LockedUser;
 };
 
-type AuthorizedOperation = { name: Exclude<keyof typeof operationPolicies, "updateUserPermissions" | "rescheduleAppointment"> }
-	| { name: "updateUserPermissions"; targetUserId: string }
+type AuthorizedOperation = { name: Exclude<keyof typeof operationPolicies, "updateUserPermissions" | "createProfessional" | "rescheduleAppointment"> }
+	| { name: "updateUserPermissions" | "createProfessional"; targetUserId: string }
 	| { name: "rescheduleAppointment"; appointmentId: string; destinationProfessionalId: string };
 
 const lockUserForShareQuery = `SELECT user_id AS "userId", clinic_id AS "clinicId", role, is_active AS "isActive"
@@ -147,7 +152,8 @@ export const runAuthorizedTransaction = async <T>(
 ) => {
 
 	const policy = operationPolicies[operation.name];
-	const targetUserId = operation.name === "updateUserPermissions" ? operation.targetUserId.toLowerCase() : undefined;
+	const targetUserId = "targetUserId" in operation ? operation.targetUserId.toLowerCase() : undefined;
+	const editedUserId = operation.name === "updateUserPermissions" ? targetUserId : undefined;
 
 	return runTransaction(
 		policy.isolation,
@@ -179,14 +185,15 @@ export const runAuthorizedTransaction = async <T>(
 			const lockedUsers = new Map<string, LockedUser>();
 			for(const userId of [...userIdsToLock].sort()) {
 
-				const lockQuery = userId === targetUserId ? lockUserForNoKeyUpdateQuery : lockUserForShareQuery;
+				const lockQuery = userId === editedUserId ? lockUserForNoKeyUpdateQuery : lockUserForShareQuery;
 				const {
 					rows: [lockedUser],
 				} = await client.query<LockedUser>(lockQuery, [actorUserId, userId]);
-				if(!lockedUser) {
+				if(lockedUser) {
+					lockedUsers.set(userId, lockedUser);
+				} else if(operation.name !== "createProfessional" || userId === actorUserId) {
 					throw forbidden();
 				}
-				lockedUsers.set(userId, lockedUser);
 
 			}
 
