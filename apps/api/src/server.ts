@@ -9,6 +9,7 @@ import { getClinicalNote, registerClinicalNote } from "./routes/clinical-notes.j
 import { createClinicRequestHandler } from "./routes/clinics.js";
 import { createLogoutRequestHandler } from "./routes/logout.js";
 import { editProfessionalSpecialty, registerProfessional } from "./routes/professionals.js";
+import { registerProfessionalService } from "./routes/professional-services.js";
 import { editService, registerService } from "./routes/services.js";
 import { registerSpecialty } from "./routes/specialties.js";
 import { createUserRequestHandler, updateUserPermissionsRequestHandler } from "./routes/users.js";
@@ -54,6 +55,7 @@ router.post("/appointments/:appointmentId/clinical-note", authenticate, requireR
 router.get("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), getClinicalNote);
 router.post("/professionals", authenticate, requireRoles(UserRole.clinicAdministrator), registerProfessional);
 router.patch("/professionals/:professionalId", authenticate, requireRoles(UserRole.clinicAdministrator), editProfessionalSpecialty);
+router.post("/professionals/:professionalId/services", authenticate, requireRoles(UserRole.clinicAdministrator), registerProfessionalService);
 
 app.listen({ port, host }, (error) => {
 

@@ -7,6 +7,7 @@ export default defineConfig({
 			"apps/api/tests/routes/audit-records.integration.test.ts",
 			"apps/api/tests/routes/clinic-administration.integration.test.ts",
 			"apps/api/tests/routes/clinical-notes.integration.test.ts",
+			"apps/api/tests/routes/professional-services.integration.test.ts",
 			"apps/api/tests/routes/professionals.integration.test.ts",
 			"apps/api/tests/routes/services.integration.test.ts",
 			"apps/api/tests/routes/specialties.integration.test.ts",
