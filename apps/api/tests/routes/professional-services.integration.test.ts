@@ -18,12 +18,23 @@ const professionalId = randomUUID();
 const serviceId = randomUUID();
 const concurrentServiceId = randomUUID();
 const inactiveServiceId = randomUUID();
-const fixtureServiceIds = [serviceId, concurrentServiceId, inactiveServiceId];
+const unlinkedServiceId = randomUUID();
+const fixtureServiceIds = [serviceId, concurrentServiceId, inactiveServiceId, unlinkedServiceId];
 
 const registerProfessionalService = (professionalId: string, body: object, token = administratorToken) => {
 
 	return fetch(new URL(`/professionals/${professionalId}/services`, apiUrl), {
 		method: "POST",
+		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+		body: JSON.stringify(body),
+	});
+
+};
+
+const editProfessionalServiceActivity = (professionalId: string, serviceId: string, body: object, token = administratorToken) => {
+
+	return fetch(new URL(`/professionals/${professionalId}/services/${serviceId}`, apiUrl), {
+		method: "PATCH",
 		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
 		body: JSON.stringify(body),
 	});
@@ -39,7 +50,8 @@ const readClinic = async (token: string) => {
 		        services.service_id AS "serviceId", professionals.specialty_id AS "specialtyId"
 		 FROM public.users
 		 JOIN public.professionals USING (clinic_id)
-		 JOIN public.services USING (clinic_id, specialty_id)
+		 JOIN public.professional_services USING (clinic_id, professional_id)
+		 JOIN public.services USING (clinic_id, service_id, specialty_id)
 		 WHERE users.identity_id = $1 LIMIT 1`,
 		[decodeJwt(token).sub],
 	);
@@ -63,13 +75,13 @@ const readVersion = async () => {
 
 };
 
-const readAssociation = async (serviceId: string) => {
+const readAssociation = async (serviceId: string, targetProfessionalId: string = professionalId) => {
 
 	const { rows } = await setup.query(
 		`SELECT clinic_id AS "clinicId", professional_id AS "professionalId",
 		        service_id AS "serviceId", is_active AS "isActive"
 		 FROM public.professional_services WHERE professional_id = $1::uuid AND service_id = $2::uuid`,
-		[professionalId, serviceId],
+		[targetProfessionalId, serviceId],
 	);
 
 	return rows;
@@ -193,6 +205,107 @@ it("preserves an existing inactive association when registration is retried", as
 	expect(await readAssociation(inactiveServiceId)).toEqual([{
 		clinicId: clinic.clinicId, professionalId, serviceId: inactiveServiceId, isActive: false,
 	}]);
+	expect(await readVersion()).toBe(version);
+
+});
+
+it("authorizes and validates professional service association activity edits", async () => {
+
+	const body = { isActive: false };
+	expect((await editProfessionalServiceActivity(professionalId, serviceId, body, "")).status).toBe(401);
+	expect((await editProfessionalServiceActivity(professionalId, serviceId, body, receptionToken)).status).toBe(403);
+	expect((await editProfessionalServiceActivity("invalid", serviceId, body)).status).toBe(400);
+	expect((await editProfessionalServiceActivity(professionalId, "invalid", body)).status).toBe(400);
+	for(const changes of [{}, { isActive: "false" }, { ...body, clinicId: foreignClinic.clinicId }]) {
+		expect((await editProfessionalServiceActivity(professionalId, serviceId, changes)).status).toBe(400);
+	}
+
+});
+
+it("hides missing and foreign professional service associations during activity edits", async () => {
+
+	for(const [requestedProfessionalId, requestedServiceId] of [
+		[professionalId, unlinkedServiceId],
+		[foreignClinic.professionalId, foreignClinic.serviceId],
+	]) {
+		const response = await editProfessionalServiceActivity(requestedProfessionalId, requestedServiceId, { isActive: false });
+		expect(response.status).toBe(404);
+		expect(await response.json()).toEqual({ error: "Not Found" });
+	}
+
+});
+
+it("deactivates and reactivates an association with historical appointments and increments availability only for changes", async () => {
+
+	const { rows: [appointment] } = await setup.query<{
+		appointmentId: string; professionalId: string; serviceId: string; state: string;
+	}>(
+		`SELECT appointment_id AS "appointmentId", professional_id AS "professionalId",
+		        service_id AS "serviceId", state
+		 FROM public.appointments JOIN public.services USING (clinic_id, service_id)
+		 WHERE clinic_id = $1::uuid AND services.name = 'Consulta de seguimiento' LIMIT 1`,
+		[clinic.clinicId],
+	);
+	const { professionalId, serviceId } = appointment;
+	const version = await readVersion();
+	try {
+
+		const deactivated = await editProfessionalServiceActivity(professionalId, serviceId, { isActive: false });
+		expect(deactivated.status).toBe(200);
+		expect(await deactivated.json()).toEqual({ professionalId, serviceId, isActive: false });
+		expect(await readAssociation(serviceId, professionalId)).toMatchObject([{ isActive: false }]);
+		expect(await readVersion()).toBe(version+1n);
+
+		const unchanged = await editProfessionalServiceActivity(professionalId, serviceId, { isActive: false });
+		expect(unchanged.status).toBe(200);
+		expect(await readVersion()).toBe(version+1n);
+
+		const reactivated = await editProfessionalServiceActivity(professionalId, serviceId, { isActive: true });
+		expect(reactivated.status).toBe(200);
+		expect(await reactivated.json()).toEqual({ professionalId, serviceId, isActive: true });
+		expect(await readAssociation(serviceId, professionalId)).toMatchObject([{ isActive: true }]);
+		expect(await readVersion()).toBe(version+2n);
+
+		const { rows } = await setup.query(
+			"SELECT state FROM public.appointments WHERE appointment_id = $1::uuid",
+			[appointment.appointmentId],
+		);
+		expect(rows).toEqual([{ state: appointment.state }]);
+
+	} finally {
+		await setup.query(
+			`UPDATE public.professional_services SET is_active = true
+			 WHERE professional_id = $1::uuid AND service_id = $2::uuid`,
+			[professionalId, serviceId],
+		);
+	}
+
+});
+
+it("rejects association deactivation while the pair has reserved appointments", async () => {
+
+	const { rows: [pair] } = await setup.query<{ professionalId: string; serviceId: string }>(
+		`SELECT professional_id AS "professionalId", service_id AS "serviceId"
+		 FROM public.appointments WHERE clinic_id = $1::uuid AND state = 'reserved' LIMIT 1`,
+		[clinic.clinicId],
+	);
+	const version = await readVersion();
+	expect((await editProfessionalServiceActivity(pair.professionalId, pair.serviceId, { isActive: false })).status).toBe(409);
+	expect(await readAssociation(pair.serviceId, pair.professionalId)).toMatchObject([{ isActive: true }]);
+	expect(await readVersion()).toBe(version);
+
+});
+
+it("rejects reactivation of an association with incompatible specialties", async () => {
+
+	await setup.query(
+		`INSERT INTO public.professional_services (clinic_id, professional_id, service_id, is_active)
+		 VALUES ($1::uuid, $2::uuid, $3::uuid, false)`,
+		[clinic.clinicId, professionalId, incompatibleServiceId],
+	);
+	const version = await readVersion();
+	expect((await editProfessionalServiceActivity(professionalId, incompatibleServiceId, { isActive: true })).status).toBe(409);
+	expect(await readAssociation(incompatibleServiceId)).toMatchObject([{ isActive: false }]);
 	expect(await readVersion()).toBe(version);
 
 });
