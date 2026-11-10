@@ -7,7 +7,7 @@ import { createAuthenticationMiddleware, requireRoles } from "./middleware/authe
 import { listAuditRecords } from "./routes/audit-records.js";
 import { createClinicRequestHandler } from "./routes/clinics.js";
 import { createLogoutRequestHandler } from "./routes/logout.js";
-import { createUserRequestHandler } from "./routes/users.js";
+import { createUserRequestHandler, updateUserPermissionsRequestHandler } from "./routes/users.js";
 
 const host = process.env.HOST;
 const port = Number(process.env.PORT);
@@ -36,11 +36,13 @@ const keycloakAdminSettings = {
 };
 const registerClinic = createClinicRequestHandler(keycloakAdminSettings);
 const registerUser = createUserRequestHandler(keycloakAdminSettings);
+const editUserPermissions = updateUserPermissionsRequestHandler(keycloakAdminSettings);
 
 router.post("/auth/logout-request", authenticate, prepareLogout);
 router.get("/audit-records", authenticate, requireRoles(UserRole.clinicAdministrator), listAuditRecords);
 router.post("/clinics", authenticate, requireRoles(UserRole.platformAdministrator), registerClinic);
 router.post("/users", authenticate, requireRoles(UserRole.clinicAdministrator), registerUser);
+router.patch("/users/:userId", authenticate, requireRoles(UserRole.clinicAdministrator), editUserPermissions);
 
 app.listen({ port, host }, (error) => {
 

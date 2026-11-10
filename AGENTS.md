@@ -35,13 +35,13 @@ These preferences are explicit user instructions.
 - Check the assignment, rubric, accepted decisions, and relevant code before making claims. The assignment is `project-phase-1-oltp.pdf` in the repository root, excluded locally from Git. Ask for it if unavailable
 - Preserve `RF1` through `RF21` and `I1` through `I8`. Distinguish requirements, proposals, accepted decisions, implementation, and verified results. Report discrepancies and unknowns
 - Keep credentials, tokens, and real patient data out of documentation and evidence. Use synthetic data
-- Keep [design.md](docs/design.md) aligned with decisions and implementation. Preserve its organization and keep the dictionary, ER diagram, and normalization together in Data Model. Record alternatives, tradeoffs, and unresolved decisions without duplicating evidence
+- Update [design.md](docs/design.md) only when the agreed design changes. Preserve its organization and keep the dictionary, ER diagram, and normalization together in Data Model. Record alternatives, tradeoffs, and unresolved decisions without duplicating evidence
 - Mention unit tests when appropriate to the work. After writing and validating tests by running them, update [test-report.md](docs/test-report.md) in the same task
 - Keep [test-report.md](docs/test-report.md) limited to the coverage table. Do not add headings, prose, execution evidence, review notes, or any other content to that file
 - Use a coverage table with only `Requirement` and `Tests` columns, ordered from `RF1` through `RF21`, then `I1` through `I8`. Add rows as coverage becomes available, without empty or `Pending` rows. Each test reference uses its exact name linked to its file through a relative path, line numbers are optional
 - Distinguish unit tests from real Compose integration tests. Report execution evidence, failures, partial runs, and stale results accurately in chat, never in the test report
 - Reserve `docs/performance-report.md` for cache measurements and index evidence in separate sections. Define its format and structure with the human when performance evaluation begins, then create it and link it from the test report. Do not create or populate it beforehand
-- Record material AI contributions in the existing [ai-usage.md](docs/ai-usage.md) table, separating agent checks from human validation
+- Record material AI contributions in the existing [ai-usage.md](docs/ai-usage.md) table, separating agent checks from human validation. Add a new entry only after the human explicitly approves that entry
 
 # Documentation Review
 

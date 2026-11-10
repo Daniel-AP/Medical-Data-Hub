@@ -10,7 +10,17 @@ import { createAccessTokenVerifier } from "../../src/clients/keycloak/token-veri
 import { UserRole } from "../../src/generated/prisma/enums.js";
 import { createAuthenticationMiddleware, requireRoles } from "../../src/middleware/authentication.js";
 import { createClinicRequestHandler } from "../../src/routes/clinics.js";
-import { createUserRequestHandler } from "../../src/routes/users.js";
+import { createUserRequestHandler, updateUserPermissionsRequestHandler } from "../../src/routes/users.js";
+
+type UserState = {
+	userId: string;
+	clinicId: string;
+	role: string;
+	isActive: boolean;
+	version: string;
+	professionalId: string | null;
+	appointmentIds: string[];
+};
 
 const apiUrl = process.env.CLINIC_TEST_API_URL;
 const platformAdministratorToken = process.env.CLINIC_TEST_PLATFORM_TOKEN;
@@ -31,10 +41,12 @@ if(!apiUrl || !hasTokens || !keycloakUrl || !setupUrl || !applicationId || !appl
 const setup = new Pool({ connectionString: setupUrl });
 const adminUrl = new URL("/admin/realms/medical-data-hub/", keycloakUrl);
 const clinicAdministratorIdentityId = decodeJwt(clinicAdministratorToken).sub;
+const professionalIdentityId = decodeJwt(healthcareProfessionalToken).sub!;
 const timeZone = "America/Costa_Rica";
 let faultServer: Server;
 let faultUrl: string;
-let roleFault: "partial" | "rejected" | "unconfirmed";
+let roleFault: "partial" | "rejected" | "unconfirmed" | undefined;
+let keycloakRequests = 0;
 let fixtureIdentityId: string | undefined;
 let fixtureClinicName: string | undefined;
 const roleChangeMethods: string[] = [];
@@ -43,6 +55,16 @@ const postRegistration = (path: string, body: object, token?: string, baseUrl = 
 
 	return fetch(new URL(path, baseUrl), {
 		method: "POST",
+		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+		body: JSON.stringify(body),
+	});
+
+};
+
+const patchUser = (userId: string, body: object, token = clinicAdministratorToken, baseUrl = apiUrl) => {
+
+	return fetch(new URL(`/users/${userId}`, baseUrl), {
+		method: "PATCH",
 		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
 		body: JSON.stringify(body),
 	});
@@ -80,16 +102,16 @@ const readApplicationRoles = async (identityId: string) => {
 
 };
 
-const assignReceptionRole = async (identityId: string) => {
+const changeApplicationRole = async (identityId: string, roleName: string, method = "POST") => {
 
 	const applications = await callKeycloakAsAdmin(`clients?${new URLSearchParams({ clientId: applicationId! })}`);
 	expect(applications.status).toBe(200);
 	const [{ id: applicationUuid }] = await applications.json();
-	const role = await callKeycloakAsAdmin(`clients/${applicationUuid}/roles/reception`);
+	const role = await callKeycloakAsAdmin(`clients/${applicationUuid}/roles/${roleName}`);
 	expect(role.status).toBe(200);
 	const response = await callKeycloakAsAdmin(
 		`users/${identityId}/role-mappings/clients/${applicationUuid}`,
-		"POST",
+		method,
 		[await role.json()],
 	);
 	expect(response.status).toBe(204);
@@ -98,6 +120,7 @@ const assignReceptionRole = async (identityId: string) => {
 
 const fetchWithRoleFault: typeof fetch = async (url, options) => {
 
+	keycloakRequests++;
 	const method = options?.method;
 	const isRoleMapping = String(url).includes("/role-mappings/clients/");
 	if(!isRoleMapping || (method !== "POST" && method !== "DELETE")) {
@@ -118,6 +141,52 @@ const fetchWithRoleFault: typeof fetch = async (url, options) => {
 
 };
 
+const readForeignReceptionUser = async () => {
+
+	const { rows: [user] } = await setup.query(
+		`SELECT existing.user_id AS "userId", existing.identity_id AS "identityId", existing.clinic_id AS "clinicId", existing.role
+		 FROM public.users AS existing
+		 JOIN public.users AS administrator ON administrator.identity_id = $1
+		 WHERE existing.clinic_id <> administrator.clinic_id AND existing.role = 'reception'
+		 ORDER BY existing.user_id LIMIT 1`,
+		[clinicAdministratorIdentityId],
+	);
+
+	return user;
+
+};
+
+const readUserState = async (identityId: string) => {
+
+	const { rows: [state] } = await setup.query<UserState>(
+		`SELECT u.user_id AS "userId", u.clinic_id AS "clinicId", u.role, u.is_active AS "isActive", v.version,
+		        p.professional_id AS "professionalId",
+		        ARRAY(SELECT appointment_id FROM public.appointments
+		              WHERE professional_id = p.professional_id ORDER BY appointment_id) AS "appointmentIds"
+		 FROM public.users AS u
+		 JOIN public.clinic_availability_versions AS v USING (clinic_id)
+		 LEFT JOIN public.professionals AS p ON p.clinic_id = u.clinic_id AND p.user_id = u.user_id
+		 WHERE u.identity_id = $1`,
+		[identityId],
+	);
+
+	return state;
+
+};
+
+const restoreUserState = async (identityId: string, state: UserState) => {
+
+	await setup.query("UPDATE public.users SET role = $2::public.user_role, is_active = $3 WHERE identity_id = $1", [
+		identityId, state.role, state.isActive,
+	]);
+	await setup.query("UPDATE public.clinic_availability_versions SET version = $2 WHERE clinic_id = $1", [
+		state.clinicId, state.version,
+	]);
+	await changeApplicationRole(identityId, state.role);
+	await changeApplicationRole(identityId, "reception", "DELETE");
+
+};
+
 beforeAll(async () => {
 
 	const issuer = new URL("/realms/medical-data-hub", keycloakUrl);
@@ -128,6 +197,12 @@ beforeAll(async () => {
 	const settings = { issuer, internalUrl: new URL(keycloakUrl), applicationId, applicationSecret };
 	router.post("/clinics", authenticate, requireRoles(UserRole.platformAdministrator), createClinicRequestHandler(settings, fetchWithRoleFault));
 	router.post("/users", authenticate, requireRoles(UserRole.clinicAdministrator), createUserRequestHandler(settings, fetchWithRoleFault));
+	router.patch(
+		"/users/:userId",
+		authenticate,
+		requireRoles(UserRole.clinicAdministrator),
+		updateUserPermissionsRequestHandler(settings, fetchWithRoleFault),
+	);
 
 	faultServer = app.listen(0, "127.0.0.1");
 	await once(faultServer, "listening");
@@ -156,6 +231,8 @@ afterEach(async () => {
 
 	}
 	roleChangeMethods.length = 0;
+	keycloakRequests = 0;
+	roleFault = undefined;
 
 });
 
@@ -220,7 +297,7 @@ it("registers a clinic with an active administrator, an initial version, and the
 	const name = `Synthetic clinic ${randomUUID()}`;
 	fixtureClinicName = name;
 	const administratorIdentityId = await createKeycloakUser();
-	await assignReceptionRole(administratorIdentityId);
+	await changeApplicationRole(administratorIdentityId, "reception");
 	const response = await postRegistration("/clinics", { name, timeZone, administratorIdentityId }, platformAdministratorToken);
 	expect(response.status).toBe(201);
 	const result = await response.json();
@@ -266,14 +343,7 @@ it("registers an active user in the administrator's clinic and assigns the Keycl
 
 it("rejects a duplicate identity in both registrations without changing its clinic or role", async () => {
 
-	const { rows: [existingUser] } = await setup.query(
-		`SELECT existing.identity_id AS "identityId", existing.clinic_id AS "clinicId", existing.role
-		 FROM public.users AS existing
-		 JOIN public.users AS administrator ON administrator.identity_id = $1
-		 WHERE existing.clinic_id <> administrator.clinic_id AND existing.role = 'reception'
-		 ORDER BY existing.user_id LIMIT 1`,
-		[clinicAdministratorIdentityId],
-	);
+	const existingUser = await readForeignReceptionUser();
 	const { identityId } = existingUser;
 	const name = `Duplicate identity clinic ${randomUUID()}`;
 	fixtureClinicName = name;
@@ -286,7 +356,7 @@ it("rejects a duplicate identity in both registrations without changing its clin
 	expect(await userResponse.json()).toEqual({ error: "Conflict" });
 	expect((await setup.query("SELECT clinic_id FROM public.clinics WHERE name = $1", [name])).rows).toEqual([]);
 	const { rows } = await setup.query(
-		'SELECT identity_id AS "identityId", clinic_id AS "clinicId", role FROM public.users WHERE identity_id = $1',
+		'SELECT user_id AS "userId", identity_id AS "identityId", clinic_id AS "clinicId", role FROM public.users WHERE identity_id = $1',
 		[identityId],
 	);
 	expect(rows).toEqual([existingUser]);
@@ -299,7 +369,7 @@ it("reports a partial Keycloak role update and rolls back clinic registration", 
 	const name = `Synthetic clinic ${randomUUID()}`;
 	fixtureClinicName = name;
 	const administratorIdentityId = await createKeycloakUser();
-	await assignReceptionRole(administratorIdentityId);
+	await changeApplicationRole(administratorIdentityId, "reception");
 	roleFault = "partial";
 
 	const body = { name, timeZone, administratorIdentityId };
@@ -336,5 +406,101 @@ it.each([
 	expect(roleChangeMethods).toEqual(["POST"]);
 	expect((await setup.query("SELECT user_id FROM public.users WHERE identity_id = $1", [identityId])).rows).toEqual([]);
 	expect(await readApplicationRoles(identityId)).toEqual(expectedRoles);
+
+});
+
+it("rejects invalid permission edits and hides unavailable targets", async () => {
+
+	expect((await patchUser("abc", { isActive: false })).status).toBe(400);
+	const userId = randomUUID();
+	for(const body of [{}, { role: "platform_administrator" }, { isActive: "false" }, { clinicId: randomUUID() }]) {
+		expect((await patchUser(userId, body)).status).toBe(400);
+	}
+	const foreignUser = await readForeignReceptionUser();
+	const missingTarget = await patchUser(userId, { isActive: false });
+	const foreignTarget = await patchUser(foreignUser.userId, { isActive: false });
+	expect(missingTarget.status).toBe(403);
+	expect(foreignTarget.status).toBe(403);
+	expect(await foreignTarget.json()).toEqual(await missingTarget.json());
+
+	const { userId: localUserId } = await readUserState(professionalIdentityId);
+	expect((await patchUser(localUserId, { isActive: false }, "")).status).toBe(401);
+	expect((await patchUser(localUserId, { isActive: false }, receptionToken)).status).toBe(403);
+
+});
+
+it("preserves omitted fields and increments the professional clinic version once per actual edit", async () => {
+
+	const original = await readUserState(professionalIdentityId);
+	expect(original.professionalId).not.toBeNull();
+	expect(original.appointmentIds.length).toBeGreaterThan(0);
+
+	try {
+
+		const inactive = await patchUser(original.userId, { isActive: false }, clinicAdministratorToken, faultUrl);
+		expect(inactive.status).toBe(200);
+		const inactivePermissions = { userId: original.userId, role: original.role, isActive: false };
+		expect(await inactive.json()).toEqual(inactivePermissions);
+		const inactiveState = { ...original, isActive: false, version: (BigInt(original.version)+1n).toString() };
+		expect(await readUserState(professionalIdentityId)).toEqual(inactiveState);
+		expect(await readApplicationRoles(professionalIdentityId)).toEqual([original.role]);
+		const account = await callKeycloakAsAdmin(`users/${professionalIdentityId}`);
+		expect((await account.json()).enabled).toBe(true);
+
+		const unchanged = await patchUser(original.userId, { role: original.role }, clinicAdministratorToken, faultUrl);
+		expect(unchanged.status).toBe(200);
+		expect(await unchanged.json()).toEqual(inactivePermissions);
+		expect(await readUserState(professionalIdentityId)).toEqual(inactiveState);
+		expect(keycloakRequests).toBe(0);
+
+		const updated = await patchUser(original.userId, { role: "reception", isActive: true });
+		expect(updated.status).toBe(200);
+		expect(await updated.json()).toEqual({ userId: original.userId, role: "reception", isActive: true });
+		expect(await readUserState(professionalIdentityId)).toEqual({
+			...original, role: "reception", isActive: true, version: (BigInt(original.version)+2n).toString(),
+		});
+		expect(await readApplicationRoles(professionalIdentityId)).toEqual(["reception"]);
+
+	} finally {
+		await restoreUserState(professionalIdentityId, original);
+	}
+
+});
+
+it("rejects an administrator token after its local role changes", async () => {
+
+	const identityId = clinicAdministratorIdentityId!;
+	const original = await readUserState(identityId);
+	try {
+
+		const updated = await patchUser(original.userId, { role: "reception" });
+		expect(updated.status).toBe(200);
+		expect(await updated.json()).toEqual({ userId: original.userId, role: "reception", isActive: original.isActive });
+		expect(await readUserState(identityId)).toEqual({ ...original, role: "reception" });
+		expect(await readApplicationRoles(identityId)).toEqual(["reception"]);
+		expect((await patchUser(original.userId, { isActive: false })).status).toBe(403);
+
+	} finally {
+		await restoreUserState(identityId, original);
+	}
+
+});
+
+it("rolls back permissions and the availability version when Keycloak confirmation is lost", async () => {
+
+	const original = await readUserState(professionalIdentityId);
+	roleFault = "unconfirmed";
+	try {
+
+		const response = await patchUser(original.userId, { role: "reception" }, clinicAdministratorToken, faultUrl);
+		expect(response.status).toBe(500);
+		expect(await response.json()).toEqual({ error: "Internal Server Error", code: "OPERATION_OUTCOME_UNKNOWN" });
+		expect(roleChangeMethods).toEqual(["POST"]);
+		expect(await readUserState(professionalIdentityId)).toEqual(original);
+		expect(await readApplicationRoles(professionalIdentityId)).toEqual(["healthcare_professional", "reception"]);
+
+	} finally {
+		await restoreUserState(professionalIdentityId, original);
+	}
 
 });
