@@ -7,6 +7,7 @@ import { createAuthenticationMiddleware, requireRoles } from "./middleware/authe
 import { listAuditRecords } from "./routes/audit-records.js";
 import { createClinicRequestHandler } from "./routes/clinics.js";
 import { createLogoutRequestHandler } from "./routes/logout.js";
+import { registerService } from "./routes/services.js";
 import { registerSpecialty } from "./routes/specialties.js";
 import { createUserRequestHandler, updateUserPermissionsRequestHandler } from "./routes/users.js";
 
@@ -45,6 +46,7 @@ router.post("/clinics", authenticate, requireRoles(UserRole.platformAdministrato
 router.post("/users", authenticate, requireRoles(UserRole.clinicAdministrator), registerUser);
 router.patch("/users/:userId", authenticate, requireRoles(UserRole.clinicAdministrator), editUserPermissions);
 router.post("/specialties", authenticate, requireRoles(UserRole.clinicAdministrator), registerSpecialty);
+router.post("/services", authenticate, requireRoles(UserRole.clinicAdministrator), registerService);
 
 app.listen({ port, host }, (error) => {
 

@@ -133,6 +133,7 @@ model Service {
   appointments Appointment[]
 
   @@unique([clinicId, serviceId], map: "services_clinic_service_key")
+  @@unique([clinicId, name], map: "services_clinic_name_key")
   @@map("services")
 }
 

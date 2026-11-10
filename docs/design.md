@@ -113,6 +113,7 @@ Initialize the row during clinic registration and increment `version` once per r
 ### Constraints
 
 - UNIQUE services_clinic_service_key: (clinic_id, service_id)
+- UNIQUE services_clinic_name_key: (clinic_id, name)
 - CHECK services_name_check: name <> ''
 - CHECK services_duration_check: duration_minutes > 0
 
