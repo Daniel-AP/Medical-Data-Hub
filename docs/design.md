@@ -1002,6 +1002,31 @@ Separate profile registration avoids requiring specialty data during every profe
 
 Synchronous provider updates were selected over a background synchronization worker to reduce implementation scope. Holding the existing user lock through the provider call serializes ordinary administrative changes, at the cost of retaining a SQL connection and locks during that network wait. PostgreSQL and Keycloak still do not commit atomically. Inconsistency after exceptional failures or delayed external effects is accepted, can persist indefinitely, and requires manual correction when encountered. No automatic convergence is promised.
 
+### Clinic Registration Endpoint
+
+`POST /clinics` requires an access token and an active local platform administrator whose role matches the token. The JSON request has three required fields.
+
+| Field | Accepted value |
+| --- | --- |
+| `name` | Nonblank string up to 200 characters |
+| `timeZone` | Named time zone up to 64 characters, such as `America/Costa_Rica` or `UTC` |
+| `administratorIdentityId` | Nonblank Keycloak user ID up to 255 characters |
+
+The API verifies the identity before opening the authorized transaction. It creates the clinic, its first active administrator, and the initial availability version in that transaction. For direct application role mappings, it adds the requested role if needed before removing other application roles. It preserves unrelated mappings and returns both local IDs after provider confirmation and SQL commit.
+
+| Status | Meaning |
+| --- | --- |
+| `201` | Clinic registered. The response contains `clinicId` and `administratorUserId` |
+| `400` | Invalid registration fields or malformed JSON |
+| `401` | Missing or invalid access token |
+| `403` | The caller lacks active, matching platform authorization |
+| `404` | The requested identity does not exist in the configured realm |
+| `409` | The identity is already linked to a local user |
+| `500` | The operation failed. A confirmed partial provider update includes `KEYCLOAK_ROLE_UPDATE_PARTIAL`. A missing confirmation of a provider mutation or SQL commit, or a database failure after a marked mutation, includes `OPERATION_OUTCOME_UNKNOWN` |
+| `503` | Keycloak is unavailable before any provider mutation, or the transaction encounters a transient database failure before dispatching a provider mutation |
+
+A confirmed partial update can leave both roles in Keycloak while PostgreSQL rolls back the registration. Both partial and indeterminate outcomes may require manual correction.
+
 ## Consistent Concurrent Queries
 
 ### Concurrency Risk

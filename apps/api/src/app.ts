@@ -1,6 +1,7 @@
 import { STATUS_CODES } from "node:http";
 import express from "express";
 import type { ErrorRequestHandler } from "express";
+import { KeycloakRoleUpdatePartialError } from "./errors/keycloak-role-update-partial.js";
 import { getTransactionErrorResponse } from "./middleware/transaction-error-response.js";
 
 export const app = express();
@@ -18,6 +19,11 @@ const handleError: ErrorRequestHandler = (error, _request, response, _next) => {
 	const transactionResponse = getTransactionErrorResponse(error);
 	if(transactionResponse) {
 		response.status(transactionResponse.status).json(transactionResponse.body);
+
+		return;
+	}
+	if(error instanceof KeycloakRoleUpdatePartialError) {
+		response.status(500).json({ error: STATUS_CODES[500], code: "KEYCLOAK_ROLE_UPDATE_PARTIAL" });
 
 		return;
 	}
