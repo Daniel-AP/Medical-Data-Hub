@@ -26,6 +26,16 @@ const registerService = (body: object, token = administratorToken) => {
 
 };
 
+const editService = (serviceId: string, body: object, token = administratorToken) => {
+
+	return fetch(new URL(`/services/${serviceId}`, serviceUrl), {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+		body: JSON.stringify(body),
+	});
+
+};
+
 const readClinicSpecialty = async (token: string) => {
 
 	const { rows: [specialty] } = await setup.query<{ clinicId: string; specialtyId: string; version: string }>(
@@ -139,4 +149,180 @@ it("allows different clinics to register the same service name", async () => {
 it("distinguishes service names that differ only in case within a clinic", async () => {
 	expect((await registerService({ ...registration, name: `${fixtureName} example` })).status).toBe(201);
 	expect((await registerService({ ...registration, name: `${fixtureName} Example` })).status).toBe(201);
+});
+
+const createServiceFixture = async (suffix: string) => {
+
+	const response = await registerService({ ...registration, name: `${fixtureName} ${suffix}` });
+	expect(response.status).toBe(201);
+	const { serviceId } = await response.json() as { serviceId: string };
+
+	return serviceId;
+
+};
+
+const readVersion = async () => {
+	return BigInt((await readClinicSpecialty(administratorToken)).version);
+};
+
+const readSeedService = async (name: string) => {
+
+	const { rows: [service] } = await setup.query<{ serviceId: string; durationMinutes: number; isActive: boolean }>(
+		`SELECT service_id AS "serviceId", duration_minutes AS "durationMinutes", is_active AS "isActive"
+		 FROM public.services WHERE clinic_id = $1::uuid AND name = $2`,
+		[localSpecialty.clinicId, name],
+	);
+
+	return service;
+
+};
+
+it("authorizes and validates service edits within the administrator's clinic", async () => {
+
+	const serviceId = await createServiceFixture("edit scope");
+	const changes = { isActive: false };
+	expect((await editService(serviceId, changes, "")).status).toBe(401);
+	expect((await editService(serviceId, changes, receptionToken)).status).toBe(403);
+	expect((await editService("invalid", changes)).status).toBe(400);
+	for(const body of [{}, { durationMinutes: 0 }, { isActive: "false" }, { name: null }, { clinicId: foreignSpecialty.clinicId }]) {
+		expect((await editService(serviceId, body)).status).toBe(400);
+	}
+
+	const missing = await editService(randomUUID(), changes);
+	const foreign = await editService(serviceId, changes, foreignAdministratorToken);
+	expect(missing.status).toBe(404);
+	expect(foreign.status).toBe(404);
+	expect(await foreign.json()).toEqual(await missing.json());
+
+});
+
+it("preserves concurrent partial edits to different service fields", async () => {
+
+	const serviceId = await createServiceFixture("concurrent edits");
+	const version = await readVersion();
+	const name = `${fixtureName} renamed`;
+	const responses = await Promise.all([
+		editService(serviceId, { name }),
+		editService(serviceId, { durationMinutes: 45 }),
+	]);
+	expect(responses.map(({ status }) => status)).toEqual([200, 200]);
+
+	const response = await editService(serviceId, { name });
+	expect(response.status).toBe(200);
+	expect(await response.json()).toEqual({ ...registration, serviceId, name, durationMinutes: 45, isActive: true });
+	expect(await readVersion()).toBe(version+1n);
+
+});
+
+it("increments availability once for combined duration and specialty changes and skips unchanged values", async () => {
+
+	const serviceId = await createServiceFixture("combined edit");
+	const { rows: [specialty] } = await setup.query<{ specialtyId: string }>(
+		`SELECT specialty_id AS "specialtyId" FROM public.specialties
+		 WHERE clinic_id = $1::uuid AND specialty_id <> $2::uuid`,
+		[localSpecialty.clinicId, registration.specialtyId],
+	);
+	const version = await readVersion();
+	const changes = { durationMinutes: 45, specialtyId: specialty.specialtyId };
+	const updated = await editService(serviceId, changes);
+	expect(updated.status).toBe(200);
+	expect(await updated.json()).toEqual({ serviceId, name: `${fixtureName} combined edit`, ...changes, isActive: true });
+	expect(await readVersion()).toBe(version+1n);
+
+	const unchanged = await editService(serviceId, { ...changes, specialtyId: changes.specialtyId.toUpperCase() });
+	expect(unchanged.status).toBe(200);
+	expect(await readVersion()).toBe(version+1n);
+
+});
+
+it("rejects duplicate names and foreign specialties during service edits", async () => {
+
+	const serviceId = await createServiceFixture("edit conflicts");
+	const version = await readVersion();
+	expect((await editService(serviceId, { name: "Consulta general" })).status).toBe(409);
+	const foreign = await editService(serviceId, { specialtyId: foreignSpecialty.specialtyId });
+	expect(foreign.status).toBe(404);
+	expect(await foreign.json()).toEqual({ error: "Not Found" });
+	expect(await readVersion()).toBe(version);
+
+});
+
+it("blocks changes to service duration and specialty after historical appointments", async () => {
+
+	const service = await readSeedService("Consulta de seguimiento");
+	const { rows } = await setup.query<{ state: string }>(
+		"SELECT state FROM public.appointments WHERE service_id = $1::uuid",
+		[service.serviceId],
+	);
+	expect(rows.length).toBeGreaterThan(0);
+	expect(rows.every(({ state }) => state !== "reserved")).toBe(true);
+	expect((await editService(service.serviceId, { durationMinutes: service.durationMinutes+1 })).status).toBe(409);
+
+	const { rows: [specialty] } = await setup.query<{ specialtyId: string }>(
+		`SELECT specialty_id AS "specialtyId" FROM public.specialties
+		 WHERE clinic_id = $1::uuid AND name = 'Fisioterapia'`,
+		[localSpecialty.clinicId],
+	);
+	expect((await editService(service.serviceId, { specialtyId: specialty.specialtyId })).status).toBe(409);
+
+});
+
+it("blocks a service specialty change while its association is active", async () => {
+
+	const serviceId = await createServiceFixture("associated");
+	const { rows: [professional] } = await setup.query<{ professionalId: string }>(
+		`INSERT INTO public.professional_services (clinic_id, professional_id, service_id)
+		 SELECT clinic_id, professional_id, $1::uuid FROM public.professionals
+		 WHERE clinic_id = $2::uuid AND specialty_id = $3::uuid LIMIT 1
+		 RETURNING professional_id AS "professionalId"`,
+		[serviceId, localSpecialty.clinicId, registration.specialtyId],
+	);
+	try {
+
+		const { rows: [specialty] } = await setup.query<{ specialtyId: string }>(
+			`SELECT specialty_id AS "specialtyId" FROM public.specialties
+			 WHERE clinic_id = $1::uuid AND specialty_id <> $2::uuid`,
+			[localSpecialty.clinicId, registration.specialtyId],
+		);
+		expect((await editService(serviceId, { specialtyId: specialty.specialtyId })).status).toBe(409);
+
+	} finally {
+		await setup.query("DELETE FROM public.professional_services WHERE service_id = $1::uuid AND professional_id = $2::uuid",
+			[serviceId, professional.professionalId]);
+	}
+
+});
+
+it("deactivates a service while preserving its reservations and active associations", async () => {
+
+	const service = await readSeedService("Consulta general");
+	const version = await readVersion();
+	const readReferences = async () => {
+
+		const { rows: [references] } = await setup.query<{ reservations: string[]; associations: string[] }>(
+			`SELECT ARRAY(SELECT appointment_id FROM public.appointments
+			              WHERE service_id = $1::uuid AND state = 'reserved' ORDER BY appointment_id) AS reservations,
+			        ARRAY(SELECT professional_id FROM public.professional_services
+			              WHERE service_id = $1::uuid AND is_active ORDER BY professional_id) AS associations`,
+			[service.serviceId],
+		);
+
+		return references;
+
+	};
+	const references = await readReferences();
+	expect(references.reservations.length).toBeGreaterThan(0);
+	expect(references.associations.length).toBeGreaterThan(0);
+	try {
+
+		const response = await editService(service.serviceId, { isActive: false });
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ serviceId: service.serviceId, isActive: false });
+		expect(await readReferences()).toEqual(references);
+		expect(await readVersion()).toBe(version);
+
+	} finally {
+		await setup.query("UPDATE public.services SET is_active = $2 WHERE service_id = $1::uuid", [service.serviceId, service.isActive]);
+	}
+
 });

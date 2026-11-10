@@ -1,6 +1,7 @@
 import type { ClinicUserRole } from "../clients/keycloak/roles.js";
 import type { User } from "../generated/prisma/client.js";
 import type { Authentication } from "../middleware/types.js";
+import { incrementAvailabilityVersion } from "./availability-versions.js";
 import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
 import { TransactionFailure } from "./transactions/transaction-failure.js";
 
@@ -96,15 +97,7 @@ export const updateUserPermissions = (
 				[actor.clinicId, target.userId],
 			);
 			if(professional) {
-
-				const { rowCount } = await client.query(
-					"UPDATE public.clinic_availability_versions SET version = version+1 WHERE clinic_id = $1::uuid",
-					[actor.clinicId],
-				);
-				if(rowCount !== 1) {
-					throw new Error("Missing clinic availability version");
-				}
-
+				await incrementAvailabilityVersion(client, actor.clinicId!);
 			}
 
 			const { identityId, ...permissions } = updatedUser;
