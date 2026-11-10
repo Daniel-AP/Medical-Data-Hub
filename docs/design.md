@@ -2,37 +2,31 @@
 
 ## Service Catalog Updates
 
-A service's name, duration, and required specialty may be edited while it has no associated appointments. Once any appointment references it, regardless of state, changing its duration or specialty requires a new service to preserve existing appointments and history (`RF3`, `I4`). Name changes remain permitted for corrections, with an administrative rule against redefining the consultation type.
+A clinic administrator may edit a service's name, duration, and required specialty before any appointment references it. After that, a different duration or specialty requires a new service. Name corrections remain allowed for the same consultation type (`RF3`, `I4`).
 
-Only the clinic administrator may deactivate a service in their clinic as part of catalog maintenance (`RF3`). Deactivation blocks new bookings and preserves existing appointments and history. Reserved appointments may still be rescheduled with an inactive service to honor existing commitments.
+Deactivation blocks new bookings. It preserves appointments and their history, including the option to reschedule an existing reservation with the inactive service.
 
 ## Appointment States and Rescheduling
 
-Only reserved appointments are considered active. A reserved appointment may become attended, absent, cancelled, or rescheduled. These four states are final (`RF13`). Rescheduling atomically marks the original appointment as rescheduled and creates a linked reserved appointment, preserving the history (`RF10`). Each replacement has a new appointment identifier and may itself be rescheduled.
+A `reserved` appointment occupies the agenda. It may become `attended`, `absent`, `cancelled`, or `rescheduled`. Each of those states is final (`RF13`).
 
-Rescheduling preserves the patient and service but may change the date, time, or professional within the same clinic, provided the professional is authorized to provide that service.
+Rescheduling atomically changes the original to `rescheduled` and creates a linked reservation with a new identifier. The replacement keeps the clinic, patient, and service. It may change the date, time, or professional and may itself be rescheduled (`RF10`).
 
-Booking and rescheduling allow any future start time aligned to a whole minute. Appointment intervals use `[start, end)`, so consecutive appointments do not overlap (`I1`, `I2`).
+Booking and rescheduling accept future whole-minute starts. Intervals include the start and exclude the end, so adjacent appointments do not overlap (`I1`, `I2`).
 
 ## Schedule Changes and Appointment Conflicts
 
-A schedule block is created only if its interval does not overlap any appointment in the reserved state for the same professional. Otherwise, the request is rejected, the conflicting appointments are reported, and no block record is created. The actor may retry after resolving the conflicts.
+Weekly schedule edits must preserve full coverage for every reserved appointment. A block must avoid every reserved appointment. Report conflicts and leave the schedule and appointments unchanged so the actor can resolve them before retrying (`RF5`, `I3`).
 
-Weekly schedule changes that leave reserved appointments outside the proposed hours are also rejected, with conflicts reported and no changes applied (`RF5`, `I3`). The affected appointments must first be rescheduled or cancelled.
-
-These rules preserve `I3` without adding appointment states or pending block records. Rejecting conflicting blocks departs from `RF6`, which describes creating a block before resolving affected appointments. New bookings may enter before a successful retry.
+The block rule differs from `RF6`, which calls for creating a block before resolving its appointments. The current design avoids pending blocks and extra appointment states, but new bookings can enter before a retry. This discrepancy remains unresolved.
 
 # 2. Tech Stack
 
-| Technology | Role |
-| --- | --- |
-| TypeScript | Application language |
-| Express | REST API framework |
-| PostgreSQL | Relational database and domain source of truth |
-| Prisma ORM | Data access and migrations |
-| Keycloak | Identity and credential management |
-| Redis | Availability cache |
-| Docker Compose | Service orchestration and networking |
+- TypeScript and Express serve the REST API
+- PostgreSQL is the source of truth. Prisma defines the data model and manages migrations
+- Keycloak manages identity and credentials
+- Redis caches availability
+- Docker Compose orchestrates services and networking
 
 # 3. Data Model
 
@@ -385,870 +379,367 @@ erDiagram
 
 ## Relationships
 
-- clinics to clinic_availability_versions (**1:1**): Each clinic requires one availability version row, created during clinic registration
-
-- clinics to users (**1:N**): Each clinic user belongs to one clinic, platform administrators belong to none
-
-- clinics to specialties (**1:N**): Each specialty belongs to one clinic
-
-- clinics to professionals (**1:N**): Each professional belongs to one clinic
-
-- users to professionals (**1:1**, optional): Each professional requires one same-clinic user, a user may have no professional profile
-
-- specialties to professionals (**1:N**): Each professional has one specialty
-
-- clinics to services (**1:N**): Each service belongs to one clinic
-
-- specialties to services (**1:N**): Each service requires one specialty
-
-- professionals to services (**N:M**): professional_services stores distinct same-clinic pairs and their activation, preserving inactive associations for historical references
-
-- professionals to professional_services (**1:N**): Each authorization belongs to one professional
-
-- services to professional_services (**1:N**): Each authorization belongs to one service
-
-- clinics to professional_services (**1:N**): Each authorization belongs to one clinic
-
-- clinics to professional_schedules (**1:N**): Each weekly interval belongs to one clinic
-
-- professionals to professional_schedules (**1:N**): Each interval belongs to one professional
-
-- clinics to professional_blocks (**1:N**): Each block belongs to one clinic
-
-- professionals to professional_blocks (**1:N**): Each block belongs to one professional
-
-- clinics to patients (**1:N**): Patient records and identification uniqueness are independent between clinics
-
-- clinics to appointments (**1:N**): Each appointment belongs to one clinic
-
-- patients to appointments (**1:N**): Each appointment has one same-clinic patient
-
-- professionals to appointments (**1:N**): Each appointment has one same-clinic professional
-
-- services to appointments (**1:N**): Each appointment uses one same-clinic service
-
-- professional_services to appointments (**1:N**): Each appointment references a same-clinic professional-service association, preserved after deactivation
-
-- users to appointments (**1:N**): A cancelling user is required only for cancelled appointments
-
-- appointments to appointments (**1:1**, optional): Each replacement has one predecessor, each rescheduled appointment has exactly one replacement, clinic, patient, and service are preserved
-
-- clinics to clinical_notes (**1:N**): Each note belongs to one clinic
-
-- appointments to clinical_notes (**1:1**, optional): An attended appointment may have one note, other states have none
-
-- professionals to clinical_notes (**1:N**): The treating professional is derived through appointments
-
-- clinics to audit_records (**1:N**): Each event belongs to one clinic
-
-- users to audit_records (**1:N**): Each event identifies one acting clinic user
-
-- patients to audit_records (**1:N**): Each event identifies one affected patient
-
-- clinical_notes to audit_records (**1:N**): Clinical-note events identify the note through appointment_id, contact-data events have no note reference
+- Every clinic has one availability version. Clinic users belong to one clinic, while platform administrators have no clinic
+- A clinic owns its specialties, professionals, services, associations, schedules, blocks, patients, appointments, notes, and audit records. Composite foreign keys keep their references within the clinic
+- A professional requires one local user and one specialty. A user may have one professional profile. A service requires one specialty. Professionals and services have a many-to-many relationship through `professional_services`, with one row per pair
+- A professional has many weekly intervals and blocks. A patient, a professional, a service, and their applicable professional-service association can each have many appointments. An appointment requires one of each and keeps its association even after deactivation
+- Only cancelled appointments reference a cancelling user. Each replacement references one predecessor, and each rescheduled appointment has one direct replacement. Both appointments share their clinic, patient, and service
+- An attended appointment may have one clinical note. Its treating professional is derived from the appointment
+- An audit event identifies its acting user and affected patient. Clinical note events also reference one note through the appointment identifier
 
 ## Normalization
 
 ### First Normal Form (1NF)
 
-- All tables: Individual field values and declared PKs, with no embedded lists or repeating column groups
-- clinic_availability_versions: One availability version per clinic
-- professional_services: One professional-service assignment per row
-- professional_schedules and professional_blocks: One working or blocked interval per row
+Store atomic values under declared keys. Availability versions have one row per clinic, authorizations one row per professional-service pair, and schedules and blocks one row per interval.
 
 ### Second Normal Form (2NF)
 
-Non-key fields must not depend on only part of a composite candidate key
-
-- clinic_availability_versions: The single-column primary key introduces no partial key dependencies
-- patients: name, date_of_birth, email, and phone depend on both clinic_id and identification, neither field alone determines those values
-- professional_services: is_active depends on the complete professional-service pair, while service name and duration depend only on service_id and remain in services
-- Retained exception: professional_services.clinic_id depends on professional_id alone or service_id alone, retaining it is a deliberate 2NF exception
+A patient identified by `(clinic_id, identification)` has details that depend on both fields. Association activation depends on the professional-service pair. Service name and duration depend only on the service and stay in `services`. The association's redundant `clinic_id` is a deliberate exception.
 
 ### Third Normal Form (3NF)
 
-After satisfying 2NF, non-key fields must not depend on another non-key field
-
-- clinic_availability_versions: version depends on clinic_id, while descriptive clinic attributes remain in clinics
-- specialties: Clinic name and time zone depend on non-key clinic_id, so they stay in clinics
-- professionals and services: Specialty name depends on non-key specialty_id, so it stays in specialties
-- professional_schedules and professional_blocks: Professional specialty depends on non-key professional_id, so it stays in professionals
-- appointments: Patient details depend on non-key patient_id and service details depend on non-key service_id, so they stay in patients and services
-- audit_records: Note content depends on non-key appointment_id, so it stays in clinical_notes
-- Retained exceptions: services.clinic_id depends on non-key specialty_id, professional_schedules.clinic_id and professional_blocks.clinic_id depend on non-key professional_id, these retained redundancies and the derived fields are justified below
+Keep descriptive values with the entities that determine them. Clinic names and time zones stay in `clinics`, specialty names in `specialties`, and patient details and service definitions outside appointments. Clinical note content stays outside audit records. Foreign keys preserve these dependencies without copying the descriptive values.
 
 ### Deliberate Denormalizations
 
-- Clinic ownership: Repeated clinic_id supports direct RLS checks and clinic-consistent references, composite FKs prevent disagreement, at the cost of redundant values and additional composite indexes
-- Appointment end: Stored end_at provides interval endpoints without joining services, the backend must derive it from start_at and service duration and prevent changes to appointment timing or referenced service durations, at the cost of stored derived data and coordinated validation
-- Audit patient: For clinical note events, patient_id allows direct patient filters. It repeats the patient linked to the appointment, so the backend must verify that both references match
-- Audit resource: resource explicitly names the data accessed. This repeats information already available from whether appointment_id is NULL, so the CHECK must keep both fields consistent
+- Repeated `clinic_id` supports direct RLS and clinic-scoped relationships at the cost of redundant values and composite indexes. Composite foreign keys prevent disagreement. Examples include clinic ownership derived from a service's specialty or a schedule's professional
+- Stored appointment ends support overlap checks without joining services. Derive the end from the start and service duration, then protect both the appointment interval and referenced duration
+- Audit patient identifiers support direct filtering of note events. Validate that the patient matches the appointment
+- Audit resource types explicitly identify the accessed data. A check keeps the type consistent with the optional note reference
 
 # 4. Multi-tenancy
 
-All three strategies would require reviewing access permissions for the future OLAP layer. Existing identities, roles, and clinic access rules could be reused. Consolidating data means copying records from several clinics into a common OLAP store. Permissions on the source OLTP data would not automatically protect copies in another store, so access would need to be configured and verified there. The extent of additional authorization work would depend on the OLAP architecture and access requirements.
+The comparison assumes one PostgreSQL instance. All three strategies share its CPU, memory, and storage. Future OLAP copies must preserve clinic ownership and enforce their own access rules.
 
 ## Database per Clinic
 
-This comparison considers a separate database for each clinic within a single PostgreSQL instance. Deployments across multiple PostgreSQL instances are outside the scope of this comparison. They would require separate management of server configuration, startup, updates, and recovery.
-
 ### Data Isolation
 
-Each clinic would have a separate database containing its patients, appointments, and clinical notes. A PostgreSQL connection selects one database when it opens. Ordinary SQL queries on that connection cannot directly access tables in another database. For example, omitting a clinic filter while querying clinic A's patients would not include patients stored in clinic B's database.
-
-Access would also require restricted database roles. In PostgreSQL, a role is an account or group of permissions managed by the database engine. Separating databases does not prevent an account from connecting to another clinic's database if its permissions allow it. The credentials used for clinic A would need access only to A's database and permitted operations.
-
-The backend would still need to select the database from the authenticated user's clinic association. If it holds credentials for multiple clinics and selects clinic B's connection for a request from clinic A, database separation alone would not prevent the resulting disclosure.
+A connection is bound to one database. Separate credentials can enforce that boundary, provided the application selects the database from the authenticated clinic.
 
 ### Implementation Complexity
 
-The application could reuse the same data model and appointment logic across clinics, but it would need to manage connections to different databases. PostgreSQL has a supervisor process that listens for incoming connections and starts a dedicated server process for each connection. During connection startup, the application sends the database name and database user, and PostgreSQL checks authentication and access before accepting queries. The resulting session, meaning the interaction over that connection, stays associated with the selected database. Its server process executes SQL commands and returns results over the same connection. It can serve many successive queries, but the session cannot switch to another database.
-
-A connection pool keeps established connections open and lends them to application operations instead of opening a new connection for every request. Returning a connection to the pool leaves its PostgreSQL session and server process running for reuse. With a database per clinic, a connection opened for clinic A cannot be reassigned to clinic B. The data access layer would need to select an available connection for the requested clinic's database or open one if necessary. Each clinic could have multiple connections, so the server processes would correspond to open connections rather than to clinics.
-
-Registering a clinic would require an automated setup process that creates its database, installs the tables and constraints, configures access permissions, and creates its first administrator. Preparing the database structure could reuse migration scripts, which define changes to tables and other database objects. The additional implementation work would be coordinating these steps for each new clinic.
-
-The setup process would also need to handle partial failures. PostgreSQL does not allow `CREATE DATABASE` inside a transaction block, so database creation and the subsequent setup cannot be rolled back together as one operation. For example, if creating the tables fails after the database has been created, the database remains. The application would need a defined way to retry or clean up incomplete setup without reporting the clinic as ready.
+Provision a database, migrate it, and configure its permissions for each clinic. Database creation cannot share a transaction with the rest of provisioning, so incomplete setups need cleanup or retry.
 
 ### Operations and Maintenance
 
-Changes to tables, constraints, and indexes would need to be applied to every clinic's database. The same migration scripts could be reused, but their execution and results would need to be tracked separately for each database. If a migration succeeds for clinic A and fails for clinic B, the databases could temporarily have different structures. Deployments would therefore need to account for incomplete migrations before application code starts relying on the new structure.
-
-Separate databases would allow a clinic's data to be exported and restored individually. PostgreSQL's `pg_dump` creates a logical export, meaning a representation of the database's structure and data rather than a copy of its underlying storage files. This would allow clinic A's database to be reconstructed without replacing clinic B's data.
-
-Database separation would not make server maintenance independent for each clinic within the shared PostgreSQL instance. Restarting that instance would interrupt connections for all clinics. Recovery from physical backups also has a shared scope. Restoring a physical backup and replaying the WAL to a selected point in time restores the whole instance, rather than only one clinic's database.
+Track migrations for each database. Logical backups can target one clinic. Server maintenance and physical recovery still affect the instance.
 
 ### Resource Usage and Performance
 
-Keeping connections open for several clinics would consume resources even when some clinics have no active requests. Each connection retains a PostgreSQL server process with its own memory and occupies a slot within `max_connections`. Connection pools would therefore need to be sized against the shared instance's capacity.
-
-Each database would have its own tables, indexes, and system catalogs, which are PostgreSQL's internal tables describing database objects. An appointment index in clinic A's database would contain entries only for A's appointments, allowing its queries and indexes to be tuned independently. However, smaller individual indexes do not establish a performance advantage over shared tables with appropriate indexes. The potential benefit is relevant to the comparison, but its practical significance cannot be established without execution plans and measurements using equivalent data and queries.
-
-All clinic databases would still compete for the instance's CPU, memory, and storage throughput. PostgreSQL's `shared_buffers`, the memory area that caches recently accessed blocks of table and index data, is shared across the instance rather than reserved separately for each clinic. A resource-intensive query in clinic A could therefore slow availability queries in clinic B. Database separation would provide separate data structures without guaranteeing independent performance or a reserved share of server resources.
+Each database has its own tables, indexes, and catalogs. Connections cannot move between databases, so idle pools consume shared capacity. Smaller indexes may help individual queries. Compare plans and measurements before drawing performance conclusions.
 
 ### Implications for OLAP
 
-A future OLAP layer would need to treat each clinic's OLTP database as a separate data source. An extraction process, which reads data from the OLTP databases and transfers it to an OLAP store, could reuse the same logic across databases with matching structures. However, it would need to connect to each database and track extraction results separately. Adding a clinic would also require including its database among the sources. This allows extraction to be scheduled or retried per clinic, but adds coordination as the number of databases grows.
-
-Extracted records would need to retain their clinic of origin. Inside the OLTP system, the database itself identifies which clinic owns the data. That context would need to become explicit when records are copied into a common OLAP store. Identifiers cannot be assumed to be unique across independent databases unless the identifier design guarantees it. The OLAP model would therefore need to preserve clinic ownership and distinguish records from different sources without treating independent patient records as one shared clinical history.
+Extract from each database and track progress separately. Preserve the source clinic so independent identifiers remain distinguishable in the combined store.
 
 ## Schema per Clinic
 
 ### Data Isolation
 
-Each clinic would have a separate schema within the same PostgreSQL database. A schema groups named objects such as tables, indexes, and functions. For example, `clinic_a.patients` and `clinic_b.patients` would be independent tables. Querying `clinic_a.patients` would return only A's patients, even without a clinic filter, because B's patients would be stored in another table.
-
-Database-enforced isolation would depend on restricted access permissions. PostgreSQL requires permission to access objects in a schema and the appropriate permissions on its tables. If the role executing clinic A's queries has access only to A's schema and tables, an attempt to read `clinic_b.patients` would be rejected. This protection would also require preventing that role from obtaining broader privileges.
-
-If the backend instead uses a role with access to every clinic's schema, PostgreSQL would permit queries against any of them. Selecting B's schema for a request from A could then expose B's patients. A missing tenant check or a manipulated clinic parameter could cause this error if the backend accepts the client's choice without verifying it against the authenticated user's clinic. Separate schemas alone would not block that access.
+Each clinic has separate tables in one database. Schema and table grants enforce the boundary when the application uses the correct restricted profile. Broad grants would let a wrongly routed query reach another clinic.
 
 ### Implementation Complexity
 
-The application could reuse the same domain logic across clinics, but its data access code would need to target different schemas. For example, booking an appointment for clinic A would require every query involving the patient, professional, service, and appointment to use A's tables. Reusing that booking operation for clinic B would require directing those queries to B's tables without duplicating the booking logic.
-
-Registering a clinic would require an automated routine to create its schema, tables, constraints, indexes, and access permissions. The routine could reuse a common structure, but object creation and foreign key references would need to target the new clinic's schema. Creating the schema alone would not create the domain tables or establish the permissions needed to use them.
-
-These PostgreSQL setup steps could run inside one transaction, allowing their changes to be committed together or undone together if a step fails. For example, a failure while creating the appointment table could roll back the new schema and the tables already created within that transaction. This would simplify recovery from incomplete database setup compared with creating a separate database, although the setup routine would still need to handle errors and retries.
+Create each clinic's tables, constraints, indexes, and grants together in one transaction. Route shared domain queries to the authenticated clinic's schema.
 
 ### Operations and Maintenance
 
-Changes to tables, constraints, and indexes would need to be applied to each clinic's schema. Adding a column to `clinic_a.patients`, for example, would not add it to `clinic_b.patients`. The same migration scripts could be reused, but their progress and results would need to be tracked per schema. If an update fails for one clinic, deployments would need to account for the resulting differences before relying on the new structure.
-
-PostgreSQL's `pg_dump` can export a clinic's schema, including its tables and data. This would allow a restore to target that clinic's objects without replacing the other clinics' tables.
-
-All schemas would share the same database and PostgreSQL instance, so server maintenance would affect every clinic. Restarting PostgreSQL would interrupt their connections regardless of which schema they use. Physical backups and recovery through WAL would also operate on the instance as a whole. Separate schemas would therefore support selective logical exports, but would not provide independent server maintenance or direct recovery of one schema to a selected point in time.
+Track migrations for each schema. Logical exports can target a schema. Server maintenance and physical recovery still affect the instance.
 
 ### Resource Usage and Performance
 
-Creating a schema would not by itself allocate a connection or a dedicated PostgreSQL server process. Those resources are associated with open connections. Because all schemas reside in one database, connections could be reused across clinics when the permissions design allows it. This could reduce the need to keep separate connections idle for each clinic.
-
-Each clinic would require its own tables and indexes, adding another set of structures to store and maintain. For example, an index on clinic A's appointments would contain only A's records. A query using that index would search within A's data rather than an index containing appointments from every clinic. However, a suitable index on shared tables can also narrow a query to one clinic's records. Execution plans and measurements would be needed to determine whether separate indexes offer a meaningful performance benefit.
-
-All schemas would compete for the same CPU, memory, and storage throughput. PostgreSQL's `shared_buffers`, which caches blocks of table and index data in memory, would serve the entire instance. A query reading a large appointment history in clinic A could consume resources needed by availability queries in clinic B. Separate schemas would therefore provide independent tables and indexes without reserving processing capacity or memory for each clinic.
+Connections can serve different schemas when permissions allow it. Each schema still duplicates table and index structures. Compare query plans against equivalent shared-table indexes.
 
 ### Implications for OLAP
 
-A future OLAP extraction process could read several clinics' schemas through one database connection, provided its role has permission to access them. For example, it could combine appointments from `clinic_a.appointments` and `clinic_b.appointments` using `UNION ALL`, which appends the results of separate queries. This would simplify collecting data across clinics compared with connecting to a separate database for each one.
-
-The extraction process would still need to include each clinic's schema. A query listing only clinics A and B would not automatically include clinic C when its schema is created. Adding clinics would therefore require updating the extraction sources, either automatically or through configuration. Differences caused by incomplete migrations would also need to be handled before combining results, since the selected columns must have compatible structures and data types.
-
-Each extracted record would need to retain its clinic of origin. Once records from several schemas are combined in shared OLAP tables, the source schemas would no longer separate them. Identifiers could also overlap between schemas unless their design guarantees uniqueness across clinics. The OLAP model would therefore need to distinguish each clinic's records.
+Extract from multiple schemas through one connection. Track the participating schemas and their migration state, and preserve the clinic of origin.
 
 ## Shared Tables with Row-Level Security
 
 ### Data Isolation
 
-Clinics would share the same tables, with `clinic_id` identifying the clinic that owns each record. For example, the `patients` table would contain patients from clinics A and B. The column records ownership but does not restrict access by itself. Isolation would require PostgreSQL policies that use that ownership information to control access to individual rows.
-
-RLS applies rules inside PostgreSQL to determine which rows a query may read or modify. With an active policy restricting access to clinic A, a patient query would exclude B's records even if the application omitted its clinic filter. Policies would also need to reject inserts or updates that assign a record to another clinic.
-
-The clinic used by those policies would need to come from the authenticated user's clinic association. A client-supplied clinic identifier would not be sufficient. If the backend incorrectly establishes B as the clinic for a request from A, the policies could permit access to B's records.
-
-Requests without a valid clinic context would need to be denied access to clinic data. Reusing a database connection must not allow a request for B to inherit A's clinic context from an earlier request.
-
-Application connections would need database roles subject to RLS. PostgreSQL superusers and roles with `BYPASSRLS` can skip these policies. Table owners normally skip them too, unless the table is configured to enforce RLS for its owner. Using a role that bypasses RLS could therefore expose records from every clinic despite correctly defined policies.
-
-Relationships would also need constraints that prevent references between clinics. For example, an appointment belonging to A must not reference a patient belonging to B. RLS does not automatically enforce that rule, because PostgreSQL's foreign key checks operate independently of row visibility. The relationship constraints would need to account for clinic ownership.
+PostgreSQL RLS filters existing rows and checks inserted or updated rows against the authorized `clinic_id`. Deny access without valid transaction-local context. Run application queries under restricted roles subject to RLS. Use composite foreign keys to prevent cross-clinic references.
 
 ### Implementation Complexity
 
-The application would use one shared set of tables and queries for all clinics. Registering a clinic would add its record and initial application data without creating another database, schema, or set of tables. Policies that compare each row's `clinic_id` with the current clinic context could also be reused without defining a separate policy for every new clinic.
-
-Database setup would need to enable RLS and define policies separately for every table containing clinic-specific data. A policy on `patients` would not automatically protect `appointments`. Those definitions would need to cover access to existing rows and validation of inserted or updated rows.
-
-The data access layer would need a common mechanism to establish the authenticated clinic before executing protected queries. If the context is stored in a connection setting, the context assignment and all queries for the operation would need to execute on the same connection. One option would be a transaction-local setting, whose override ends when the transaction is committed or rolled back. Implementing that option would require wrapping protected operations in transactions, including operations that only read data.
+Reuse tables and policies across clinics. Register a clinic by inserting its initial records. Each protected operation must establish context on the same connection as its queries, including reads.
 
 ### Operations and Maintenance
 
-Changes to tables, constraints, indexes, and shared RLS policies would be maintained in one place. Adding a column to `patients`, for example, would change the structure used by every clinic without running a separate migration for each tenant.
-
-A full logical export of the database would contain records from all clinics. Recovering only one clinic would require selecting its rows across the relevant tables, preserving their relationships, and restoring them without replacing other clinics' data. This would require a recovery procedure that works with clinic-specific rows rather than selecting a dedicated database or schema.
-
-All clinics would share the same PostgreSQL instance, so server restarts and maintenance interruptions would affect them together. Physical backups and recovery through WAL would also operate on the instance as a whole. RLS controls access to rows, but does not provide independent server maintenance or direct recovery of one clinic's records to a selected point in time.
+Apply structural changes once. Restoring one clinic requires selecting its related rows instead of restoring a database or schema.
 
 ### Resource Usage and Performance
 
-All clinics would share the same tables and indexes. Adding a clinic would add records rather than another set of database objects, while the shared indexes would grow with the combined data volume. An index containing `clinic_id` together with the columns used to search appointments could help PostgreSQL locate one clinic's records without scanning the entire table. The appropriate columns and their order would need to be justified through execution plans.
-
-RLS adds policy conditions that PostgreSQL must evaluate when accessing protected data. A policy comparing a row's `clinic_id` with the current clinic context would involve less work than a policy requiring additional queries to determine access. If transaction-local context were selected, starting transactions and establishing that context would also add work, including for read-only operations. The practical impact would need to be measured using the application's restricted database roles so that the checks actually exercise RLS.
-
-All clinics would compete for the same CPU, memory, storage throughput, and PostgreSQL buffer cache. RLS limits which records a request may access, but does not reserve resources for each clinic. A demanding query or a large number of requests from clinic A could therefore slow clinic B's operations. Sharing tables would reduce the number of separate structures maintained, without establishing a measured performance advantage over the other strategies.
+Shared tables avoid duplicate structures. Indexes cover all clinics, and policy evaluation and transaction preparation add work. Measure queries under the actual restricted profiles.
 
 ### Implications for OLAP
 
-A future OLAP extraction process could read authorized data from the shared OLTP tables without combining separate databases or schemas for each clinic. New clinics' records would enter those same tables, so adding a clinic would not require defining another extraction source. This would simplify source management compared with maintaining a separate set of tables for every clinic.
-
-RLS would still determine which records an extraction job may read when its database role is subject to those policies. A job using the application's clinic-scoped policies would see only the clinic established in its context. If future OLAP use cases require records from several clinics, the extraction process would need an explicitly authorized access scope. Storing all clinics together would not automatically grant permission to extract all their data.
-
-The existing `clinic_id` would identify each record's clinic of origin and would need to be preserved when copying data into OLAP. This would avoid deriving ownership from a source database or schema name.
+Extract from one source using the existing `clinic_id`. Cross-clinic extraction requires an explicitly authorized scope.
 
 ## Selected Strategy
 
-The system will use shared tables with `clinic_id` and PostgreSQL RLS.
+Use shared tables with PostgreSQL RLS and a `clinic_id` discriminator.
 
 ### Data Isolation
 
-Database per clinic provides a separate database connection boundary. Schema per clinic separates tables within one database, while RLS keeps clinics' rows together and controls their visibility through policies. RLS does not provide the same separation of data objects. This tradeoff is accepted for simpler clinic registration and shared maintenance.
+Accept shared storage in exchange for database-enforced row isolation. Derive the clinic from the authenticated user and use clinic-scoped references. Test foreign identifiers, manipulated clinic parameters, and context leakage across pooled connections (`I5`).
 
 ### Implementation Complexity
 
-Database per clinic requires database provisioning and connection selection. Schema per clinic requires creating table sets and directing queries to the correct schema. Shared tables require RLS policies and clinic-context handling, but no new structures for each clinic. This makes the selected strategy preferable for dynamic clinic registration.
+One schema and reusable policies simplify clinic registration. The tradeoff is that every protected operation needs a correctly scoped transaction.
 
 ### Operations and Maintenance
 
-Separate databases and schemas allow exports to target one clinic, but require structural changes across every clinic's objects. Shared tables centralize those changes, while recovering one clinic requires selecting related rows. The project prioritizes shared maintenance over simpler recovery of an individual clinic, favoring the selected strategy in this criterion.
+Centralize migrations and accept more work to recover one clinic's rows.
 
 ### Resource Usage and Performance
 
-Separate databases and schemas maintain table and index sets per clinic. Shared tables maintain fewer separate structures, but their indexes cover all clinics and RLS adds policy evaluation work. All three alternatives share instance resources. No performance winner has been established, so the selected strategy is favored for fewer structures, with query performance still requiring execution plans and measurements.
+Maintain fewer structures and validate shared-index and policy costs with execution plans. The comparison establishes no measured performance winner.
 
 ### Implications for OLAP
 
-Database per clinic requires coordinating separate database sources, and schema per clinic requires collecting records from separate table sets. Shared tables provide a common source with clinic ownership already recorded in `clinic_id`. The selected strategy is preferable for extraction source management, while OLAP authorization remains a consideration for all three alternatives.
+Keep a common source and explicit clinic ownership. Authorize access to the analytical store independently.
 
 # 5. Transactions and Concurrency
 
-All SQL phases in this chapter follow these common rules. Each operation specifies its explicit isolation level, resource locks, domain checks, and writes.
+Each SQL phase uses an explicit isolation level, a scoped connection, and current authorization. Hold locks through commit or rollback. When locks are needed, acquire users, services, professionals, patients, appointments, and the clinic availability version in that order. Sort rows of the same kind by identifier and lock each once at the strongest required mode.
 
-- Prepare authenticated clinic and permission context through [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context). Execute all queries through its scoped client on the same transaction connection
-- Retain acquired row locks until commit or rollback. Reject missing or inaccessible required resources; valid empty results follow the operation's rules
-- A validation or execution failure before commit rolls back the complete SQL phase and discards provisional results. Commit domain writes with their required audit records and availability-version changes. Report success only after commit confirmation
-- Follow [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency) for sensitive access and [Transaction and Cache Coordination](#transaction-and-cache-coordination) for availability-changing writes and cached queries. SQL row locks alone do not establish Redis freshness
-- Waiting, timeouts, retries, and uncertain outcomes follow [Conflicts, Deadlocks, and Retries](#conflicts-deadlocks-and-retries). Do not repeat confirmed phases or treat an unknown commit outcome as a confirmed rollback. A later external failure cannot undo a confirmed SQL phase
+Commit domain writes, required audit events, and availability-version changes together. Release the connection before sending the response. Follow [transaction context](#transactional-clinic-and-permission-context), [cache coordination](#transaction-and-cache-coordination), and [retry rules](#conflicts-deadlocks-and-retries) for the shared boundaries.
 
-Patient, user, service, professional specialty, and association activation edits use partial updates. Requests supply only the mutable fields to assign, without original values or an edit-version counter. After acquiring the operation's locks, combine the supplied fields with the current protected state and validate the complete result. Write only supplied fields; omitted fields retain their current values. Explicit `NULL` clears a field only where the data model permits it. Weekly schedules instead use complete-week replacement under the protocol below.
-
-Concurrent edits to different fields preserve both changes when the resulting record remains valid. For the same field, a later serialized write may replace an earlier committed value. The API cannot distinguish intentional assignments from stale values sent by the client, so callers must send only intended changes. Original-value comparisons and edit-version counters were considered but rejected to simplify request handling, accepting that outdated edits are not detected. Domain validation, authorization, auditing, and availability-version updates still apply.
+Patient, user, service, professional specialty, and association activation edits apply only supplied fields to the locked current state. Validate the resulting record and preserve omitted values. Explicit `NULL` clears only nullable fields. Different-field edits can coexist if their combined state is valid. A later same-field assignment may overwrite an earlier one. The design accepts this tradeoff to avoid original-value comparisons and edit-version counters. Weekly schedules replace the complete week.
 
 ## Overlapping Bookings
 
 ### Concurrency Risk
 
-Concurrent bookings can both find an interval available and insert overlapping appointments. Different patients competing for the same professional can violate `I1`. The same patient booking different professionals within one clinic can violate `I2` (`RF9`).
-
-Ex: two receptionists check tomorrow's `[10:00, 10:30)` interval before either booking commits. Both checks return no conflicts, so an uncoordinated insertion could grant both requests.
-
-Locking matching appointments does not protect an empty interval because the query may return no rows. A transaction alone does not prevent this race under `READ COMMITTED`.
+Two transactions can both see an empty interval. Locking matching appointments cannot protect an interval with no rows. A professional-only lock would still allow overlapping bookings for the same patient with different professionals (`RF9`, `I1`, `I2`).
 
 ### Transaction Design
 
-1. Begin a `READ COMMITTED` transaction
+1. Use `READ COMMITTED`. Protect the service and eligibility under [catalog and authorization rules](#concurrent-service-and-professional-authorization-changes). Acquire `FOR NO KEY UPDATE` on the same-clinic professional, then the patient
+2. Use fresh queries after locking. Derive the appointment end from the service duration. Require complete schedule coverage, no overlapping blocks, and no overlapping same-clinic reservations for either the professional or patient
+3. Immediately before insertion, require a whole-minute start strictly later than the wall clock. Insert a `reserved` appointment
 
-2. Acquire `FOR NO KEY UPDATE` locks on the same-clinic professional and patient rows, professionals first and patients second. When multiple rows of one type are required, acquire them in ascending identifier order
+For example, two requests for tomorrow's last 10:00 slot serialize on the professional row. The second checks again and sees the winner's reservation. Acceptance requires a reproducible race with exactly one winner, plus a race for the same patient across professionals.
 
-3. Validate the service, its activation, and the professional's authorization, then calculate `end_at` from `start_at` and the service duration. [Concurrent Service and Professional Authorization Changes](#concurrent-service-and-professional-authorization-changes) protects these facts through commit; this section addresses overlap checks
-
-4. After acquiring the locks, execute fresh PostgreSQL queries to validate the complete appointment interval against the professional's weekly schedule and blocks. Schedule changes and block creation must acquire the same professional lock before their definitive checks and writes. Their detailed protocols are covered in their respective topics
-
-5. Check same-clinic appointments in state `reserved` for either the professional or the patient. An existing interval conflicts when `existing.start_at < requested.end_at` and `requested.start_at < existing.end_at`. This preserves `[start, end)` semantics and permits adjacency. Reject any conflict. An empty result permits continuation because competing bookings must first acquire the already-held entity locks
-
-6. Validate whole-minute alignment and perform the final future-start check immediately before insertion, requiring `start_at > clock_timestamp()`. Reject an invalid start. This establishes that the start is future at validation time, without guaranteeing that commit finishes before that start
-
-7. Insert the appointment as `reserved` and commit
-
-Professional and patient row locks coordinate agenda occupation even when no appointments exist. Bookings for different professionals and patients can validate concurrently, although their clinic-wide availability version increments may still wait on the shared version row. Operations sharing a professional or patient wait even on different dates. Ordinary reads remain possible.
-
-A professional-only lock was considered but would not prevent overlapping bookings for the same patient with different professionals (`I2`). A clinic-wide agenda lock was also considered but would serialize unrelated bookings within the clinic. The selected professional-and-patient protocol preserves both `I1` and `I2` with less contention than clinic-wide coordination. Service and user authorization protection follows the separate protocols referenced above.
-
-`SERIALIZABLE` with complete transaction retries was considered but would add dependency monitoring and discarded work after serialization failures. Transaction-level advisory locks were also considered but would require application-defined keys and a separate locking convention. The selected row-lock protocol uses existing entities and requires every participating booking or rescheduling path to follow it.
+Under `READ COMMITTED`, each post-lock statement sees reservations committed during the wait. Professional and patient locks allow unrelated bookings to proceed, though the version row can still contend. A shared professional or patient serializes bookings even across dates. `SERIALIZABLE` would add conflict monitoring and retries. Advisory locks would require a separate key convention. The selected row locks reuse existing entities and depend on every agenda writer following the protocol.
 
 ## Atomic Rescheduling
 
 ### Concurrency Risk
 
-Rescheduling must change the original appointment to `rescheduled` and create its `reserved` replacement within one transaction (`RF10`). Committing these writes separately could leave the original without a replacement or leave both appointments active.
-
-Concurrent requests can compete for the destination or attempt to replace the same original. Cancellation and outcome registration can also change the original's state while rescheduling is being validated. Acting on an earlier `reserved` reading could permit a transition from a final state (`RF13`).
-
-Ex: one receptionist moves an appointment to 11:00 while another moves the same original to 14:00. Different destinations do not justify creating two replacements.
+Separate commits can leave the original without a replacement or leave both appointments active. Competing transitions can also make an earlier `reserved` check stale (`RF10`, `RF13`).
 
 ### Transaction Design
 
-1. Begin a `READ COMMITTED` transaction. Read the same-clinic original to identify its professional, patient, and service. This preliminary reading does not establish that rescheduling is still permitted
+1. Use `READ COMMITTED`. Read the original's references for lock preparation. Lock the source and destination professionals and the patient with `FOR NO KEY UPDATE`, then lock the original appointment in the same mode
+2. Confirm that the locked original remains `reserved` and its clinic, professional, patient, and service match the preliminary references. Derive the replacement's clinic, patient, and service from it
+3. Apply the booking checks to the destination, excluding only the original from professional and patient overlap checks. The existing service may be inactive, but the destination professional must be eligible and the service duration still determines the end
+4. Mark the original `rescheduled` without changing its interval or predecessor. Recheck the future whole-minute start immediately before inserting the new `reserved` appointment. Its predecessor links to the original, and uniqueness permits one direct replacement
 
-2. Acquire `FOR NO KEY UPDATE` locks on the source and destination professionals in ascending identifier order, locking a shared professional only once. Then acquire the same lock on the patient
-
-3. Acquire `FOR NO KEY UPDATE` on the original appointment. Confirm that it remains `reserved` and that its clinic, professional, patient, and service match the preliminary reading. Otherwise, reject the operation. Concurrent Appointment State Transitions must use compatible state protection and preserve this acquisition order whenever both agenda resources and appointment rows are needed
-
-4. Derive the replacement's clinic, patient, and service from the locked original. Validate the destination using [Overlapping Bookings](#overlapping-bookings), excluding only the original's `appointment_id` from both professional and patient overlap checks. All other reserved appointments remain conflicts. Preserve the existing rule allowing rescheduling with an inactive service, while requiring destination professional authorization and calculating the end from the service duration. Service and authorization protection follows [Concurrent Service and Professional Authorization Changes](#concurrent-service-and-professional-authorization-changes)
-
-5. After the destination validations succeed, change the original's state to `rescheduled`. Preserve its identifiers, timing, and existing predecessor link
-
-6. Immediately before inserting the replacement, require its whole-minute-aligned `start_at` to remain greater than `clock_timestamp()`. Insert it with a new `appointment_id`, state `reserved`, and `previous_appointment_id` referencing the original. The `appointments_previous_key` unique constraint additionally prevents multiple direct replacements
-
-7. Commit both writes together. A destination conflict, failed validation, or database error rolls back the entire operation, including any change to the original. A later attempt against an original that is no longer `reserved` must not create another replacement
-
-The explicit original-row lock permits state validation before either write, at the cost of another locking read and possible waits. A conditional state update was considered as an alternative, but the selected protocol protects the original throughout destination validation.
-
-The original transition and replacement become visible together at commit. Coordinating availability cache entries for both source and destination, including immediate visibility required by `I7`, remains dependent on Transaction and Cache Coordination.
+The original lock protects the transition throughout validation. A conditional update would defer the state check. A destination conflict rolls back both writes. One version increment covers both the released and occupied intervals (`I7`).
 
 ## Concurrent Appointment State Transitions
 
 ### Concurrency Risk
 
-Cancellation, rescheduling, and outcome registration can compete for the same reserved appointment (`RF10`, `RF11`, `RF12`, `RF13`). Validating its state before acquiring a lock can allow a later write to overwrite a committed final state.
-
-Ex: two requests read `reserved`. One commits `cancelled`, then the other writes `attended` using its earlier reading. This would violate the rule that final states have no outgoing transitions.
-
-Cancellation must also persist its state, reason, and acting user together. Outcome registration must verify that the appointment's start has passed after any lock wait.
+Cancellation, rescheduling, and outcome registration can race. A later transition must observe the committed state before it can act (`RF10` through `RF13`).
 
 ### Transaction Design
 
-1. Begin a `READ COMMITTED` transaction
+1. Use `READ COMMITTED`. For cancellation and outcomes, lock the same-clinic appointment with `FOR NO KEY UPDATE`. Check that it remains `reserved` and the actor is authorized
+2. For cancellation, write the state, nonempty reason, and authenticated cancelling user together (`RF11`)
+3. For an outcome, require the current clock to be strictly past the start after lock waits. Set `attended` or `absent`, with both cancellation fields left null (`RF12`)
 
-2. For cancellation or outcome registration, select the same-clinic appointment by identifier with `FOR NO KEY UPDATE`. These operations do not acquire professional or patient row locks because they remove an appointment from the reserved set without creating a new occupation
-
-3. After acquiring the lock, require the appointment to remain `reserved` and validate the requested operation's permissions against the protected appointment data. Reject a final state without modifying it. Coordination with concurrent user deactivation or role changes remains dependent on Clinic and User Management Consistency
-
-4. Execute the applicable branch. For cancellation, validate the reason and update `state` to `cancelled`, `cancellation_reason`, and `cancelled_by_user_id` together, deriving the user from the authenticated actor (`RF11`). For an outcome, require `clock_timestamp() > start_at` immediately before updating `state` to `attended` or `absent`, keeping both cancellation fields `NULL` (`RF12`). The `appointments_cancellation_check` constraint enforces the cancellation-field combination
-
-5. Commit the state change. Once one competing transition commits a final state, another request must not overwrite it using an earlier `reserved` reading
-
-Rescheduling uses the same original-appointment lock and state validation through [Atomic Rescheduling](#atomic-rescheduling), including its replacement transaction. It retains the order professionals, patient, then original appointment. Any operation requiring both agenda resources and an appointment lock must acquire those resources before the appointment.
-
-Locking only the appointment avoids serializing independent cancellations or outcomes for the same professional or patient. Acquiring all three resource types was considered but would introduce additional contention without being necessary for these state changes.
+Cancellation and outcomes remove occupation, so they only need the appointment lock. Rescheduling adds occupation and follows [its agenda lock order](#atomic-rescheduling).
 
 ## Concurrent Weekly Schedule Changes
 
 ### Concurrency Risk
 
-Concurrent weekly schedule replacements can overwrite changes made after an editor read the schedule. The selected policy validates each proposed week against current appointments but does not detect outdated edits.
-
-Ex: two editors read the same week. One changes Monday and saves. The other submits a Tuesday change together with the earlier Monday values, unintentionally undoing the first edit.
-
-Schedule changes also compete with bookings and rescheduling. Checking appointments without coordinating those operations could allow a new reserved appointment to fall outside the updated hours, violating `I3` (`RF5`).
+A booking can enter hours being removed. Two complete-week replacements can also overwrite edits to different weekdays (`RF5`, `I3`).
 
 ### Transaction Design
 
-1. Require the complete proposed weekly schedule without a copy of the original week or an edit-version counter. Begin a `READ COMMITTED` transaction
+1. Use `READ COMMITTED`. Lock the same-clinic professional with `FOR NO KEY UPDATE`, check the actor's permission, and read the current week
+2. Validate the complete proposed week, including interval bounds and ownership of referenced schedule rows. Use clinic-local time and allow adjacent intervals to provide continuous coverage
+3. Query all current reservations for that professional, including past appointments still in `reserved`. Reject and report appointments that lose any coverage. Otherwise replace the week atomically
 
-2. Acquire `FOR NO KEY UPDATE` on the same-clinic professional. Validate the actor's permission to modify that professional's schedule
-
-3. Read the professional's complete current weekly schedule after acquiring the lock to determine the writes needed for replacement. Do not require it to match a client-supplied original week. The professional row remains the locking resource even when no schedule rows exist
-
-4. Validate the proposed intervals against the weekday and minute bounds in the [data model](#3-data-model). Scope all referenced schedule identifiers to the same clinic and professional. Construct the complete proposed week before applying any changes. The migration includes the weekday and interval CHECK constraints
-
-5. Execute a fresh query for all of the professional's same-clinic `reserved` appointments, including past appointments that retain that state, without acquiring appointment row locks. Interpret the proposed weekly intervals on each appointment's dates using `clinics.time_zone`. Require joint coverage of the complete `[start_at, end_at)` interval with no gaps, allowing adjacent schedule intervals to provide continuous coverage. Use the same coverage rule for booking and rescheduling. If any appointment falls partly outside the proposed hours, report the conflicts and roll back without changing the schedule
-
-6. Apply the schedule inserts, updates, and deletions needed to produce the validated proposed week within this transaction. Every participating schedule writer must acquire the same professional lock before its definitive reads and writes. Bookings and rescheduling must retain their shared professional-lock protocol through commit
-
-7. Commit the complete schedule change. Appointment conflicts are business rejections
-
-Complete-week replacement keeps interval and appointment-coverage validation together without requiring an original schedule copy. A later successful replacement supersedes the complete earlier week, including changes to different weekdays. Detecting outdated edits is outside the selected update policy.
-
-Appointment locks were considered but are unnecessary for this check. While the professional lock prevents new bookings and rescheduling, concurrent cancellations and outcomes can only remove appointments from the reserved set. A query may conservatively reject a schedule because it still sees an appointment being cancelled. The actor may retry after resolving the conflict.
+The professional lock coordinates with booking and rescheduling even when the week has no rows. Cancellation and outcomes only remove reservations, so no appointment locks are needed. A still-uncommitted cancellation can cause a conservative rejection. The later successful replacement wins without an original-week check.
 
 ## Concurrent Schedule Block Creation
 
 ### Concurrency Risk
 
-Schedule block creation can race with booking or rescheduling. Both operations could find an interval available before either commits, leaving a reserved appointment inside a block and violating `I3`.
-
-Ex: one request finds no appointments in `[10:00, 11:00)` while another finds no blocks and reserves `[10:15, 10:45)`. Independent checks do not prevent both writes from succeeding.
-
-The selected business rule rejects conflicting blocks, reports the appointments, and creates no block record. This preserves the documented deviation from `RF6`, which describes creating the block before resolving affected appointments. New bookings may enter before a later retry succeeds.
+A block and a reservation can both pass separate checks and then occupy the same interval (`RF6`, `I3`).
 
 ### Transaction Design
 
-1. Begin a `READ COMMITTED` transaction
+1. Use `READ COMMITTED`. Lock the same-clinic professional with `FOR NO KEY UPDATE` and check the actor's permission
+2. Validate finite endpoints and positive duration. Check fresh reservations using half-open overlap rules
+3. Report conflicts without creating a block or changing appointments. Otherwise insert the block for the locked professional
 
-2. Acquire `FOR NO KEY UPDATE` on the same-clinic professional. Validate the actor's permission to create a block for that professional. This lock remains the coordination resource even when no appointments or blocks exist
-
-3. Validate that the requested `start_at` and `end_at` are finite and that `start_at < end_at`, using the `[start, end)` semantics in the [data model](#3-data-model). The migration includes the `professional_blocks_interval_check` constraint
-
-4. After acquiring the professional lock, execute a fresh PostgreSQL query for same-clinic `reserved` appointments belonging to that professional. An appointment conflicts when `appointment.start_at < block.end_at` and `block.start_at < appointment.end_at`. Adjacent endpoints do not conflict. Do not acquire appointment or patient row locks
-
-5. If the query returns conflicts, report them and roll back without inserting the block or changing appointments. If it returns none, insert the block with the authenticated clinic, the locked professional, and the validated endpoints. The empty result permits insertion because competing bookings and rescheduling must acquire the same professional lock before their definitive checks and writes
-
-6. Commit the block
-
-[Overlapping Bookings](#overlapping-bookings) and [Atomic Rescheduling](#atomic-rescheduling) must check blocks after acquiring the shared professional lock. This orders competing block creation and appointment creation without relying on cached availability.
-
-Additional appointment locks were considered but would increase contention without adding protection against new bookings. Concurrent cancellations and outcomes can only remove appointments from the reserved set. A conflict query may conservatively reject a block while a cancellation remains uncommitted. The actor may retry after resolving the conflict.
-
-The professional lock also serializes block creation with other participating operations for that professional, including operations on different dates.
+Use the same professional lock as bookings and weekly edits, with no additional appointment or patient locks. A cancellation in progress can cause a conservative rejection. The [business rules](#schedule-changes-and-appointment-conflicts) record the unresolved difference from `RF6`.
 
 ## Concurrent Service and Professional Authorization Changes
 
 ### Concurrency Risk
 
-Bookings and rescheduling can use service data while another operation changes its duration, required specialty, or activation. A duration change racing with the first booking could leave the stored appointment interval inconsistent with its service (`RF3`, `I4`).
-
-Ex: a booking reads a duration of 30 minutes. Another transaction finds no associated appointments and changes the duration to 45 minutes. Without coordination, the booking could then insert the earlier duration.
-
-Authorization changes also compete with appointment creation and specialty changes (`RF4`). A booking must not use an association that becomes inactive before its transaction completes. An active association must connect a professional and service with matching specialties within the same clinic.
-
-Administrative edits prepared from outdated values can overwrite newer changes, including unintentionally reactivating a service or association.
+A booking can race with the first duration change or use an association whose activation or specialty changes during validation (`RF3`, `RF4`, `I4`).
 
 ### Transaction Design
 
-1. Begin a `READ COMMITTED` transaction and validate the actor's permission for the operation
+Use `READ COMMITTED` and lock services before professionals. Bookings and rescheduling take `FOR SHARE` on the service and use the professional lock from their agenda protocol. Catalog edits take `FOR NO KEY UPDATE` on the service. Association writes take `FOR SHARE` on the service and `FOR NO KEY UPDATE` on the professional. Professional specialty edits take `FOR NO KEY UPDATE` on the professional.
 
-2. Acquire the required locks in the order services, professionals, patients, then appointments, sorting multiple rows of each type by identifier. Bookings and rescheduling acquire `FOR SHARE` on their service before the locks in [Overlapping Bookings](#overlapping-bookings) and [Atomic Rescheduling](#atomic-rescheduling). Service catalog edits acquire `FOR NO KEY UPDATE` on the service. Association creation, reactivation, and deactivation acquire `FOR SHARE` on the service followed by `FOR NO KEY UPDATE` on the professional. Professional specialty edits acquire `FOR NO KEY UPDATE` on the professional
+- **Booking and rescheduling.** Validate matching specialties and an active association under lock. Booking requires an active service. Rescheduling may retain an inactive service. Both use the protected duration
+- **Service edits.** Only name, duration, required specialty, and activation are mutable. Before changing duration or specialty, reject if any appointment references the service. A specialty change also requires disabling its active associations first. Service deactivation keeps both appointments and associations
+- **Professional edits.** Only specialty is mutable. Disable active associations before changing it, preserving inactive associations and historical appointments
+- **Association writes.** Creation requires a new pair. Creation or reactivation requires matching specialties. Deactivation requires no remaining reservations for the pair. Preserve the row and its historical references
 
-3. For administrative edits, read the locked current state and apply only supplied mutable fields. Service edits may assign `name`, `duration_minutes`, `specialty_id`, and `is_active`. Professional specialty edits assign `specialty_id`. Association activation edits assign `is_active`. Validate the resulting state under the rules below without comparing original client values. Association creation remains a separate operation requiring the pair to be absent
-
-4. For booking or rescheduling, read and validate the service and association after acquiring their required locks. Require `professional_services.is_active` and matching professional and service specialties. New bookings additionally require `services.is_active`. Rescheduling may retain an inactive service to honor an existing commitment, but its destination association must remain active. Calculate `end_at` from the protected service duration and reuse the remaining appointment protocol
-
-5. For service catalog edits, validate the requested values. Before changing duration or specialty, execute a fresh query for any appointment referencing the service, regardless of state. Reject either change if any appointment exists, requiring a new service instead. An actual specialty change additionally requires no active professional-service associations, which must first be disabled explicitly. The service lock coordinates these checks with first bookings and association writers even when the queries return no rows. Name corrections remain permitted under [Service Catalog Updates](#service-catalog-updates). Service deactivation prevents subsequent new bookings without changing existing appointments or disabling their associations
-
-6. For an actual professional specialty change, require no active service associations before updating the specialty. Every active association must match the current specialty and would become incompatible with a different one. The professional lock prevents association creation or reactivation during this check. Preserve inactive associations and historical appointments
-
-7. For association creation or reactivation, require `professionals.specialty_id = services.specialty_id` within the same clinic. Insert the association or set `professional_services.is_active` to `TRUE` as applicable. Before deactivation, execute a fresh query for `reserved` appointments referencing that professional and service. Reject deactivation while any remain, requiring their cancellation or rescheduling to another authorized professional first. Otherwise, set `is_active` to `FALSE`, retaining the association and its appointment references. Appointment row locks are unnecessary because concurrent cancellations and outcomes can only remove reserved appointments, while new bookings and rescheduling require the held professional lock
-
-8. Apply only the validated operation's writes and commit. Duplicate associations, incompatible specialties, and prohibited changes are business rejections
-
-Shared service locks allow independent bookings to use stable catalog data concurrently. Using `FOR NO KEY UPDATE` for every service reader was considered but would unnecessarily serialize those operations.
-
-The common professional lock also protects association creation when no association row exists. More specific association locking was considered but would require additional handling for creation and coordination with specialty changes.
-
-Logical deactivation preserves the FK from appointments to their professional-service association. Removing that FK to permit physical deletion was considered but would weaken that relationship. The FK preserves existence, while the transaction protocol checks current activation and specialty compatibility.
-
-Partial updates preserve omitted fields but permit later assignments to overwrite earlier values under the section's common update policy. Concurrent user deactivation and role changes remain within Clinic and User Management Consistency.
+Shared service locks allow parallel readers while preventing catalog edits. The professional lock protects associations even before a row exists. No appointment lock is needed for deactivation checks because concurrent cancellations and outcomes only remove reservations. Keeping inactive associations preserves the appointment foreign key. User activity and role checks follow [clinic and user management](#clinic-and-user-management-consistency).
 
 ## Concurrent Patient Registration and Updates
 
 ### Concurrency Risk
 
-Concurrent registrations can both find no patient with an identification and attempt to create duplicate records within one clinic (`RF14`). A preliminary lookup does not protect an absent row.
-
-Concurrent updates can overwrite values changed after an editor read the patient when requests include those fields. Partial updates preserve omitted fields but do not detect outdated assignments. Contact changes must also preserve at least one contact method and must not store empty strings as provided contact values.
-
-Ex: one receptionist corrects a patient's phone while another edits the name using an earlier copy of the record. Saving that copy could restore the old phone.
-
-Contact reads and writes also require audit coordination (`RF18`), including stored contact reads used to validate an update's resulting state.
+Concurrent registrations can claim the same identification. Concurrent partial edits can combine into an invalid record, such as when two requests each clear a different contact method (`RF14`, `RF18`).
 
 ### Transaction Design
 
-1. Begin a `READ COMMITTED` transaction and validate the actor's permission. Updates supply only intended assignments to `identification`, `name`, `date_of_birth`, `email`, and `phone`, without original values
+1. Use `READ COMMITTED`. Register with a normal insert. The unique constraint on clinic and identification rejects duplicates without reusing or overwriting a record
+2. For an edit, take `FOR UPDATE` if identification is supplied and `FOR NO KEY UPDATE` otherwise. Select that mode before reading the current row. This avoids taking or upgrading to a stronger lock for edits that leave identification alone
+3. Validate the complete result under lock. Preserve the patient identifier and clinic. Allow changes to identification, name, birth date, email, and phone. Require at least one nonempty contact method. Preserve phone prefixes and leading zeros as text. Reject duplicate identification on update
+4. Apply the supplied fields and commit with the [required contact audit events](#sensitive-data-access-and-audit-consistency)
 
-2. For registration, validate the complete proposed record and execute a normal insert. Use `patients_identification_key` on `(clinic_id, identification)` as the definitive uniqueness guarantee. A preliminary lookup cannot replace it, and an empty lookup result does not provide a row lock. Reject a conflict on this constraint without modifying or automatically reusing the existing patient
-
-3. If an update supplies `identification`, acquire `FOR UPDATE` on the same-clinic patient from the start, even if the supplied value might equal the current one. Otherwise, acquire `FOR NO KEY UPDATE` and omit `identification` from the subsequent `UPDATE`
-
-4. After acquiring the lock, read the current record and combine it with the supplied assignments. Preserve omitted fields and interpret explicit `NULL` for `email` or `phone` as removal of that contact method. Use this protected resulting state for validation rather than a client-supplied copy of the patient
-
-5. Construct and validate the complete resulting record before writing. Require nonempty identification and name, valid field types and lengths, and at least one of `email` or `phone`. Neither contact field may be an empty string when provided. Preserve phone values as strings, including country prefixes and leading zeros. Keep `clinic_id` and `patient_id` unchanged. Apply these rules to registration as well, following the [data model](#3-data-model)
-
-6. For an update, write only supplied fields together. If `identification` changes, the same uniqueness constraint must reject an identification already used within that clinic. Do not merge patients or overwrite the conflicting record. The database constraints remain an additional guard on the resulting row
-
-7. Commit the patient writes with their required audit events. Audit treatment for contact reads already performed, including reads during rejected edits, follows [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency). Duplicate identifications are business conflicts
-
-Patient-only updates do not acquire explicit service, professional, or appointment row locks. Operations requiring additional domain resources must preserve the order in [Concurrent Service and Professional Authorization Changes](#concurrent-service-and-professional-authorization-changes).
-
-Explicit locking permits validation of the complete resulting record before writing only supplied fields. Concurrent edits to different fields preserve both assignments only if their combination remains valid. If two requests remove different contact methods, reject the second removal when it would leave the patient without contact data.
-
-Selecting the lock mode by whether `identification` is supplied avoids using `FOR UPDATE` for every edit and avoids a later lock upgrade after reading the current identification. Outdated assignments follow the section's common update policy.
+Patient-only edits need no service, professional, or appointment locks. The same uniqueness constraint covers inserts and updates because a preliminary lookup cannot lock an absent identity.
 
 ## Concurrent Clinical Note Creation
 
 ### Concurrency Risk
 
-Concurrent requests can attempt to create different clinical notes for the same appointment (`RF15`). Both can find no existing note before either inserts, so a preliminary lookup cannot guarantee uniqueness.
-
-Ex: the treating professional submits two requests from separate sessions. The second creation must not overwrite the content committed by the first.
-
-Creation must also verify that the appointment is `attended` and belongs to the authenticated professional. The note and its audit event must commit together to prevent persisted clinical content without its required write record (`RF18`).
+Two requests can both see no note. The note also depends on the appointment's final state and ownership, and must commit with its write event (`RF15`, `RF18`).
 
 ### Transaction Design
 
-1. Begin a `READ COMMITTED` transaction. Require permission to create clinical notes and resolve the professional through the authenticated user's association. Do not accept a client-supplied author as proof of ownership
+1. Use `READ COMMITTED`. Derive the acting professional from the authenticated user. Lock the same-clinic appointment with `FOR SHARE` before checking its state
+2. Require an `attended` appointment owned by that professional and nonempty note content. Current service or association activation does not affect historical note creation
+3. Insert the note and its write event in one transaction. Derive the patient and clinic from the appointment. The note's primary key rejects duplicates without replacing or returning existing content
 
-2. Select the same-clinic appointment by `appointment_id` with `FOR SHARE`, without filtering by state before acquiring the lock. If an outcome update is already in progress, the locking read can wait before checking the resulting row
-
-3. After acquiring the lock, require `state = 'attended'` and require the appointment's `professional_id` to match the authenticated professional. Validate that the supplied `content` is nonempty text. Derive the note's clinic and appointment identifiers from the protected appointment
-
-4. Insert the note normally. Use the PK on `clinical_notes.appointment_id` as the definitive guarantee of at most one note per appointment, including when no note row exists to lock. Reject a duplicate creation without updating the existing note or automatically returning its content. Do not use an upsert that replaces clinical content
-
-5. Insert the write audit event in the same PostgreSQL transaction. Derive `patient_id` from the protected appointment and the acting user from the authenticated context. Identify the created note, use `resource = 'clinical_note'` and `action = 'write'`, and do not copy clinical content into the event. The shared audit protocol belongs to Sensitive Data Access and Audit Consistency
-
-6. Commit the note and event together. Duplicate creation is a business conflict
-
-The shared appointment lock was selected over an ordinary read to wait for an outcome update already in progress and retain protected appointment values through creation. It does not serialize competing note creators, whose uniqueness is enforced by the note's PK.
-
-The treating professional is derived from the appointment. Current service activation or an active professional-service association is not an additional condition for documenting a historical attended appointment. Stability of the authenticated identity, professional association, and permissions follows Clinic and User Management Consistency and Transactional Clinic and Permission Context.
-
-Separate note and audit transactions were considered but would lose their atomicity and require an additional recovery protocol. The selected transaction preserves both writes as one operation.
+The shared lock waits for an outcome already in progress and protects the appointment facts. The primary key arbitrates competing note inserts. A separate audit transaction would lose atomicity.
 
 ## Sensitive Data Access and Audit Consistency
 
 ### Concurrency Risk
 
-Returning clinical notes or patient contact data before confirming their audit records can expose sensitive content without a persistent access record (`RF18`). Committing a sensitive write separately from its event can leave either an unaudited change or an event describing a change that never committed.
-
-Ex: a patient query succeeds but inserting its read event fails. The API must discard the queried content and return an error rather than deliver it without its audit record.
+A response can expose sensitive content without a persistent read event. Separate write and audit commits can also disagree (`RF18`).
 
 ### Transaction Design
 
-1. Use one PostgreSQL transaction for the operation, with its documented isolation and domain locks. A read endpoint must permit audit inserts rather than opening a `READ ONLY` transaction
+- **Read events.** In the authorized operation transaction, record one read per distinct patient contact or clinical note retrieved. Include internal contact reads used to validate patient edits. Empty results and identifier-only queries create no resource events
+- **Write events.** Record patient registration, contact assignments including unchanged values, and clinical note creation. Edits to other patient fields only produce read events if they retrieve stored contact data. Keep write responses and write projections limited to identifiers and operation results
+- **Attribution.** Derive the actor and clinic from authorized context. Contact events identify the patient. Note events also identify the appointment and derive the patient from it. Store metadata and event time without copying contact or clinical content
+- **Commit.** Materialize the result and insert the events before confirming the transaction. Deliver sensitive content only after confirmed commit. Rollback discards domain writes and all events, including internal reads from a rejected edit. An uncertain commit can leave an event without a delivered response
+- **Immutability.** Enforce append-only records in PostgreSQL through grants and a statement trigger that rejects updates, deletes, and truncation, even when no rows match (`I6`). Concurrent inserts need no global audit lock. The event timestamp records generation time, independently of commit order and receipt
 
-2. Retrieve sensitive content only within the authorized scope. Record one `read` event per distinct resource whose stored content is retrieved during the operation, including internal contact reads used for patient-update validation. For `patient_contact`, identify the clinic and patient and leave `appointment_id` as `NULL`. For `clinical_note`, identify the note through its appointment and derive the patient from that appointment. Derive the actor from authenticated context. An empty result needs no resource events; do not invent identifiers for missing records or copy sensitive values into events
-
-3. Insert read events in that same transaction before commit. Resources discovered by an authorized query can be recorded from its results without a separate metadata-discovery transaction or a second authorization phase. Keep retrieved values inside the operation until its commit is confirmed
-
-4. Generate write events explicitly through the common application protocol and the same scoped client. Patient registration records a `patient_contact` write. An update assigning `email` or `phone` records a contact write for each affected patient, including assignments that retain the same value. Changes confined to other patient fields need no contact write event, though any stored contact reads still need their read events. Clinical note creation records its write as specified in [Concurrent Clinical Note Creation](#concurrent-clinical-note-creation). Receiving input or obtaining identifiers alone does not create a read event
-
-5. Materialize the operation's results and commit its domain writes and all read and write events together. Do not transmit sensitive content before commit confirmation. An audit insertion failure must prevent delivery of content already retrieved
-
-6. Read events from a rolled-back operation are rolled back too, including internal reads during a patient update rejected because its resulting record is invalid. This design records reads in committed application operations; it does not retain a separate history of failed internal access attempts. An uncertain commit can leave events persisted without a response being delivered. Unknown outcomes and permitted retries follow Conflicts, Deadlocks, and Retries
-
-7. Keep sensitive-write responses limited to identifiers and the operation result. SQL and ORM write projections must not automatically retrieve contact or clinical content. A later request for stored content uses this same single-transaction read-and-audit protocol
-
-8. Protect committed events against application `UPDATE`, `DELETE`, and `TRUNCATE` in PostgreSQL (`I6`). This protection does not make an uncommitted insert survive rollback. Concurrent event creation uses ordinary inserts without an application-wide audit lock. `occurred_at` records event generation time, not client receipt or a strict global commit order
-
-A single operation transaction was selected over independently committed read attempts. It removes the preliminary audit transaction and repeated authorization, while ensuring that sensitive content is not returned unless its audit records commit. The accepted tradeoff is that internal reads performed by failed operations are not retained in the audit trail. A committed event establishes backend access in a committed operation, not successful delivery to the client.
-
-Application-generated events keep the operation and authenticated metadata explicit. Database triggers were considered for write-event generation but would still need that actor context. Every sensitive access path must use the common protocol, while PostgreSQL protects committed audit records against modification.
-
-`insertAuditEvent` uses the caller's scoped transaction client and the authorized actor's clinic and user identifiers. It takes a resource reference and action and issues one parameterized insert without `RETURNING`. It binds `NULL` for a patient-contact event's appointment and requires the appointment identifier for a clinical-note event. PostgreSQL generates the event identifier and timestamp.
-
-Call `createAuditReadRecorder` once inside each authorized transaction attempt. After retrieving stored contact or note content, pass the recovered resource references to the recorder and await the inserts within the attempt. The recorder tracks each resource by type and patient or appointment identifier across queries. Empty results produce no events, and each retry starts with a fresh recorder.
-
-`audit_records_append_only_guard` implements that engine protection as a `BEFORE UPDATE OR DELETE OR TRUNCATE` statement trigger. It rejects every such statement, including updates and deletions with no matching rows, with SQLSTATE `55000`. Its `SECURITY INVOKER` function, `public.reject_audit_record_mutation()`, uses `search_path = pg_catalog, pg_temp` with default `PUBLIC` execution revoked. Application profiles cannot disable the trigger and have no mutation grants; tests also exercise the trigger under temporary grants rolled back afterward. Inserts remain transactional and can be rolled back.
+Application-generated events carry authenticated attribution. The single transaction keeps events and domain work consistent, accepting that failed internal reads leave no separate audit history.
 
 ### Audit Record Query
 
-`GET /audit-records` uses the API's bearer authentication and the `readAuditRecords` authorization policy for clinic administrators (`RF19`). The query binds the clinic from the authorized context, applies the supplied filters together, and selects audit metadata under RLS. It sorts by `occurred_at` descending and then by `audit_record_id` descending to break ties.
-
-The optional query parameters are `userId` and `patientId` (UUIDs) and `from` and `to` (ISO 8601 timestamps). Timestamp values use `YYYY-MM-DDTHH:mm` with optional seconds that can have up to three fractional digits. The zone must be `Z` or an offset in `HH`, `HHmm`, or `HH:mm` form with a leading sign. The date range includes `from` and excludes `to`. Either bound can be supplied on its own. The route returns `400` for invalid, repeated, or unknown parameters, including `clinicId`, and for `from >= to` when both bounds are supplied.
-
-A successful response returns `200` with `{ records: [...] }`. Each record contains `auditRecordId`, `clinicId`, `userId`, `patientId`, `resource`, `appointmentId`, `action`, and `occurredAt` serialized as a UTC timestamp. The array follows the database order and is empty when no records match.
-
-Requests without a valid token receive `401`. Requests with a valid token that fail role or local authorization checks receive `403`. Technical failures use the shared `500` and `503` responses from [Token Checks](#token-checks) and [Conflicts, Deadlocks, and Retries](#conflicts-deadlocks-and-retries).
+Clinic administrators can read audit metadata for their own clinic (`RF19`). Combine optional user, patient, and date filters. The lower bound is inclusive and the upper bound exclusive. Sort by event time descending, then by event identifier descending. A valid query may return no records. See the [HTTP contract](../README.md#audit-api).
 
 ## Clinic and User Management Consistency
 
 ### Concurrency Risk
 
-Creating a clinic separately from its first administrator can leave an incomplete registration (`RF1`). Concurrent registrations can also attempt to associate the same Keycloak identity with different local users or clinics (`RF2`, `I5`). A preliminary lookup does not protect an identity that has no local row.
-
-Deactivation and role changes can race with operations that already checked permissions. Booking can also use a professional whose associated user becomes inactive or loses the professional role before the operation completes. Administrative edits based on earlier values can unintentionally overwrite a newer role or reactivate a user.
-
-Changing identity, clinic, or professional-user associations could alter the ownership used to authorize operations on historical appointments and clinical notes (`RF15`, `RF17`). User and professional registration can also occur separately, so a professional role alone does not establish that its required profile exists.
-
-PostgreSQL and Keycloak changes do not share one transaction. A provider request can succeed before the SQL commit fails, or a timeout can leave the provider result unknown. Delayed requests can also complete after a failed operation. These failures may leave the local and provider roles inconsistent without automatic recovery.
-
-Ex: Keycloak accepts a role change, but the database connection fails before the SQL commit is confirmed. Rolling back PostgreSQL cannot undo the provider change.
+Separate clinic and administrator commits could leave an incomplete registration. Concurrent registrations can claim the same provider identity. Local role changes can race with authorization, and a successful Keycloak change can outlive a failed SQL transaction (`RF1`, `RF2`, `RF17`, `I5`).
 
 ### Transaction Design
 
-1. Authenticate the caller and perform preliminary permission checks. For user creation, verify the supplied `identity_id` against an existing identity in the configured Keycloak realm before opening the management transaction. This workflow does not create provider identities or store credentials. Identity verification is a point-in-time check and does not lock the external account
+1. Authorize the caller before looking up an existing Keycloak identity for registration. Provider lookup is a point-in-time check. Open a `READ COMMITTED` management transaction and recheck authorization under lock
+2. Lock users before domain resources. Use `FOR SHARE` for the actor and other eligibility checks, and `FOR NO KEY UPDATE` for a user being edited. If the actor is also the target, acquire the stronger mode once. Check activity and role after locking, and require the current role to match a mapped token role
+3. Preserve each user's identity and clinic and each professional's user association. A different identity or clinic requires a new local user. Existing identity uniqueness prevents reusing the same provider identity. Register professional profiles separately for a user with the professional role, with at most one profile per user
+4. Apply only requested role and activity changes against the locked current state. Deactivation is local. Bookings and rescheduling destinations require a protected active user with the professional role and a profile. Existing appointments and profiles remain. An inactive source user does not block rescheduling to an eligible destination, cancellation, or outcome registration under their usual permissions
+5. For registrations and actual role changes, finish SQL writes and any version increment before synchronizing the application role with Keycloak. Add the new role before removing other mapped domain roles from the application. Preserve credentials, unrelated roles, and account enabled state. Hold the target lock until SQL finishes. Activity-only and unchanged edits need no provider call
+6. Disable automatic retries immediately before dispatching a provider mutation. Require both provider confirmation and SQL commit. Roll back SQL when Keycloak fails. Distinguish a confirmed partial provider change from an uncertain outcome. A provider change can persist or arrive late even when SQL rolls back. Resolve divergence manually
 
-2. Use explicit `READ COMMITTED` isolation for management transactions. Other domain operations retain their documented isolation. Query isolation follows [Consistent Concurrent Queries](#consistent-concurrent-queries)
-
-3. Identify the required users through metadata, then acquire their row locks before domain locks. Preserve the order `users -> services -> professionals -> patients -> appointments`, sorting multiple rows of each type by identifier and avoiding duplicates. Include the actor, an administrative target, and a destination professional's user when applicable. Use `FOR SHARE` for permission and eligibility checks and `FOR NO KEY UPDATE` for a user whose role or activity will change. Acquire the stronger mode initially when one row serves both purposes. Select by identity or identifier without filtering out inactive users before locking
-
-4. After locking, require the actor to be active, require their current `users.role` to be included in the validated token's mapped domain roles, and require that role to permit the operation (`RF17`). Derive clinic access from the protected local association. An older token role cannot restore permissions withdrawn locally. Apply this protection to the single operation transaction in [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency), including its sensitive queries and audit inserts
-
-5. For clinic registration, insert the clinic and its first active `clinic_administrator` in the same PostgreSQL transaction (`RF1`). For ordinary user registration, insert the user within the authorized clinic (`RF2`). Use normal inserts and the PKs and `users_identity_id_key` as definitive uniqueness guards. An empty preliminary lookup provides no row lock. A uniqueness conflict rolls back the complete registration, including any new clinic, without reassigning or automatically returning an existing user. Recognizing a repetition of an earlier request belongs to Conflicts, Deadlocks, and Retries
-
-6. For a role or activity edit, accept only the requested assignments to `role` and `is_active`, without original values. Combine them with the locked current state, validate the resulting role and clinic relationship, and update only supplied fields. Determine actual role changes against the locked current role and apply them through the synchronous provider step below. An activity-only change updates `users.is_active` without changing Keycloak `enabled`
-
-7. Keep `users.identity_id`, `users.clinic_id`, `professionals.user_id`, and `professionals.clinic_id` unchanged. Preserve logically inactive users and historical professional profiles. A different identity or clinic requires another local account and, when needed, another professional profile. Because the previous user retains its unique identity association, the same Keycloak identity cannot be reused for that new account
-
-8. Permit user and professional profile registration as separate operations (`RF2`, `RF4`). Profile registration protects the target user's clinic and role through the common user-lock protocol, requires `healthcare_professional`, and performs a normal profile insertion. Use `professionals_user_key` to reject duplicate profiles without overwriting an existing association. Operations requiring the authenticated user's professional profile must resolve that stable association and reject the operation while the profile is absent
-
-9. New bookings and rescheduling destinations require the professional's protected user to be active with role `healthcare_professional`, in addition to the service and association conditions in [Concurrent Service and Professional Authorization Changes](#concurrent-service-and-professional-authorization-changes). Deactivation or removal of that role waits for transactions holding conflicting user locks but does not require resolving all reserved appointments first. Preserve those appointments. Reception or the clinic administrator can explicitly move them to another eligible professional through [Atomic Rescheduling](#atomic-rescheduling). An inactive source user does not prevent that move, and existing cancellation and outcome operations retain their applicable permissions
-
-10. For registration and actual role changes, finish local SQL validation and writes, including any required availability version increment, then update the user's application-role assignment in Keycloak through the API before committing PostgreSQL. Retain the target user's row lock through the provider call and SQL commit so ordinary concurrent edits do not reorder provider updates. Preserve credentials, unrelated roles, and the provider account's `enabled` state. A missing identity is an error rather than a reason to create a provider account. Activity-only edits require no provider call
-
-11. Require provider confirmation and the SQL commit before reporting complete success. On provider failure, roll back the SQL transaction. Once a provider-changing request has been sent, do not automatically retry the management operation or compensate the provider change. A timeout, process interruption, or SQL commit failure may leave the two systems inconsistent. Report an uncertain outcome when confirmation is unavailable. There is no background worker, durable synchronization queue, periodic reconciliation, or automatic repair; manual correction may be necessary
-
-12. Preserve current local authorization checks during any inconsistency. Require the local role to match a mapped token role; mismatches deny access. After a successful role change, a token containing only the previous role remains insufficient and the client must obtain a new access token. Deactivation and role changes wait for already protected transactions, allowing those transactions to finish before the administrative change commits. This does not undo content already retrieved or guarantee when a response reaches its client. Local reactivation does not enable a provider account that was disabled independently
-
-Existing identities were selected over identity creation within the registration workflow. Shared user locks permit concurrent operations by the same user while stabilizing their local permissions. Checking permissions without retaining a lock would allow an administrative change to commit while an operation continued under its earlier authorization.
-
-Separate profile registration avoids requiring specialty data during every professional-role assignment, at the cost of temporarily rejecting operations that need a missing profile. Role and activity edits follow the section's common partial-update policy.
-
-Synchronous provider updates were selected over a background synchronization worker to reduce implementation scope. Holding the existing user lock through the provider call serializes ordinary administrative changes, at the cost of retaining a SQL connection and locks during that network wait. PostgreSQL and Keycloak still do not commit atomically. Inconsistency after exceptional failures or delayed external effects is accepted, can persist indefinitely, and requires manual correction when encountered. No automatic convergence is promised.
+Shared locks allow concurrent work by an authorized user and make deactivation wait for protected operations. A token with only the previous role fails the current local role check. Synchronous role updates avoid a background synchronization workflow at the cost of holding SQL resources during a provider request and accepting possible divergence.
 
 ### Clinic Registration Endpoint
 
-`POST /clinics` requires an access token and an active local platform administrator whose role matches the token. The JSON request has three required fields.
-
-| Field | Accepted value |
-| --- | --- |
-| `name` | Nonblank string up to 200 characters |
-| `timeZone` | Named time zone up to 64 characters, such as `America/Costa_Rica` or `UTC` |
-| `administratorIdentityId` | Nonblank Keycloak user ID up to 255 characters |
-
-The API verifies the identity before opening the authorized transaction. It creates the clinic, its first active administrator, and the initial availability version in that transaction. For direct application role mappings, it adds the requested role if needed before removing other application roles. It preserves unrelated mappings and returns both local IDs after provider confirmation and SQL commit.
-
-| Status | Meaning |
-| --- | --- |
-| `201` | Clinic registered. The response contains `clinicId` and `administratorUserId` |
-| `400` | Invalid registration fields or malformed JSON |
-| `401` | Missing or invalid access token |
-| `403` | The caller lacks active, matching platform authorization |
-| `404` | The requested identity does not exist in the configured realm |
-| `409` | The identity is already linked to a local user |
-| `500` | The operation failed. A confirmed partial provider update includes `KEYCLOAK_ROLE_UPDATE_PARTIAL`. A missing confirmation of a provider mutation or SQL commit, or a database failure after a marked mutation, includes `OPERATION_OUTCOME_UNKNOWN` |
-| `503` | Keycloak is unavailable before any provider mutation, or the transaction encounters a transient database failure before dispatching a provider mutation |
-
-A confirmed partial update can leave both roles in Keycloak while PostgreSQL rolls back the registration. Both partial and indeterminate outcomes may require manual correction.
+A platform administrator registers a clinic, its first active administrator, and its initial availability version atomically in PostgreSQL. The administrator must have an existing provider identity. Identity uniqueness rejects duplicates without leaving a partial clinic. Return the new clinic and administrator identifiers after both confirmations. See the [HTTP contract](../README.md#clinic-api).
 
 ### Clinic User Registration Endpoint
 
-`POST /users` requires an access token and an active local clinic administrator whose role matches the token. The request body contains exactly two fields.
-
-| Field | Accepted value |
-| --- | --- |
-| `identityId` | Nonblank ID of an existing Keycloak user, up to 255 characters |
-| `role` | `clinic_administrator`, `reception`, or `healthcare_professional` |
-
-The API checks local authorization before querying Keycloak. The registration transaction rechecks authorization under lock and inserts an active user into the clinic from that protected context. Professional profiles are registered separately. After Keycloak confirms the role and PostgreSQL confirms the commit, the API returns `201` with `userId`.
-
-The [clinic registration error statuses](#clinic-registration-endpoint) also apply, with `403` reflecting clinic administrator authorization. Additional fields, including `clinicId`, return `400`. An identity linked to any local user returns `409`, and the response omits the user's clinic.
+A clinic administrator registers an active user with an existing provider identity and a clinic role. Derive the clinic from locked authorization. Reject duplicate identities across clinics without disclosing their existing clinic or modifying their association. Return the local user identifier after both confirmations. See the [HTTP contract](../README.md#clinic-api).
 
 ## Consistent Concurrent Queries
 
 ### Concurrency Risk
 
-Availability, agendas, patient history, and appointment counts can combine data from different committed states when a response uses several queries under `READ COMMITTED` (`RF7`, `RF8`, `RF16`, `RF20`, `RF21`). Each query has its own snapshot, so a transaction alone does not make their combined results consistent.
-
-Ex: an agenda query returns a reserved appointment. A concurrent cancellation commits before a second query counts reserved appointments. The response can contain that appointment alongside a total of zero without either query reading uncommitted data.
-
-A database snapshot does not fix a changing wall-clock reference. Sending results before all queries finish can also expose an incomplete response that cannot be withdrawn after a later failure.
+Under `READ COMMITTED`, separate statements can see different committed states. An agenda can list a reservation that a later count omits after a cancellation. A moving clock can also split related results (`RF7`, `RF8`, `RF16`, `RF20`, `RF21`).
 
 ### Transaction Design
 
-1. Validate the request parameters and retain the same scope throughout response construction. Components describing the same population must use matching clinic, date bounds, filters, and applicable resource restrictions. Do not independently recalculate their scope between queries
+1. Keep clinic, date bounds, filters, and resource restrictions consistent across related results. Patient history includes appointment states and replacement links. Daily agendas cover one professional or the clinic. Count appointments by state and date range in PostgreSQL
+2. Use `READ COMMITTED` for one statement that supplies all related facts and `REPEATABLE READ` when several statements need one snapshot. Authorization preparation can establish that snapshot. Audit inserts alone do not change the isolation choice. Protect actor authorization with `FOR SHARE` and read domain resources without agenda locks. If a locking read finds a row changed since the transaction snapshot, abort that attempt
+3. When time matters, capture the wall clock once after authorization locks. Use it and the snapshot's clinic time zone across the whole response. A transaction-start timestamp would miss time spent waiting for locks
+4. Materialize all results and required audit events before confirming commit. Send one complete response after releasing SQL resources. Discard failed or unconfirmed attempts, including results already read
 
-2. When an operation retrieves patient contact or clinical note content, record the reads in the same transaction through [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency) (`RF18`). Audit events and any domain writes commit together before sensitive results can be returned
-
-3. Begin a short PostgreSQL transaction with explicit isolation selected before its first query. Use `READ COMMITTED` when one SQL statement retrieves all related domain facts needed for the response. Use `REPEATABLE READ` when several statements must share a snapshot. Base this choice on the SQL statements retrieving related domain facts rather than the number of application or ORM calls. Audit inserts alone do not require a higher snapshot isolation level
-
-4. Acquire and retain the actor's `FOR SHARE` user lock and validate current authorization through [Clinic and User Management Consistency](#clinic-and-user-management-consistency). Reject a missing, inaccessible, inactive, or unauthorized actor and roll back. The phase must permit that row lock and any audit inserts rather than declaring PostgreSQL `READ ONLY`. Database privilege handling belongs to Transactional Clinic and Permission Context. Read domain resources through ordinary snapshot queries without adding professional, patient, or appointment row locks solely for consultation
-
-5. Under `READ COMMITTED`, the domain statement supplies the common snapshot for its related results. Under `REPEATABLE READ`, the snapshot is established by the transaction's first non-transaction-control statement and retained across its queries, which can include authorization preparation. A locking read can fail if the user changed after that snapshot was established. Abort and discard that attempt rather than continuing with stale authorization
-
-6. After obtaining authorization locks and before time-dependent calculations, capture `clock_timestamp()` once when the response needs a current-time reference. Reuse the captured value across all related SQL queries and application calculations. Do not invoke a changing clock independently for each professional, date, or result fragment. Interpret clinic-local dates and weekly schedules using `clinics.time_zone` from the applicable data snapshot
-
-7. Retrieve the complete related dataset through the selected snapshot strategy. Availability calculations must combine schedules, blocks, appointments, service data, and professional eligibility under their existing rules. Agenda and history components must use consistent appointment states and related values. Counts describing the same population must apply the corresponding scope, using one aggregate statement when sufficient. Apply the same authorized resource scope to retrievals and their audit events. An empty result remains a snapshot result and does not lock an interval or authorize a booking
-
-8. Materialize all database results required for the response before committing. Keep the phase short and perform no client transmission while its transaction remains open. After commit is confirmed, release the connection and transaction locks, then construct and send the complete response from those materialized values. Do not issue later queries to fill missing response components from another snapshot
-
-9. If a query or validation fails, roll back the phase and discard its accumulated results. If commit is not confirmed, do not report a successful complete response. Do not combine fragments from failed and subsequent attempts. Read audit events in that failed transaction roll back with it. A new attempt repeats the authorized retrieval and its audit inserts together. Error, retry, and unknown commit outcome handling belong to Conflicts, Deadlocks, and Retries
-
-10. Limit snapshot consistency to the response being constructed. Later requests may observe newer committed states, and concurrent changes may commit while the materialized response is being sent. Availability consultation does not reserve a slot. Booking and rescheduling retain their protected PostgreSQL checks and final future-start validation. Coordinating cached availability with PostgreSQL and meeting `I7` and `I8` belong to Transaction and Cache Coordination
-
-The mixed isolation strategy uses a single statement when it expresses the response clearly and retains a shared snapshot when multiple statements are necessary. It avoids forcing every response into one complex statement or using `REPEATABLE READ` for every query. Multi-statement phases retain their snapshot and connection until their reads finish.
-
-Additional agenda locks were considered but would make participating writers wait without being necessary for snapshot consistency. The actor lock remains necessary to stabilize authorization. Capturing the clock after authorization waits provides a common calculation reference without using the earlier transaction start time.
-
-Materializing results was selected over streaming while the transaction remains open. It requires memory for the response dataset but releases database resources before transmission and prevents a later query failure from producing a partially delivered result.
+The mixed isolation policy avoids forcing every query into one statement or holding a transaction snapshot when one statement suffices. Materialization uses memory but releases the connection before transmission. Later commits may change the state after the snapshot. Availability never reserves a slot.
 
 ## Transactional Clinic and Permission Context
 
 ### Concurrency Risk
 
-A pooled connection can serve different users and clinics in succession. Session-level clinic settings or operating roles can survive a successful transaction and affect a later request, compromising tenant isolation (`I5`). Establishing context on one connection and executing queries on another also separates the operation from its intended permissions and transaction.
-
-Resolving the actor's clinic requires access to local user metadata before the ordinary clinic context is available. Operations can additionally require preliminary resource relationships before acquiring their ordered locks. Granting broad access for this preparation would weaken the intended permission boundary.
-
-Ex: booking receives a `professional_id` and must resolve its associated user before acquiring user locks. Trusting a client-supplied association could protect the wrong user, while locking the professional first would violate the accepted acquisition order.
-
-Incomplete preparation can also appear as an ordinary empty result when policies filter inaccessible rows. Platform registration requires an explicit execution path because it is not an ordinary authenticated clinic operation (`RF1`, `RF17`).
+A pooled connection can leak clinic context or roles into another request. Broad permissions during identity and resource resolution would bypass the protection those lookups prepare (`I5`, `RF17`).
 
 ### Transaction Design
 
-1. Authenticate the request and identify its requested operation before opening the database phase. Obtain the provider identity from the validated token, rather than accepting an independent actor identifier from request data. Complete external identity verification required for registration before entering its PostgreSQL transaction. Preliminary checks do not replace the protected local authorization below
+1. Derive the provider identity from the validated token. Open the operation's SQL phase on the shared pool under a restricted base login, with ordinary domain access denied by default
+2. Use bounded functions to resolve the actor's user and clinic. For booking and rescheduling, resolve the destination professional's user before taking user locks. For rescheduling, also resolve the original appointment's references. These lookups establish neither permission nor a protected state
+3. Lock the actor and required users in order. Verify the actor's identity and clinic match the resolved association. Check current activity, token-role correspondence, and operation permission. Resolve the actor's stable professional association when required. A missing or foreign target fails authorization rather than producing a valid empty result
+4. Set the validated actor and clinic and select the database profile from a fixed mapping outside privileged functions. Limit both to this transaction. Complete authorization before handing the scoped client to the operation. Run all parameterized queries and audit inserts through that client. A phase must allow its required locks and writes, even when its business operation is a read
+5. End access to the scoped connection when the operation finishes. Transaction-local context and role expire at commit or rollback. Discard a connection with uncertain state
 
-2. Enter a common transaction wrapper using the shared application pool and its restricted base login role. Select the operation's explicit isolation before its first query, following the applicable protocol and [Consistent Concurrent Queries](#consistent-concurrent-queries). Use a transaction access mode that permits the required row locks. Initialize transaction-local context in a state that denies ordinary domain access. Do not retain clinic context or operating-role selections through session-level assignments
+A platform administrator has no clinic and uses the bounded clinic creation function. The base login has no ordinary table privileges, and runtime profiles remain subject to RLS. Use the [restricted functions](#function-ownership) when a lookup or lock needs privileges the caller must not hold directly.
 
-3. Call a limited `SECURITY DEFINER` bootstrap function through the transaction client. Resolve only `user_id` and `clinic_id` for the authenticated provider identity. Reject a missing local association. This preliminary lookup does not authorize the operation or acquire the actor's row lock. A platform administrator's `clinic_id = NULL` does not grant access to every clinic
-
-4. Use limited metadata-resolution functions when the operation needs additional resource relationships before locking. Scope those lookups through the actor's stable local clinic association. Return only the identifiers needed for the requested operation, such as a professional's associated user or the original appointment's references. Do not retrieve `email`, `phone`, or clinical note `content`, and do not acquire agenda locks during this preparation
-
-5. Gather the required users and acquire their locks through the limited locking functions, preserving the order and modes in [Clinic and User Management Consistency](#clinic-and-user-management-consistency). Acquire multiple user rows sequentially in ascending identifier order, without duplicates or later lock upgrades. The actor, administrative targets, and destination professional users participate when required. Retain the locks until the current SQL transaction ends
-
-6. Validate the protected actor's activity, current role, token-role correspondence, and permission for the requested operation. Require its identifiers and clinic association to agree with the preliminary resolution. Resolve the stable professional association when ownership checks require it. Derive the final actor, clinic, role, and operation scope from these checks rather than from client-supplied clinic or role values. Reject failed authorization and roll back
-
-7. Establish the validated actor and clinic context in `app.user_id` and `app.clinic_id` as UUID text, using bound values and transaction-local `set_config(..., true)`. Select the PostgreSQL operating profile through a fixed application-controlled mapping and predefined `SET LOCAL ROLE` statements. Do not construct SQL role names from request values. Execute role selection outside `SECURITY DEFINER` functions. Complete and validate the applicable preparation before making the transaction client available to the operation
-
-8. Pass that scoped client explicitly to every repository and helper used by the phase. Execute all ORM and SQL queries through it. Do not use the global client, open another transaction inside a helper, or retain the scoped client for use after its phase ends. Await every query before completing the callback. Acquire subsequent domain locks in the accepted order. Where a lock requires modification privileges that the operating profile should not possess, use a limited locking function instead of granting those privileges to the caller
-
-   The scoped client accepts queries while the operation callback is active and the connection is available. The wrapper closes the scoped client when the callback settles or the connection reports an error. Transaction cleanup uses the underlying connection.
-
-9. Retrieve sensitive content and insert its audit events within the same wrapper invocation under [Sensitive Data Access and Audit Consistency](#sensitive-data-access-and-audit-consistency). Establish authorization once for that operation and use the same scoped client for domain queries and events. Confirm the operation transaction before returning sensitive content
-
-10. For platform clinic registration, validate and protect the platform administrator, select its restricted operating profile, and invoke a specific creation function (`RF1`). Within the caller's transaction, that function creates the new clinic, its first active administrator, and its initial availability version. Its inputs contain the validated registration data and existing provider identity. It does not grant general insertion rights over users in existing clinics or access to patients, appointments, or clinical notes. The platform actor retains `clinic_id = NULL`
-
-11. Restrict each auxiliary function to its defined operation, resource scope, and necessary result projection. Use owners with only the required privileges, fixed qualified object references, a trusted `search_path`, and explicitly restricted execution privileges rather than default `PUBLIC` execution. Do not expose arbitrary SQL through function parameters. Bootstrap, metadata resolution, locking, and clinic creation remain distinct responsibilities. Functions participate in the caller's transaction and do not independently commit their work or release its row locks
-
-12. Abort a phase whose preparation is missing, incomplete, inconsistent, or unsuccessful before executing its ordinary operation. Do not interpret such a failure as a valid empty business result. Independently require ordinary RLS-protected access to have a complete valid clinic context, without treating missing, empty, malformed, or `NULL` clinic values as unrestricted scope. Preparatory functions and platform creation retain only their explicitly bounded access paths. Detailed grants and policy expressions belong to [Identity, Security, and Auditing](#6-identity-security-and-auditing)
-
-13. Commit or roll back the complete phase through its transaction boundary. Transaction-local settings and role selections end with that boundary. Do not reuse a connection whose baseline or transaction state cannot be established safely. Preserve the response rules in [Consistent Concurrent Queries](#consistent-concurrent-queries)
-
-The internal transaction runner checks out one connection from a shared `pg.Pool` configured with the runtime `DATABASE_URL`. It returns the callback result only after PostgreSQL confirms `COMMIT` and discards the connection when the transaction state is uncertain. Database initialization continues to use Prisma with the setup connection.
-
-The authorization wrapper selects isolation from the operation policy before opening the phase. It uses `READ COMMITTED` for `readAuditRecords`, `createUser`, and `updateUserPermissions` (clinic administrators), `createClinic` (platform administrators), `replaceOwnWeeklySchedule` (healthcare professionals), and `rescheduleAppointment` (clinic administrators and reception). It uses `REPEATABLE READ` for `readDefinitiveAvailability` (clinic administrators, reception, and healthcare professionals), allowing its related queries to share a snapshot. Failed actor authorization raises a forbidden error before the callback. On success, the wrapper passes the scoped transaction client and the protected actor's user ID, nullable clinic ID, and authorized role to the callback.
-
-For `replaceOwnWeeklySchedule`, the wrapper resolves the actor's professional ID after validating the locked user and before selecting the SQL profile. A missing association raises a forbidden error. The callback receives the professional ID and can acquire the professional row lock through the own-profile function.
-
-For `updateUserPermissions`, the wrapper takes the validated target UUID, deduplicates it with the actor UUID, and locks the rows in ascending UUID order. The actor uses `FOR SHARE` unless it is also the target. The target uses `FOR NO KEY UPDATE` from the start, including self edits. An unavailable target raises a forbidden error before the callback. The callback receives the locked target's user ID, clinic ID, SQL role, and activity flag.
-
-For `rescheduleAppointment`, the wrapper resolves the original appointment's references and the destination professional's user before acquiring user locks. Both lookups are scoped to the actor's clinic and raise a forbidden error when the resource is unavailable. The wrapper locks the actor and destination user in ascending UUID order with `FOR SHARE` and passes the references and locked destination user to the callback. The appointment workflow validates the destination user's eligibility and rechecks the original appointment under its domain locks.
-
-Transaction-local context was selected over session context with manual cleanup. The common wrapper and explicit client propagation centralize preparation instead of repeating it in each operation. The shared pool selects its operating profile after protected authorization, avoiding provisional routing to separate request pools. Operating privileges must not be inherited automatically by the base login, and ordinary runtime profiles remain subject to RLS without ownership or `BYPASSRLS` exemptions.
-
-Limited bootstrap and metadata functions were selected over broader preparatory table access. Locking functions avoid granting unnecessary modification privileges to callers. The specific clinic creation function confines the platform exception. These choices add functions and privilege configuration that must remain consistent with their bounded purpose.
-
-The backend remains trusted to validate the token, supply the authenticated identity, and select the permitted operation and SQL profile. Transaction settings are not independent proof of token authenticity. SQL `current_user` identifies an operating profile or function owner rather than the human actor, so application authorization and audit attribution use the protected local user identity.
+Transaction-local scope avoids manual session cleanup and separate pools per role. The backend remains responsible for token and operation checks. SQL settings delimit the permitted scope, while the authenticated local user supplies audit attribution.
 
 ## Transaction and Cache Coordination
 
 ### Concurrency Risk
 
-Invalidating Redis only after a PostgreSQL commit leaves a failure gap. A confirmed booking can remain available in an older cache entry if the process stops before deletion (`I8`). Cancellation or rescheduling can similarly leave the released occupation visible in cached data, preventing the next consultation from observing the committed change (`I7`).
-
-Concurrent cache producers can finish out of order. A calculation started before a booking can be published after that booking commits. Reading a newer version afterward and attaching it to the earlier calculation would incorrectly label stale data as current.
-
-The passage of time can make a returned start no longer future without any database write. Cached professional lists can also omit newly eligible professionals. Cache entries therefore require both transactional validation and response-specific processing (`RF7`, `RF8`).
-
-Redis and PostgreSQL do not share one transaction. Redis failures must not turn an unvalidated entry into an authoritative result, while waiting for Redis inside SQL transactions would retain connections and actor locks during that wait.
+Deleting a cache entry after SQL commit leaves a failure gap. A late producer can also publish older availability after a booking. A cached start can pass without any database write (`I7`, `I8`).
 
 ### Transaction Design
 
-1. Maintain one transactional availability version per clinic in PostgreSQL using `clinic_availability_versions`. Initialize `version` to `0` within the clinic registration transaction. Treat it as technical metadata for cache validation. A missing version row is a failed prerequisite, not an implicit initial value or permission to accept Redis data
+- **Writers.** Create one version row per clinic at registration with value zero. Increment it atomically once per transaction that changes an availability input, after domain writes and audit events and before commit. Cover bookings, rescheduling, departures from `reserved`, schedules, blocks, catalog, professional profiles and specialties, associations, and actual role or activity changes for users with a professional profile. Contact, note, and audit-only writes do not advance it. A missing row or failed increment aborts the write. Role synchronization follows the increment when required
+- **Prepare.** Resolve the clinic, candidate version, and candidate units in an authorized SQL phase. Confirm it before one Redis lookup outside SQL. Treat missing, unreadable, malformed, and mismatched entries as misses
+- **Validate and calculate.** Reauthorize in a separate definitive SQL phase. Read the version, final eligibility, and calculation inputs in one snapshot, even if preparation found no candidates. Accept candidates only if scope, format, and exact version match. Include newly eligible professionals and exclude ineligible ones. Calculate missing or rejected units in that snapshot. A version change triggers calculation without another Redis lookup
+- **Respond.** Apply the shared future-start filter to complete daily units, using the clock captured after authorization. Materialize the response and publishable unfiltered units before commit. Failed PostgreSQL validation prevents serving cached data. Redis failure leaves a confirmed PostgreSQL result usable
+- **Publish.** After confirmed commit, store calculated units with a finite TTL under their source version. A late older publication has a different key. Allow equivalent concurrent fills without per-key locks and accept duplicate calculation on misses
 
-2. Require version updates for bookings, rescheduling, and every transition out of `reserved`, including cancellation, attendance, and absence. Also cover weekly schedule edits, block creation, service catalog edits, professional specialty changes, professional-service association creation or activation changes, professional registration, and role or activity changes of users associated with professional profiles. Apply the same obligation to any other write affecting an availability input. Contact, clinical note, and audit-event writes do not change the version by themselves
+A definitive snapshot after a booking, cancellation, or rescheduling sees the new version immediately. Requests with an earlier definitive snapshot remain consistent with that snapshot. Earlier keys can remain until expiration or eviction. The version controls freshness and the TTL controls retention.
 
-3. Increment the clinic version atomically once per relevant transaction, after its validated domain writes and transactional audit events or work records, immediately before commit. Acquire this technical resource after the existing domain resources and do not acquire earlier domain locks afterward. Preserve the operation's existing isolation and locking protocol. A failed increment rolls back the complete domain transaction. Domain changes and their new version become visible together at commit. Rescheduling covers source release and destination occupation with the same increment
-
-4. Use one cache unit per clinic, professional, service, and requested clinic-local date, with the exact version included in its key. Store the complete calculated spaces for that date before filtering by the current time. Preserve complete interval coverage and conflict checks even when an interval reaches another date. Entries contain availability and the metadata needed to identify their scope, without patient contact or clinical note content. Cached professional availability does not establish that a particular patient can be booked
-
-5. Start an initial authorized SQL phase through [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context). Resolve the clinic, candidate version, and units needed for the request. For service-range queries, identify candidate professionals and dates for constructing the lookup keys. Finish and confirm this phase before contacting Redis. Its authorization and preliminary resource selection do not authorize the later definitive phase
-
-6. Retrieve the candidate entries from Redis outside SQL transactions. Do not expose them to the client or treat them as authoritative. Treat missing, unreadable, malformed, or scope-mismatching entries as unavailable candidates. Redis failure permits proceeding to the PostgreSQL calculation rather than manufacturing an empty availability result
-
-7. Open a separate definitive SQL phase and establish current authorization again. Select its isolation through [Consistent Concurrent Queries](#consistent-concurrent-queries). The version, final eligible professional set, and availability inputs must share one statement snapshot or a `REPEATABLE READ` snapshot when several SQL statements are necessary. Obtain the clinic version from that snapshot rather than carrying the initial phase's version forward unchecked. Capture the response's `clock_timestamp()` reference once after authorization locks and before time-dependent processing
-
-8. Determine the final request scope under this definitive snapshot. Accept a candidate only when its clinic, professional, service, local date, version, and expected format match that scope. Compare versions exactly. Do not mix entries from different versions. For `RF8`, include currently eligible professionals even when they were absent from the initial candidate selection, and exclude those no longer eligible. An earlier empty candidate selection does not establish a definitive empty result
-
-9. Calculate missing or rejected units from PostgreSQL within the definitive snapshot, using the documented schedules, blocks, reserved appointments, service rules, and professional eligibility. Combine valid candidates with calculated units only under that same version. If the version changed, calculate the required current units directly instead of opening another Redis lookup cycle. Associate every calculated unit with the version from its source snapshot, never with a newer version read after calculation
-
-10. Apply the current-time filter to the complete spaces using the single captured reference. Keep that reference consistent across professionals and dates. The cache payload remains independent of this filter so it can be reused as time advances. Interpret local dates through `clinics.time_zone` from the applicable snapshot and retain the interval and eligibility rules of the existing domain protocols
-
-11. Materialize the complete response and the unfiltered units eligible for publication, including their scope and source version, before confirming the definitive SQL transaction. Do not send partial results or fill later response components through new queries. If authorization, validation, or SQL execution fails, discard that attempt's accumulated results. Do not return the candidate merely because PostgreSQL validation could not finish
-
-12. After the definitive commit is confirmed, attempt to publish calculated units under their source version keys. Set the value and a finite TTL in the same Redis operation. Do not publish results from an unconfirmed phase or cache the time-filtered response as the reusable day entry. A producer may publish an older version after another version commits, but its distinct key cannot overwrite the newer version's entry
-
-13. Permit concurrent producers for the same unit and version without an additional per-key lock. Each request retains its own authorization and snapshot checks. Equivalent calculations may publish the same version key, accepting duplicate SQL work during concurrent misses. Use the finite TTL to clean up retained keys. Physical deletion of earlier versions is not required to confirm a domain operation, and TTL expiry is not proof of freshness
-
-14. If Redis lookup or publication fails, preserve the PostgreSQL result and use the definitive SQL calculation as the fallback. A failed cache publication does not reverse a confirmed domain operation or invalidate its calculated response. If PostgreSQL cannot supply and confirm the required validation phase, do not serve an unvalidated Redis entry
-
-15. Treat the committed version change as logical invalidation of earlier entries. A definitive snapshot established after a relevant commit must observe its new version and reject earlier candidates. Cancellation and rescheduling therefore expose their committed occupation changes without waiting for Redis deletion or expiry, subject to the remaining availability rules (`I7`, `I8`). Requests using an earlier definitive snapshot retain the response consistency boundary in [Consistent Concurrent Queries](#consistent-concurrent-queries). Booking and rescheduling still execute their authoritative PostgreSQL checks, including patient conflicts and the final future-start validation
-
-A clinic-wide version was selected over versions per professional to simplify shared dependencies and changes in the eligible professional set. Conservative updates can invalidate unaffected entries and make version increments wait on one shared row per clinic. Every relevant writer must participate, and cache hits still require PostgreSQL authorization and version validation. A separate table keeps version updates on a dedicated row, at the cost of an additional lookup compared with a column in `clinics`.
-
-Version keys were selected over a stable key with conditional replacement. They separate publications from different source versions. Daily professional-service units support reuse across overlapping date ranges, while storing spaces before the current-time filter avoids temporal expiry being mistaken for transactional invalidation.
-
-Two SQL phases were selected over retaining a transaction during Redis lookup. This adds database preparation even on cache hits but releases SQL resources during the network wait. Concurrent fills accept duplicate calculations without a coordination lock. TTL cleanup avoids enumerating old keys after each write. Detailed key encoding, serialization, and TTL configuration belong to [Availability, Caching, and Indexes](#7-availability-caching-and-indexes).
+A clinic-wide version simplifies shared dependencies and eligibility changes but invalidates some unaffected units and adds contention on one row. A dedicated row separates version writes from clinic data. Two SQL phases keep Redis waits outside transactions but retain SQL validation on cache hits. Versioned keys separate concurrent publications without conditional replacement.
 
 ## Conflicts, Deadlocks, and Retries
 
 ### Concurrency Risk
 
-Concurrent operations can encounter business conflicts, deadlocks, or serialization failures despite following the documented locking protocols. Retrying one failed statement can reuse decisions made before competing changes.
-
-Unbounded dependency waits and retries can retain connections and locks indefinitely. A communication failure during commit creates a different risk: the mutation may already be committed, so repeating it can duplicate an effect.
-
-Ex: a schedule block commits, but its confirmation is lost. Repeating the insertion can create another block because the request has no idempotency mechanism.
+A failed statement may depend on stale decisions from earlier in the transaction. Retrying an unconfirmed mutation can duplicate it, such as inserting a second schedule block after the first commit's acknowledgement is lost.
 
 ### Transaction Design
 
-1. Classify failures using structured database information, including SQLSTATE and the applicable constraint name. Treat overlaps, prohibited duplicates, final appointment states, and failed authorization as rejected operations without automatic retries. Do not classify errors by localized message text
+- **Classify.** Use the transaction stage, SQLSTATE, and constraint name. An explicit rollback or integrity violation returned at commit confirms an abort. A missing commit acknowledgement leaves the result unknown. Business conflicts, authorization failures, timeouts, and connection failures receive no automatic retry
+- **Retry.** Retry the whole transaction only for serialization failure (`40001`) or deadlock (`40P01`), with confirmed rollback and safe connection release. Allow at most three attempts, with a random delay of 0-100 ms before each retry. Rebuild context, locks, domain checks, and time references from current data while preserving submitted assignments. Query helpers do not retry independently
+- **Bound waits.** Configure independent initial limits of 1 second for pool acquisition, 1 second for a SQL lock, 3 seconds for a SQL statement including lock waits, 500 ms for each Redis batch, and 2 seconds per Keycloak request. Apply SQL limits transaction-locally. Fail Redis batches while disconnected, cancel timed-out work where supported, and discard late results. Fall back to PostgreSQL on lookup failure. A sent publication may still complete
+- **Clean up.** Roll back unconfirmed work when the connection is usable and discard provisional results. Retire a connection when its state cannot be established. A lost acknowledgement or a closed connection alone cannot prove rollback
+- **Reconcile.** Never replay an indeterminate commit, an already confirmed phase, or a transaction that dispatched a provider-changing request. Report uncertain outcomes and use authorized state inspection and diagnostics for manual reconciliation. There are no idempotency keys or automatic repair. Exclude credentials, tokens, contact data, and note content from diagnostics
 
-   The transaction runner records whether a database failure occurred during acquisition, `BEGIN`, operation execution, or `COMMIT`. It retains the SQLSTATE and constraint name when PostgreSQL supplies them. Application rejections pass through with their existing status. During operation execution, `55P03` identifies an unavailable lock and `57014` identifies query cancellation. These are the codes observed for the configured SQL timeouts, and each code can also have other causes.
-
-   A `ROLLBACK` command tag in response to `COMMIT` or a server integrity violation at commit confirms an abort. `40001` and `40P01` identify retry candidates. Other commit failures without a confirming response are classified as indeterminate. Errors from `pool.connect()` are classified as acquisition failures and retain their original cause.
-
-2. Automatically retry only a complete SQL transaction rejected with `40001` (`serialization_failure`) or `40P01` (`deadlock_detected`), after confirming that attempt cannot commit. Allow at most three executions of that transaction: the original attempt and two retries. The common transaction wrapper owns this counter; query helpers do not retry independently. A management operation that has sent a provider-changing request must not be retried automatically, following Clinic and User Management Consistency
-
-   Call `markKeycloakRoleUpdateStarted()` immediately before dispatching a request that can change the user's roles in Keycloak. The mark prevents another execution of the SQL phase even if PostgreSQL later reports a retry candidate. The wrapper still performs transaction cleanup.
-
-3. Before a permitted retry, roll back and release the failed transaction's connection and locks. Wait a random 0-100 milliseconds, then repeat the complete transaction with fresh context, ordered locks, current authorization, and domain checks. Preserve the originally submitted fields and values; reconstruct partial-update results from freshly protected current data. Reevaluate time-dependent conditions instead of reusing an earlier attempt's clock reference
-
-   The transaction runner requires a retry candidate from the current attempt and a confirmed `ROLLBACK` before releasing the connection and starting the delay. A connection failure or unconfirmed cleanup ends the retry sequence. The authorized transaction wrapper prepares the context again inside each attempt, including identity resolution, locks, and local authorization checks.
-
-4. Use independent configured timeouts rather than a shared request-wide work budget:
-
-   | Operation | Timeout |
-   | --- | --- |
-   | Obtain a database connection | 1 second |
-   | PostgreSQL lock acquisition (`lock_timeout`) | 1 second |
-   | PostgreSQL statement, including lock waits (`statement_timeout`) | 3 seconds |
-   | Redis lookup batch or publication batch | 500 milliseconds each |
-   | Keycloak HTTP request | 2 seconds |
-
-   Set PostgreSQL timeouts transaction-locally. Use one Redis lookup batch outside SQL transactions; attempt a publication batch only after definitive commit. Do not maintain a cumulative cache-time budget or a request-wide counter of Redis key operations. Keep these values configurable; they are initial design settings, not measured performance guarantees or a total response deadline
-
-   At startup the API reads `DATABASE_ACQUIRE_TIMEOUT_MS`, `DATABASE_LOCK_TIMEOUT_MS`, and `DATABASE_STATEMENT_TIMEOUT_MS`. Unset values use the defaults in the table. Explicit values must be decimal integers from `1` to `2147483647` milliseconds. Compose supplies these settings to the API service.
-
-   The API pool uses `connectionTimeoutMillis` to limit checkout waits and remove expired requests from the pool queue. The runner applies the lock and statement limits when initializing the empty local context after `BEGIN`, before authorization queries.
-
-   The API reads `KEYCLOAK_HTTP_TIMEOUT_MS` at startup using the same integer validation. Compose supplies the setting to the API service. The access and logout verifiers configure the `jose` JWKS request timeout, including the response body. A timed-out JWKS request follows the key-unavailability response in [Token Checks](#token-checks).
-
-   The administrative client will apply the same limit to each Keycloak request. If a marked mutation times out before provider confirmation, preserve its indeterminate outcome for manual reconciliation.
-
-   The API reads `REDIS_BATCH_TIMEOUT_MS` at startup using the same integer validation. `runRedisBatch` gives each lookup or publication batch its own `AbortSignal`. When the deadline expires, the wrapper rejects with `RedisBatchTimeoutError`, signals cancellation, and discards any late result. The Redis adapter must reject batches while disconnected and use the signal to cancel pending work where supported. A publication already sent may still complete after the deadline.
-
-5. A pool timeout starts no SQL transaction. A SQL timeout ends the operation with rollback and no automatic retry. A Redis timeout or failure makes its candidates unavailable and invokes PostgreSQL fallback, or skips optional publication after commit. Stop waiting on the failed batch, discard late lookup results, and do not queue cache work indefinitely during an outage. A failed cache publication must not reverse a confirmed domain result. A provider-changing request with a failed or unknown outcome follows the accepted inconsistency policy in Clinic and User Management Consistency
-
-6. Roll back the complete failed SQL transaction, including domain writes, read and write audit events, and any availability version increment. If the connection has already reported an error, discard it without sending `ROLLBACK`. Discard provisional results and do not continue issuing queries from an abandoned callback. Return a pooled connection only in a safe transaction and context state; retire it when cleanup cannot be confirmed. Sending cancellation or closing a connection does not prove that an uncertain commit rolled back
-
-7. Do not repeat already confirmed transactions merely because a later phase fails. Cache metadata and candidates from an earlier preparation remain provisional: the definitive transaction must validate them against its own scope and snapshot. A retried sensitive operation retrieves and audits again within its new transaction. Return no content from failed or unconfirmed attempts
-
-8. If a domain mutation's commit outcome is unknown, report an indeterminate result and do not submit it again automatically. Use authorized inspection of business state and technical diagnostics for manual reconciliation. An empty query does not prove rollback while the original transaction may still run, and a matching record does not identify which request created it. Preserve uncertainty when evidence is insufficient
-
-   Return HTTP `503` for a pool acquisition failure, a connection failure, an unavailable lock, a canceled statement, or a transaction that ends with a retryable abort. Report an unconfirmed commit or an indeterminate provider operation as HTTP `500` with `code: "OPERATION_OUTCOME_UNKNOWN"`. A SQL failure after a marked provider mutation retains its database cause internally and is reported as indeterminate. Existing application statuses and the generic `500` response for unexpected failures still apply. Response bodies omit driver and provider details.
-
-9. Do not add idempotency keys, a deduplication registry, or automatic recovery of mutation results. A new submission after manual reconciliation is a new operation under its normal constraints. An unsuccessful consultation can be requested again; an uncertain read-and-audit commit may leave an extra committed read event, but must not expose unconfirmed results. Provider changes may remain inconsistent after a failed management operation, as already accepted. Diagnostics exclude credentials, tokens, patient contact, clinical content, and sensitive payloads
-
-Bounded whole-transaction retries handle deadlocks and serialization failures without retrying business conflicts or uncertain commits. One counter per transaction and fixed dependency timeouts replace request-wide retry and elapsed-time bookkeeping. Separate availability preparation and definitive transactions retain their existing snapshot protocol.
-
-Manual reconciliation remains the selected response to uncertain mutations. Independent timeouts bound individual waits rather than guaranteeing a fixed total request duration; cancellation and cleanup retain the limitations above.
+An empty inspection can miss work still in progress. A matching record alone cannot identify the request that created it. Preserve uncertainty until there is evidence of the outcome. See the [shared HTTP responses](../README.md#shared-error-responses).
 
 # 6. Identity, Security, and Auditing
 
@@ -1256,141 +747,80 @@ Manual reconciliation remains the selected response to uncertain mutations. Inde
 
 ### Keycloak Access
 
-Define the app's roles under the API's Keycloak client.
-
-The API validates JWT access tokens locally, looks up existing accounts, and can change only the application roles assigned to those accounts during administrative operations. Keep its provider credentials on the backend.
+Configure a versioned realm and application client for the four domain roles. Delegate login, credentials, and token issuance to Keycloak. Keep provider credentials on the backend. Administrative access is limited to finding existing accounts and updating their application role assignments.
 
 ### Token Checks
 
-For every protected request, validate the JWT locally: check its signature and expiration, and confirm it comes from our realm and is meant for this API. Obtain the realm's public keys through its certificate endpoint and cache them using the validation library's key-rotation support. Do not call token introspection on each request.
+Validate access token signature, expiration, issuer, and audience locally using the realm's public keys. Cache keys with rotation support. Map token roles to domain permissions and check current local role, activity, and clinic (`RF17`). A missing or invalid token fails authentication. A valid token with insufficient permission fails authorization. If required provider keys are unavailable, fail the request as temporarily unavailable.
 
-Return `401` for missing, invalid, or expired tokens, `403` for a missing required role, and `503` if token verification cannot be completed because the required provider keys are unavailable.
-
-Local validation avoids a provider request for each API request. Use short-lived access tokens and accept that a previously issued token may remain usable until expiration after its provider session ends. There is no local token denylist or back-channel logout tracking. Protected local activity, role, and clinic checks remain required.
+Local validation avoids a provider call on each request. Use short-lived tokens and accept that an issued token can survive provider logout until expiration. Local authorization still applies. The design has no local denylist or back-channel logout tracking.
 
 ### Logout
 
-`POST /auth/logout-request` accepts a bearer access token and a JSON body containing `idToken`. Verify the ID token signature and realm, its audience and authorized party against the authenticated client, and its subject and session against the verified access token. An expired ID token may be used as a logout hint; the access token must still be valid. Return `200` with `logoutUrl` and `Cache-Control: no-store`. This response prepares logout; the client must open the returned Keycloak RP-Initiated Logout URL, containing `id_token_hint` and `client_id`, to complete it.
+Use Keycloak RP-Initiated Logout for the current session. A valid access token authenticates the request. Verify the ID token's signature and issuer, match its audience and authorized party to the client, and match its subject and session to the access token. An expired ID token can serve as a logout hint.
 
-Use Keycloak to close only the current session. Other sessions and account settings stay unchanged. The client discards its tokens, and the closed session can no longer refresh them. A copy of an already issued access token may still pass local validation until expiration; this window is accepted. Requests that already passed the token check may still finish.
+The client opens the provider URL to finish logout and discards its tokens. The closed session cannot refresh them. Other sessions remain active, and requests that already passed validation can finish. See the [HTTP contract](../README.md#session-api).
 
 ## PostgreSQL Roles and Restricted Functions
 
 ### Database Roles
 
-Use four database roles, one for each `users.role` value. Separate roles keep each domain role's database permissions distinct, at the cost of maintaining four permission sets instead of grouping roles.
+Use one operating profile per domain role and a restricted base login that cannot inherit their privileges. The four profiles keep role permissions separate at the cost of maintaining distinct grants. The platform profile can invoke clinic creation and has no general domain-table access.
 
 ### Function Ownership
 
-Use a separate `NOLOGIN` owner role for each group of auxiliary `SECURITY DEFINER` functions listed below. Callers must not be members of these owner roles.
+Give identity lookup, metadata lookup, locking, and clinic creation separate `NOLOGIN` owners with only the permissions needed for that responsibility. Use bounded `SECURITY DEFINER` functions with qualified references and a trusted search path. Revoke default `PUBLIC` execution and grant it to designated callers. The functions participate in the caller's transaction. Callers never become owner roles.
 
-Separate owners keep lookup functions from running with clinic-creation permissions, at the cost of separate role, grant, and RLS configuration.
+- **Identity lookup.** Resolve local user and clinic identifiers from the authenticated provider identity before clinic context exists. Include inactive and platform users for later authorization
+- **Metadata lookup.** Resolve only an actor's professional identifier, a professional's user identifier, or an appointment's resource references. Derive scope from the actor's clinic. Keep contact and clinical note content inaccessible
+- **User locking.** Lock the actor or a same-clinic user and return identifiers, role, and activity. Platform users can lock only their own row. Keep authorization in the transaction protocol
+- **Service and professional locking.** Allow reception to take `FOR SHARE` on a same-clinic service or `FOR NO KEY UPDATE` on a same-clinic professional. Healthcare professionals may take the latter lock on their own profile. Return only scope and eligibility metadata. Clinic administrators can lock directly
+- **Clinic creation.** Allow only the platform profile to invoke the creation function. Scope the owner's writes to the generated clinic and first active administrator, with availability version zero. That scope ends on function exit. Return only the created identifiers
 
-Preliminary identity resolution uses `public.resolve_identity(text)`, owned by `medical_data_hub_identity_owner`. Its owner's domain-table grants are limited to `SELECT` on `users.identity_id`, `user_id`, and `clinic_id`. Execution is granted to the API base login, with default `PUBLIC` execution revoked. The function uses qualified table references and `search_path = pg_catalog, pg_temp`, returning only `user_id` and `clinic_id`, including a `NULL` clinic for platform accounts. Missing identities return no rows; inactive accounts remain resolvable because protected authorization belongs to Transaction context.
-
-Metadata preparation uses `public.resolve_actor_professional(uuid)`, `public.resolve_professional_user(uuid, uuid)`, and `public.resolve_appointment_references(uuid, uuid)`, owned by `medical_data_hub_metadata_owner`. They return the actor's professional identifier, a professional's user identifier, or an appointment's professional, patient, and service identifiers. Resource lookups derive their clinic scope from the actor's local user row; missing actors, `NULL` clinics, and inaccessible resources return no rows. The owner's domain-table grants cover only the required identifier and relationship columns in `users`, `professionals`, and `appointments`. Execution is granted to the API base login, with default `PUBLIC` execution revoked, qualified table references, and `search_path = pg_catalog, pg_temp`. These functions do not authorize activity, role, or operation, acquire row locks, or retrieve patient contact or note content. The backend supplies the actor derived from the verified provider identity; protected authorization remains in Transaction context.
-
-Preparatory user locking uses `public.lock_user_for_share(uuid, uuid)` and `public.lock_user_for_no_key_update(uuid, uuid)`, owned by `medical_data_hub_locking_owner`. They acquire `FOR SHARE` and `FOR NO KEY UPDATE`, respectively, only on the requested user and return `user_id`, `clinic_id`, `role`, and `is_active`. Targets must be the actor or belong to the actor's clinic; a platform actor can lock only its own row. Both functions are `VOLATILE`, use qualified table references and `search_path = pg_catalog, pg_temp`, and grant execution to the API base login with default `PUBLIC` execution revoked. The caller acquires users in ascending identifier order, selects the stronger mode initially when required, and retains the locks until commit or rollback. Activity, role, token-role correspondence, and operation authorization remain in Transaction context.
-
-RLS is enabled on `users` with separate `SELECT` policies for identity resolution, metadata lookup, and locking owners. The locking owner's grants cover `SELECT` on the four returned columns and `UPDATE` only on `is_active`, which permits row locking. Its `UPDATE` policy uses `USING (true)` and `WITH CHECK (false)`, allowing locking reads while rejecting actual updates, including unchanged assignments. Ordinary operating profiles do not receive these preparatory exceptions.
-
-Service locking uses `public.lock_service_for_share(uuid)`, owned by `medical_data_hub_locking_owner`. Reception calls it after actor and clinic context preparation. It locks only the requested service in the context clinic with `FOR SHARE`, returning `service_id`, `clinic_id`, `duration_minutes`, `specialty_id`, and `is_active`, including inactive services. Missing, empty, or reset context values filter the result; malformed UUIDs are rejected. The `VOLATILE` SQL function uses qualified references and `search_path = pg_catalog, pg_temp`, with default `PUBLIC` execution revoked and execution granted only to reception. Its owner can select those five service columns and update only `is_active` for locking. Separate owner policies use `USING (true)` for reads and locks, and `WITH CHECK (false)` to reject actual writes, including unchanged assignments. Reception retains no service update grant; clinic administrators can lock directly through their existing grants. Locks last until commit or rollback. Protected authorization, service eligibility, and booking or rescheduling validation remain in their respective transaction protocols.
-
-Professional locking uses `public.lock_professional_for_no_key_update(uuid)` for reception and `public.lock_own_professional_for_no_key_update()` for healthcare professionals. Both acquire `FOR NO KEY UPDATE` and return only `professional_id`, `clinic_id`, `user_id`, and `specialty_id`. Reception selects a target within the context clinic; the own-profile function takes no arguments and matches `professionals.user_id` to `app.user_id` within `app.clinic_id`. Missing, empty, or reset context values filter results, and malformed UUIDs are rejected. Both functions are `VOLATILE`, owned by `medical_data_hub_locking_owner`, with qualified references, `search_path = pg_catalog, pg_temp`, and default `PUBLIC` execution revoked. Each function grants execution only to its designated operating profile. The owner can read the four identifiers and update only `specialty_id` for locking; dedicated policies allow reads and locks while `WITH CHECK (false)` rejects actual and unchanged writes. Callers retain no professional update grants; clinic administrators can lock directly. Locks last until commit or rollback. Protected activity, role, and operation authorization remain in Transaction context, and domain workflows retain lock ordering and business validation.
-
-Clinic registration uses `public.create_clinic(text, text, text)`, owned by `medical_data_hub_clinic_creation_owner`. It accepts the clinic name, time zone, and the first administrator's verified provider identity. It generates both identifiers and inserts the clinic, its first active `clinic_administrator`, and its availability version at `0` in the caller's transaction. It returns only `clinic_id` and `user_id`. The existing identity uniqueness constraint rejects duplicate registrations. All three inserts are subject to the caller's transaction outcome.
-
-The `SECURITY DEFINER` function uses qualified references and `search_path = pg_catalog, pg_temp`. Only the platform administrator profile receives application execution privileges, with default `PUBLIC` execution revoked. The dedicated `NOLOGIN` owner uses separate creation settings for the generated clinic and administrator IDs, and PostgreSQL restores the previous settings when the function exits. The owner receives only the insert columns used by the function and the two identifier columns read by `RETURNING`. The platform profile accesses clinic registration through the function. Transaction context supplies the protected actor authorization, and Clinic and user administration verifies the provider identity and handles provider role assignment.
+The locking owner has only the column grants needed to lock users, services, and professionals. Its RLS policies permit locking reads and reject actual writes, including unchanged assignments. Separate owners and preparatory policies preserve these bounded paths without broadening ordinary RLS.
 
 ### Table and Function Permissions
 
-The following table defines the grants for clinic administrators, reception, and healthcare professionals. The API checks the requested operation, and RLS limits the accessible rows.
+The matrix summarizes database grants. RLS narrows rows and application authorization narrows operations.
 
 | Table | Clinic administrator | Reception | Healthcare professional |
 | --- | --- | --- | --- |
-| `clinics` | `SELECT` | `SELECT` | `SELECT` |
-| `users` | `SELECT`, `INSERT`, `UPDATE` | `SELECT` | `SELECT` |
-| `specialties` | `SELECT`, `INSERT` | None | None |
-| `professionals` | `SELECT`, `INSERT`, `UPDATE` | `SELECT` | `SELECT` |
-| `services` | `SELECT`, `INSERT`, `UPDATE` | `SELECT` | `SELECT` |
-| `professional_services` | `SELECT`, `INSERT`, `UPDATE` | `SELECT` | `SELECT` |
-| `professional_schedules` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` | `SELECT` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` |
-| `professional_blocks` | `SELECT`, `INSERT` | `SELECT` | `SELECT`, `INSERT` |
-| `patients` | `SELECT`, `INSERT`, `UPDATE` | `SELECT`, `INSERT`, `UPDATE` | `SELECT` |
-| `appointments` | `SELECT`, `INSERT`, `UPDATE` | `SELECT`, `INSERT`, `UPDATE` | `SELECT`, `UPDATE` |
-| `clinical_notes` | None | None | `SELECT`, `INSERT` |
-| `audit_records` | `SELECT`, `INSERT` | `INSERT` | `INSERT` |
-| `clinic_availability_versions` | `SELECT`, `UPDATE` | `SELECT`, `UPDATE` | `SELECT`, `UPDATE` |
+| `clinics` | Read | Read | Read |
+| `users` | Read, insert, update | Read | Read |
+| `specialties` | Read, insert | None | None |
+| `professionals`, `services`, `professional_services` | Read, insert, update | Read | Read |
+| `professional_schedules` | Read, insert, update, delete | Read | Read, insert, update, delete |
+| `professional_blocks` | Read, insert | Read | Read, insert |
+| `patients` | Read, insert, update | Read, insert, update | Read |
+| `appointments` | Read, insert, update | Read, insert, update | Read, update |
+| `clinical_notes` | None | None | Read, insert |
+| `audit_records` | Read, insert | Insert | Insert |
+| `clinic_availability_versions` | Read, update | Read, update | Read, update |
 
-Apply column grants where access is narrower than the whole table:
-
-- Limit `clinics` reads to `clinic_id` and `time_zone`. For reception and professionals, limit `users` reads to `user_id`, `clinic_id`, `role`, and `is_active`
-- Limit `users` updates to `role` and `is_active`, `professionals` updates to `specialty_id`, and `professional_services` updates to `is_active`
-- Limit `services` updates to `name`, `duration_minutes`, `specialty_id`, and `is_active`. Limit schedule updates to `weekday`, `start_minute`, and `end_minute`
-- Limit patient updates to `identification`, `name`, `date_of_birth`, `email`, and `phone`
-- Limit appointment updates to `state`, `cancelled_by_user_id`, and `cancellation_reason`. Professionals may update only `state`, through the outcome operation
-- Limit availability updates to `version`. Audit inserts supply only `clinic_id`, `user_id`, `patient_id`, `resource`, `appointment_id`, and `action`, leaving the identifier and timestamp to their defaults
-
-Additional permissions by role:
-
-| Role | Table access | Function access |
-| --- | --- | --- |
-| Reception | As listed above | `EXECUTE` on service and professional locking functions for booking and rescheduling |
-| Healthcare professional | As listed above | `EXECUTE` on professional locking functions for own schedules and blocks |
-| API base login | None | `EXECUTE` on identity resolution, metadata lookup, and preparatory user-locking functions |
-| Platform administrator | None | `EXECUTE` on clinic creation |
-| Identity resolution owner | `SELECT` on `users.identity_id`, `user_id`, and `clinic_id` | Owns identity resolution functions |
-| Metadata lookup owner | `SELECT` on the identifier and relationship columns needed from `users`, `professionals`, and `appointments`, excluding patient contact and note content | Owns metadata lookup functions |
-| Row-locking owner | Required metadata reads and the minimum column-level `UPDATE` grant needed to lock `users`, `services`, and `professionals` | Owns locking functions |
-| Clinic creation owner | `INSERT` on `clinics`, `users`, and `clinic_availability_versions`, plus `SELECT` only on identifiers returned by creation | Owns the clinic creation function |
+- Limit clinic reads to the identifier and time zone. Limit reception and professional user reads to the user and clinic identifiers, role, and activity
+- Allow updates only to user role and activity, professional specialty, service name, duration, specialty and activity, association activity, schedule weekday and bounds, patient identification, name, birth date and contact, appointment state and cancellation metadata, and availability version
+- Restrict professional appointment updates to state through the authorized outcome operation. Keep identifiers, ownership, appointment timing, and replacement links immutable
+- Grant the base login execution on preparatory lookup and user-locking functions. Grant reception execution on its service and professional locking functions, healthcare professionals execution on their own-profile locking function, and platform administrators execution on clinic creation
 
 ## Row-Level Security Policies
 
 ### Clinic Policies
 
-`clinics` enables RLS for `clinic_administrator`, `reception`, and `healthcare_professional`, with column-level `SELECT` on `clinic_id` and `time_zone`. Its policy requires a non-NULL actor UUID and a row matching the clinic UUID from [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context). Missing, empty, or reset context values filter all rows; malformed UUID text is rejected by the casts. These settings delimit SQL scope; protected local association, activity, role, and operation checks remain in the wrapper.
+Require valid transaction-local actor and clinic identifiers. Match every existing or proposed clinic row to that clinic. Missing or empty context yields no access, and malformed identifiers fail. Platform and preparatory access is limited to the dedicated functions and owner policies.
 
-`clinic_availability_versions` enables RLS under the same actor and clinic context contract. The three ordinary clinic profiles can read their clinic's version and update only the `version` column. The update policy checks both the existing and proposed rows against the context clinic. The existing nonnegative constraint applies to every version update. The application increments the version at the boundary defined in [Transaction and Cache Coordination](#transaction-and-cache-coordination).
-
-Ordinary `users` access grants `SELECT` and `INSERT` to `clinic_administrator`, with `UPDATE` limited to `role` and `is_active`. Reception and healthcare professional profiles can read only `user_id`, `clinic_id`, `role`, and `is_active`. Their `SELECT` policy and the administrator's `INSERT` and `UPDATE` policies reuse the actor and clinic context contract, matching existing and proposed rows to the context clinic. `user_id`, `identity_id`, and `clinic_id` are not updatable, and no ordinary profile receives `DELETE` or `TRUNCATE`. These policies target only ordinary profiles, preserving the separate preparatory owner exceptions and the locking owner's write rejection. Provider identity verification, business validation, and synchronous Keycloak role changes remain in Clinic management.
-
-`specialties` and `services` enable RLS under the same actor and clinic context contract. Clinic administrators can read and insert specialties and services, and update only `services.name`, `duration_minutes`, `specialty_id`, and `is_active`. Reception and healthcare professionals can read services but have no specialty-table access. Existing and proposed rows must match the context clinic. No ordinary profile can update specialty rows, update service identifiers or clinic ownership, delete rows, or truncate either table. Composite foreign keys preserve same-clinic specialty references. Service locking, historical catalog restrictions, and availability version changes remain part of their respective transaction protocols.
-
-`professionals` and `professional_services` enable RLS under the same actor and clinic context contract. All three ordinary clinic profiles can read their clinic's rows. Only clinic administrators can insert rows, update `professionals.specialty_id`, or update `professional_services.is_active`. Profile identifiers, user and clinic links, and association keys are immutable, with no ordinary `DELETE` or `TRUNCATE` grants. A separate `professionals` SELECT policy preserves the metadata owner's existing identifier-only grants and bounded preparatory functions. Composite foreign keys preserve same-clinic user, specialty, professional, and service references. Protected registration checks, specialty compatibility, association deactivation rules, and domain locking remain in their respective transaction protocols.
-
-`patients` enables RLS under the same actor and clinic context contract. All three ordinary clinic profiles can read their clinic's patient records, including contact fields. Clinic administrators and reception can insert records and update only `identification`, `name`, `date_of_birth`, `email`, and `phone`; these grants also permit their direct patient row locks. `patient_id` and `clinic_id` are immutable, with no ordinary `DELETE` or `TRUNCATE` grants. Policies scope existing and proposed rows to the context clinic. Existing constraints retain identification uniqueness within each clinic, nonempty identification and name, and at least one nonempty contact method with no empty supplied contact fields. Patient workflows remain responsible for protected edits and the shared [contact read/write audit protocol](#sensitive-data-access-and-audit-consistency).
-
-`appointments` enables RLS under the same actor and clinic context contract. All three ordinary clinic profiles can read rows and update `state` within their context clinic. Clinic administrators and reception can also insert rows and update `cancelled_by_user_id` and `cancellation_reason`. All other columns are immutable after insertion, including identifiers, resource references, appointment times, and `previous_appointment_id`. No ordinary profile receives `DELETE` or `TRUNCATE`. The column grants permit direct appointment row locks. A separate SELECT policy preserves the metadata owner's existing five identifier-column grants and the actor-scoped `resolve_appointment_references` function. Existing interval, start-minute, cancellation-field, replacement-reference, and same-clinic foreign-key constraints remain in place. Operation-specific authorization, permitted state transitions, temporal and conflict checks, atomic rescheduling, and availability version changes remain in Appointment lifecycle.
-
-| Role | Table | Operation | Row condition |
-| --- | --- | --- | --- |
-| Clinic administrator, reception, healthcare professional | Tables with `clinic_id` | Granted operations | Valid clinic context, with the existing or new row's `clinic_id` matching that clinic |
+Composite foreign keys prevent cross-clinic references independently of row visibility. Application checks enforce current authorization and business rules within the rows the database permits.
 
 ### Professional Policies
 
-`professional_schedules` and `professional_blocks` enable RLS under the existing actor and clinic context contract. All three ordinary clinic profiles can read every row in their context clinic. Clinic administrators can insert, update, and delete schedules, and insert blocks. Healthcare professionals can perform those writes only for their own profile, checked through a same-clinic `professionals` row whose `user_id` matches `app.user_id`. Separate write policies preserve this restriction alongside clinic-wide reads. Schedule updates are limited to `weekday`, `start_minute`, and `end_minute`; identifiers and clinic/professional links are immutable. No ordinary profile receives block `UPDATE` or `DELETE`, or `TRUNCATE` on either table. An absent professional association grants no write scope. Weekly replacement, appointment-conflict validation, and availability version changes remain in their domain protocols.
+All clinic profiles may read their clinic's schedules and blocks. Clinic administrators may write within the clinic using the granted operations. Healthcare professionals may write schedules and blocks only for the profile associated with their user. A missing profile grants no write scope.
 
-`clinical_notes` enables RLS with `SELECT` and `INSERT` granted only to healthcare professionals. Both policies require the existing actor and clinic context and an appointment linked to the same-clinic professional whose `user_id` matches `app.user_id`. Reads expose only that professional's notes; inserts additionally require `appointments.state = 'attended'`. The existing content constraints reject NULL or empty text; the primary key on `clinical_notes.appointment_id` permits one note per appointment, including competing inserts. No ordinary profile receives `UPDATE`, `DELETE`, or `TRUNCATE`, preserving existing note content against overwriting upserts. The application still owns the protected appointment lock and the [transactional read/write audit protocol](#sensitive-data-access-and-audit-consistency), including commit confirmation before content delivery.
-
-| Role | Table | Operation | Row condition |
-| --- | --- | --- | --- |
-| Healthcare professional | `professional_schedules` | `INSERT`, `UPDATE`, `DELETE` | The existing or new row's `professional_id` matches the authenticated professional |
-| Healthcare professional | `professional_blocks` | `INSERT` | The new row's `professional_id` matches the authenticated professional |
-| Healthcare professional | `clinical_notes` | `SELECT` | The appointment belongs to the authenticated professional |
-| Healthcare professional | `clinical_notes` | `INSERT` | The appointment belongs to the authenticated professional and is `attended` |
+Only healthcare professionals may read or insert notes for their own appointments. Inserts also require an attended appointment. Notes cannot be overwritten or deleted. Sensitive content uses the [shared audit transaction](#sensitive-data-access-and-audit-consistency).
 
 ### Other Policies
 
-`audit_records` enables RLS. Clinic administrators can read audit metadata in their context clinic. All three ordinary clinic profiles can insert contact events that match the clinic and actor context. Only healthcare professionals can insert clinical note events. The referenced appointment must belong to their professional profile and match the event's clinic and patient, and the composite foreign key requires an existing note. Insert grants cover only `clinic_id`, `user_id`, `patient_id`, `resource`, `appointment_id`, and `action`. PostgreSQL supplies the identifier and timestamp. Reception and healthcare professional inserts omit `RETURNING` because those profiles lack read access.
+Only clinic administrators may read audit metadata in their clinic. All clinic profiles may insert patient-contact events for their own actor and clinic. Only healthcare professionals may insert note events, and the existing note's appointment must match their professional profile, clinic, and event patient.
 
-| Role | Table | Operation | Row condition |
-| --- | --- | --- | --- |
-| Identity resolution owner | `users` | `SELECT` | Allow reads without a clinic filter to find the authenticated user's local account before their clinic is known, including platform accounts |
-| Metadata lookup owner | `users`, `professionals`, `appointments` | `SELECT` | Allow reads without a clinic filter to find required IDs before the request's clinic checks finish |
-| Row locking owner | `users`, `services`, `professionals` | `SELECT`, locks | Allow reads and locks without a clinic filter for user permission checks, including platform users. Reject actual updates |
-| Clinic creation owner | `clinics`, `users`, `clinic_availability_versions` | `INSERT`, identifier reads from `clinics` and `users` | The row's `clinic_id` matches `app.new_clinic_id`. User rows also match `app.new_clinic_administrator_id`, and user inserts require an active clinic administrator. Version inserts require `version = 0` |
-| Clinic administrator, reception, healthcare professional | `audit_records` | `INSERT` | `resource = 'patient_contact'` and the event's `user_id` matches the authenticated user |
-| Healthcare professional | `audit_records` | `INSERT` | `resource = 'clinical_note'` and the event's `user_id` matches the authenticated user. The appointment's `professional_id` matches their professional profile, and its `patient_id` matches the event's patient |
+Audit inserts provide actor, clinic, patient, resource, optional appointment, and action. PostgreSQL supplies the event identifier and timestamp. Insert-only profiles do not retrieve the inserted row. The engine rejects mutation of committed events.
 
 # 7. Availability, Caching, and Indexes
 
@@ -1398,357 +828,157 @@ Ordinary `users` access grants `SELECT` and `INSERT` to `clinic_administrator`, 
 
 ### Design Problem
 
-Professional availability depends on the requested service's duration and the professional's eligibility to provide it (`RF7`). Service availability extends that calculation to eligible professionals across a date range (`RF8`).
-
-An incompatible professional-service combination differs from a valid combination with no available spaces. Returning an empty result for both would conceal an invalid selection.
-
-Availability describes the professional's capacity under the consulted snapshot. It does not establish that a particular patient can reserve a returned space, because patient conflicts and definitive booking checks remain separate (`RF9`, `I1`, `I2`).
+Availability depends on service duration and professional eligibility. An invalid selection must be distinguishable from a valid selection with no free time (`RF7`, `RF8`).
 
 ### Design Decisions
 
-**Request inputs**
-
-| Query | Required inputs |
-| --- | --- |
-| Professional availability (`RF7`) | Professional identifier, service identifier, and one clinic-local date |
-| Service availability (`RF8`) | Service identifier and a clinic-local start and end date |
-
-Derive the clinic from the authenticated and validated context through [Transactional Clinic and Permission Context](#transactional-clinic-and-permission-context). Client-supplied identifiers do not establish clinic access (`I5`, `RF17`).
-
-Obtain the service duration from PostgreSQL. These queries do not require a patient identifier and do not evaluate a particular patient's conflicts.
-
-**Resource eligibility**
-
-Require the professional and service to belong to the validated clinic. The professional must have an active associated user with role `healthcare_professional`, an active professional-service association, and a specialty matching the service's required specialty.
-
-For `RF7`, reject an incompatible professional-service combination. For `RF8`, exclude ineligible professionals from the evaluated set. Reject missing or inaccessible required resources rather than presenting them as an ordinary empty availability result.
-
-Allow availability consultation for inactive services. New bookings still require an active service, while rescheduling may retain an inactive service under [Concurrent Service and Professional Authorization Changes](#concurrent-service-and-professional-authorization-changes).
-
-**Date scope**
-
-Reject a requested date earlier than today in the clinic's time zone. For `RF8`, reject a range whose start date is earlier than today. Require valid calendar dates and a start date no later than the end date.
-
-Determine today using `clinics.time_zone` from the definitive snapshot and the common time reference established by [Consistent Concurrent Queries](#consistent-concurrent-queries). For today's date, return only starts strictly later than that reference.
-
-**Result meaning**
-
-A valid query may return no spaces because the professional lacks schedule coverage or the applicable intervals are occupied or blocked. Calculation failures and unavailable dependencies must not be disguised as empty availability.
-
-Consultation does not reserve a space. Booking and rescheduling retain their definitive PostgreSQL validations. Cached results follow [Transaction and Cache Coordination](#transaction-and-cache-coordination), including authorization, eligibility, and version validation.
+- **Professional query.** Supply a professional, service, and one clinic-local date. Reject an incompatible pair
+- **Service query.** Supply a service and an inclusive clinic-local date range. Evaluate only eligible professionals
+- **Scope.** Derive the clinic from protected authorization. Reject missing or inaccessible required resources. Read the duration from PostgreSQL. An eligible professional has an active user with the professional role, an active association, and the specialty required by the service
+- **Dates.** Require valid calendar dates, an ordered range, and a start date no earlier than today in the clinic. For today, keep starts strictly after the common time reference
+- **Meaning.** Inactive services remain consultable. Valid queries may return no starts. Failures surface as errors. Consultation neither evaluates patient conflicts nor grants a booking
 
 ## Time Zones and Interval Boundaries
 
 ### Design Problem
 
-Availability combines local dates and weekly schedules with absolute appointment and block instants (`RF5`, `RF7`, `RF8`). Missing or repeated local times require explicit interpretation. Crossing midnight or a time-zone transition must preserve complete schedule coverage and service duration (`I3`, `I4`).
-
-Use the rules below rather than PostgreSQL's [implicit timestamp interpretation](https://www.postgresql.org/docs/18/datetime-invalid-input.html), which can shift nonexistent times or select one repeated occurrence.
+Local schedules and dates must map to absolute appointment instants, including missing and repeated times (`RF5`, `I3`, `I4`).
 
 ### Design Decisions
 
-**Dates and scope**
+Interpret dates and weekly schedules in the clinic time zone from the definitive snapshot. Assign each start to its local date. Include both requested dates and use actual zone transitions instead of fixed 24-hour days.
 
-Interpret dates and weekly schedules using `clinics.time_zone` from the definitive snapshot. Compare appointments and blocks as absolute instants. Assign each available start to its local start date.
+Schedule coverage includes the real instants that match the local weekday and minute bounds. Start is inclusive, end is exclusive, and minute 1440 is the next local midnight. Skip nonexistent times without shifting them. Include both occurrences of a repeated time and preserve gaps between covered intervals. Apply the same rules at midnight. An omitted date has no starts, while a calculation failure is an error.
 
-Include both request dates in `RF8`. Equal dates request one day. Select starts by their local date, using actual zone transitions rather than fixed 24-hour days. Ordinary day boundaries are inclusive midnight and exclusive next midnight.
+For example, if 02:00 jumps to 03:00, a schedule of [02:30, 04:00) covers [03:00, 04:00). A repeated [01:30, 01:45) interval contributes two separate intervals.
 
-**Schedule transitions**
-
-Schedule coverage contains the real instants matching the local weekday and minute bounds. Preserve the [data model's](#professional_schedules) inclusive start, exclusive end, and `1440` endpoint convention.
-
-- Forward transitions: retain only existing times without shifting them. Entirely skipped intervals provide no coverage
-- Backward transitions: include both occurrences as distinct instants. Keep intervals separate wherever intervening time lacks coverage
-- Midnight transitions: apply the same rules. A completely omitted date contributes no starts. Conversion or calculation failures remain errors
-
-Ex: if 02:00 jumps to 03:00, `[02:30, 04:00)` provides coverage from 03:00 to 04:00. If `[01:30, 01:45)` repeats, preserve both intervals without filling the gap between them.
-
-**Duration and complete intervals**
-
-Calculate the end by adding `services.duration_minutes` as elapsed minutes to the absolute start. Use `[start, end)` for appointments and blocks, allowing adjacency.
-
-Preserve complete appointment intervals across date boundaries. Check full schedule coverage and every overlapping block or reserved appointment, including those beginning before the requested date.
-
-Apply these rules to consultation, booking, and rescheduling. Retain the snapshot and common future-start reference in [Consistent Concurrent Queries](#consistent-concurrent-queries).
+Add the service duration as elapsed minutes to the absolute start. Apply half-open boundaries to appointments and blocks. Check complete coverage and every overlapping occupation across dates, including intervals beginning before the requested date. Use these rules for consultation, booking, and rescheduling.
 
 ## Professional Availability Calculation
 
 ### Design Problem
 
-Availability must combine weekly schedule coverage, reserved appointments, blocks, and service duration (`RF7`). Checking schedule rows independently can reject appointments covered by adjacent intervals. Considering only occupation that starts within the requested date can miss overlapping conflicts (`I1`, `I3`, `I4`).
+Independent schedule checks can miss coverage supplied by adjacent intervals. Occupation can overlap a candidate without beginning on its local date (`RF7`, `I1`, `I3`, `I4`).
 
 ### Design Decisions
 
-Calculate availability in TypeScript using inputs from the definitive PostgreSQL snapshot, following [Transaction and Cache Coordination](#transaction-and-cache-coordination).
+1. Use the definitive PostgreSQL snapshot for validated eligibility, duration, time zone, schedules, blocks, and reserved appointments across all services
+2. Expand the weekly schedule to cover complete candidates. Merge overlapping and adjacent schedule intervals. Merge occupied intervals separately, then subtract them from the schedule
+3. For each free interval `[a, b)`, generate whole-UTC-minute starts `s` where `s >= a` and `s + duration <= b`. Retain starts on the requested local dates
+4. Materialize complete daily units before applying the shared future-start filter
 
-1. Obtain the validated professional-service scope, service duration, clinic time zone, schedules, blocks, and relevant reserved appointments. Include the professional's occupation across all services and intervals beginning before the requested date when they overlap the required coverage
+For example, a 30-minute service in a free interval from 09:00 to 10:00 has starts from 09:00 through 09:30, one minute apart.
 
-2. Expand weekly schedules into absolute intervals using [Time Zones and Interval Boundaries](#time-zones-and-interval-boundaries). Include all dates needed to cover complete candidate appointments
-
-3. Merge overlapping or adjacent schedule intervals. Separately merge overlapping or adjacent reserved appointments and blocks into occupied intervals
-
-4. Subtract occupied intervals from schedule coverage to obtain disjoint free intervals. Preserve `[start, end)` boundaries and discard empty intervals
-
-5. For each free interval `[a, b)` and elapsed service duration `d`, generate every whole-UTC-minute start `s` satisfying `s >= a` and `s + d <= b`. Retain only starts belonging to the requested local dates. A free interval shorter than `d` contributes no starts
-
-6. Complete the calculation and materialize its results within the definitive phase. Preserve the complete daily units before applying the common future-start filter, as required by the cache protocol
-
-Ex: a free interval `[09:00, 10:00)` with a 30-minute service admits starts from 09:00 through 09:30 inclusive, one minute apart.
-
-Constructing free intervals avoids repeating coverage and overlap checks for every candidate. TypeScript keeps interval logic available for isolated tests and reuse, at the cost of transferring the required inputs. SQL range calculations remain an alternative, with more logic in specialized queries. Neither approach has a measured performance advantage.
-
-Availability consultation considers all reserved appointments. Booking and rescheduling retain their definitive PostgreSQL checks and the original-appointment exclusion defined in [Atomic Rescheduling](#atomic-rescheduling).
+TypeScript keeps interval logic reusable and testable. Merging intervals avoids repeating checks for every start. SQL range calculations would transfer less input but put more logic in specialized queries. Compare performance before preferring either on speed.
 
 ## Service Availability Across Date Ranges
 
 ### Design Problem
 
-Service availability must return the professionals with available starts across the requested dates (`RF8`). Combining independent professional queries could mix snapshots or omit professionals whose eligibility changed between cache preparation and definitive validation.
-
-The response needs predictable grouping and ordering, explicit empty dates, and a bounded date range without silently dropping results.
+Combining independent professional queries can mix snapshots or omit professionals whose eligibility changed (`RF8`).
 
 ### Design Decisions
 
-**Scope and calculation**
+Use one definitive snapshot and reuse the professional calculation for eligible professionals. Accept up to 31 local dates inclusive. Reject longer ranges without truncation. No additional advance-booking horizon applies. The date limit is a resource setting and does not bound professional count or total response size.
 
-Require a service and an inclusive range of clinic-local dates, following [Availability Inputs and Request Scope](#availability-inputs-and-request-scope).
+Filter past starts before grouping. Include every requested date in ascending order, with an empty list when no starts remain. Include only professionals with starts, ordered by identifier. Sort starts by absolute instant and preserve distinct occurrences of repeated local times.
 
-Accept at most 31 dates per request, counting both endpoints. Reject longer ranges without truncation. Do not impose an additional advance-booking horizon on otherwise valid future dates.
-
-The 31-date limit is a team-selected resource bound, not an assignment requirement or a measured capacity guarantee. It does not independently bound professional counts or response size.
-
-Determine eligible professionals under the definitive snapshot. For each professional and date, reuse [Professional Availability Calculation](#professional-availability-calculation) and the validated cache units permitted by [Transaction and Cache Coordination](#transaction-and-cache-coordination). Do not assemble the response from independent requests with separate snapshots.
-
-**Response composition**
-
-1. Apply the common future-start filter before determining which professionals have availability
-2. Group results first by local date, in ascending date order
-3. Include every requested date, using an empty professional list when no starts remain
-4. Within each date, include only professionals with available starts, ordered by `professional_id` ascending
-5. Order each professional's starts by absolute instant ascending, preserving distinct occurrences of repeated local times
-
-Identifier ordering keeps the relative order of remaining professionals stable as their available times change. Ordering by earliest availability would prioritize sooner options but produce a changing professional order.
-
-Materialize the complete response before confirming the definitive phase. Processing failures produce an error rather than partial results, omitted dates, or fabricated empty lists.
+Identifier order remains stable as available times change. Complete the response in the definitive phase. A processing failure prevents a partial response.
 
 ## Cache Keys and Payload Format
 
 ### Design Problem
 
-Cache entries must identify their scope, source version, and expected format without ambiguity. Repeated local times require distinct absolute instants. Malformed or incompatible content must trigger recalculation rather than false or empty availability (`I8`).
+A cached unit needs an unambiguous scope, version, and format. Incompatible or malformed units must fall back to PostgreSQL (`I8`).
 
 ### Design Decisions
 
-**Storage and keys**
-
-Store each daily unit as a JSON document in a Redis string. Publish the complete value with finite expiration through one [`SET` operation](https://redis.io/docs/latest/commands/set/).
-
-Use this key structure:
+Store one JSON string per clinic, professional, service, local date, and exact source version. Separate format namespaces from domain versions so incompatible producers cannot overwrite each other's units.
 
 ```text
 availability:fmt1:<clinicId>:<professionalId>:<serviceId>:<localDate>:<version>
 ```
 
-Encode UUIDs in lowercase with hyphens, dates as `YYYY-MM-DD`, and the domain version as exact nonnegative decimal text without leading zeros except `0`. Preserve the component order.
+Use lowercase hyphenated UUIDs, `YYYY-MM-DD` dates, and canonical nonnegative decimal version strings. The payload repeats `clinicId`, `professionalId`, `serviceId`, `localDate`, and `version` from the key. It also requires integer `formatVersion` equal to 1, `timeZone`, `durationMinutes`, and the complete unfiltered `starts` array. Store starts as sorted, distinct ISO UTC strings ending in `:00.000Z`. An empty array is a valid result. Cache no patient contact or clinical content.
 
-`fmt1` identifies the format independently of the domain version. Different formats use different namespaces, preventing incompatible producers from replacing each other's entries.
+Use one schema for required fields and their types. Validate scope, time zone, duration, and the exact source version against the definitive snapshot. Each start must be a valid whole-minute UTC instant on the requested local date. Ignore additional fields and sort and deduplicate valid starts. Reject the entire unit on a field or start mismatch. Compare versions without lossy conversion.
 
-**Payload**
-
-Require these fields:
-
-| Field | Representation |
-| --- | --- |
-| `formatVersion` | Integer `1` |
-| `clinicId`, `professionalId`, `serviceId` | Canonical UUID strings matching the key |
-| `localDate` | Local date matching the key |
-| `version` | Exact decimal string matching the key |
-| `timeZone` | Clinic time zone from the source snapshot |
-| `durationMinutes` | Service duration from the source snapshot |
-| `starts` | Complete daily list of available start instants before future filtering |
-
-Serialize starts as ISO UTC strings with explicit seconds and milliseconds, ending in `:00.000Z`. Order them by absolute instant without duplicates. An empty list represents a valid calculation with no starts. Include no patient contact or clinical content.
-
-**Validation**
-
-Validate the required fields and their types with one payload schema. Require the supported format, matching clinic, professional, service, local date, time zone, duration, and exact source version. Each start must be a valid UTC instant aligned to a whole minute and belong to the requested local date. Ignore additional fields; sort and deduplicate valid starts before use. Reject the complete unit if a required field, scope comparison, or start check fails. Compare versions without lossy numeric conversion.
-
-Recalculate rejected units through [Transaction and Cache Coordination](#transaction-and-cache-coordination). Apply the common future-start filter only after validation.
-
-Readable keys, explicit starts, and UTC text favor inspection and simple decoding over hashed keys, compact ranges, and numeric timestamps. Calculation metadata supports scope and version checks. Allowing additional fields avoids rejecting compatible entries solely for extra metadata. These checks complement the accepted snapshot and publication protocol.
+Readable keys and explicit UTC starts favor inspection over hashes or compact ranges. The [cache protocol](#transaction-and-cache-coordination) controls when validated units may be used or published.
 
 ## Cache Lifetime and Resource Bounds
 
 ### Design Problem
 
-Versioned keys retain earlier entries after domain changes. Expiration and eviction must reclaim them, and malformed or oversized entries must not prevent PostgreSQL fallback. Cache limits must never truncate the availability response.
+Older versions remain after mutations. Retention and resource limits must allow fallback without truncating results.
 
 ### Design Decisions
 
-**Lifetime and retention**
+- **Lifetime.** Publish each value and its 300-second TTL together. Reads leave the expiry unchanged. Republishing resets it. Old keys expire or are evicted without blocking domain writes
+- **Size.** Limit each unit to 64 KiB of serialized UTF-8. Check before decoding and skip oversized publications. This limits unit decoding, while the lookup batch and response can be larger
+- **Batches.** Read candidate keys in one batch outside SQL. Publish calculated units in one pipeline after definitive commit. Use the configured timeouts. There is no per-request key count or second lookup cycle. Calculate missing, rejected, or oversized units from PostgreSQL inputs without dropping results
+- **Memory.** Start with a Redis eviction threshold of 128 MiB and `allkeys-lru`, with a 256 MiB container limit. Eviction may remove valid units and becomes a miss. The gap allows process overhead without guaranteeing sufficient headroom
 
-Assign a 300-second TTL through the publication's `SET` operation. Reads do not renew expiration. Republishing the same key starts a new TTL.
-
-Earlier versions remain until expiration or eviction. Physical deletion is unnecessary for mutation confirmation. TTL controls retention; the authoritative PostgreSQL version determines whether an entry can be used through [Transaction and Cache Coordination](#transaction-and-cache-coordination).
-
-**Resource limits**
-
-| Resource | Limit |
-| --- | --- |
-| Serialized unit | 64 KiB, measured as UTF-8 bytes |
-| Redis `maxmemory` | 128 MiB |
-| Redis eviction policy | `allkeys-lru` |
-| Redis container memory | 256 MiB |
-
-Read the candidate keys in one `MGET` batch outside SQL transactions. Before decoding each returned value, reject it if its UTF-8 size exceeds 64 KiB. A missing, oversized, or invalid unit is calculated from PostgreSQL. This check limits decoded entry size, not the memory needed to receive the batch.
-
-After the definitive transaction commits, publish eligible calculated units with individual `SET` commands and TTLs in one pipeline batch. Skip a unit whose serialized size exceeds 64 KiB without truncating its PostgreSQL result. Apply the fixed lookup and publication timeouts from [Conflicts, Deadlocks, and Retries](#conflicts-deadlocks-and-retries). Do not repeat the lookup after a version change or failure.
-
-There is no fixed per-request key-read or publication count. The validated request scope determines the units; `RF8` retains its 31-date limit. Cache misses and rejected units may still require partial PostgreSQL calculation. A cache failure must not omit requested professionals, dates, or spaces.
-
-**Memory policy and tradeoffs**
-
-[`allkeys-lru`](https://redis.io/docs/latest/develop/reference/eviction/) permits approximate recency-based eviction, including usable entries. Evicted entries become cache misses. Version validation preserves freshness independently of eviction or TTL.
-
-`maxmemory` is an eviction threshold, not a total process-memory limit. The larger [container limit](https://docs.docker.com/reference/compose-file/services/#mem_limit) provides nominal headroom, without guaranteeing it is sufficient.
-
-These are team-selected initial settings, not measured capacity guarantees. Batch operations and entry-size checks replace per-key read windows and request-wide operation counters. They do not impose a bound on total response memory or justify truncating complete PostgreSQL results.
+These limits bound retention and individual cache work. Version validation determines freshness.
 
 ## PostgreSQL Availability Queries
 
 ### Design Problem
 
-Availability queries must retrieve consistent inputs for `RF7` and `RF8` without repeating reads for every professional-date combination. Broad history scans, duplicated window matches, or unnecessary columns increase transferred data without contributing to the calculation.
-
-Missing prerequisites must remain distinguishable from valid empty eligibility or availability results.
+Repeated reads per professional and date inflate work and can mix snapshots. A missing prerequisite must remain distinguishable from an empty result.
 
 ### Design Decisions
 
-**Query organization**
+Use parameterized batched queries under the definitive `REPEATABLE READ` snapshot.
 
-Use parameterized queries through the scoped transaction client. The definitive phase uses `REPEATABLE READ` because its related statements must share a snapshot, following [Consistent Concurrent Queries](#consistent-concurrent-queries).
+- **AQ1.** Read clinic time zone, service duration and specialty, and exact availability version. Detect a missing version or inaccessible required resource
+- **AQ2.** Read the definitive eligible set using the clinic, user, specialty, and association rules. For `RF7`, require the requested professional to qualify. For `RF8`, an empty eligible set gives empty dates
+- **AQ3.** Read each required professional's complete weekly schedule once and reuse it across dates
+- **AQ4 and AQ5.** Read full endpoints of same-clinic reserved appointments and blocks that overlap the required windows for their professional. Preserve intervals beginning before the search window
 
-Separate metadata, eligibility, schedules, appointments, and blocks into these query shapes:
+For each real interval on a requested date, build a search window from its first aligned start through its last aligned start plus the service duration. Skip intervals with no aligned start. Merge adjacent or overlapping windows per professional. Use an existence check with half-open overlap predicates so a row matching several windows appears only once.
 
-| Reference | Required data and filters |
-| --- | --- |
-| `AQ1` | Clinic time zone, service duration and specialty, and exact clinic version, filtered by clinic and service |
-| `AQ2` | Professional identifiers from same-clinic professionals, users, and service associations, requiring matching specialty, active association, active user, and role `healthcare_professional` |
-| `AQ3` | Complete weekly schedules for professionals with units requiring calculation, projecting `professional_id`, `weekday`, `start_minute`, and `end_minute` |
-| `AQ4` | Same-clinic `reserved` appointments overlapping required professional windows, projecting `professional_id`, `start_at`, and `end_at` |
-| `AQ5` | Same-clinic blocks overlapping those windows, with the same interval projection |
-
-`AQ1` must preserve detection of an absent version row rather than substitute zero or produce ordinary empty availability. Reject missing or inaccessible required clinic or service data. Permit inactive services.
-
-For `RF7`, restrict `AQ2` to the requested professional and reject an incompatible combination. For `RF8`, obtain the complete definitive eligible set. An empty set produces empty professional lists after prerequisite validation. Cache-operation limits do not truncate this set.
-
-**Schedules and occupancy windows**
-
-Read each required professional's complete week once through `AQ3` and reuse it across dates. This avoids complex weekday selection when appointments cross dates, at the cost of reading unused weekdays.
-
-Build occupancy windows only for units requiring calculation. For each actual interval belonging to a requested start date, identify its first and last whole-UTC-minute starts and extend the window through the last start plus service duration. Skip intervals with no aligned starts. Merge overlapping or adjacent windows per professional.
-
-Filter `AQ4` and `AQ5` using `EXISTS` over the parameterized windows, with these overlap conditions:
-
-```sql
-w.professional_id = a.professional_id
-AND a.start_at < w.end_at
-AND w.start_at < a.end_at
-```
-
-Here, `a` denotes the appointment or block row and `w` a generated search window. Preserve full source endpoints, including records beginning before a window. [`EXISTS`](https://www.postgresql.org/docs/18/functions-subquery.html#FUNCTIONS-SUBQUERY-EXISTS) avoids multiplying source rows across matching windows, unlike a join requiring deduplication.
-
-Separate metadata and eligibility reads clarify empty-result handling at the cost of another statement. Batched inputs reduce repeated retrieval, while index usage and performance remain subject to execution-plan verification under the applicable permissions and RLS policies.
+Separate metadata from eligibility to make empty results explicit. Complete weeks simplify coverage across dates at the cost of reading some unused days. Verify plans under the actual operating profiles.
 
 ## Index Selection and Query Plans
 
 ### Design Problem
 
-`RF7` and `RF8` need selective access to eligible professionals, schedules, and overlapping occupation. An index's existence does not demonstrate its use or benefit. Additional indexes consume storage and increase write maintenance.
+Selective reads may benefit from additional indexes. Each index also adds storage and write maintenance, so selection requires plan evidence.
 
 ### Design Decisions
 
-**Candidate indexes**
+Evaluate these non-unique B-tree candidates. Start without included columns and reuse existing primary and unique keys for metadata and identifier joins.
 
-Evaluate these non-unique B-tree candidates against the [availability query shapes](#postgresql-availability-queries):
+- **IC1 for AQ4.** Appointments by `(clinic_id, professional_id, end_at)`, restricted to `reserved`
+- **IC2 for AQ5.** Blocks by `(clinic_id, professional_id, end_at)`
+- **IC3 for AQ3.** Schedules by `(clinic_id, professional_id)` for complete weeks
+- **IC4 for AQ2.** Associations by `(clinic_id, service_id, professional_id)`, restricted to active rows
 
-| Reference | Target | Candidate |
-| --- | --- | --- |
-| `IC1` | `AQ4`, `appointments` | `(clinic_id, professional_id, end_at) WHERE state = 'reserved'` |
-| `IC2` | `AQ5`, `professional_blocks` | `(clinic_id, professional_id, end_at)` |
-| `IC3` | `AQ3`, `professional_schedules` | `(clinic_id, professional_id)` |
-| `IC4` | `AQ2`, `professional_services` | `(clinic_id, service_id, professional_id) WHERE is_active` |
+For occupation, compare filtering on the end after the window start with the alternative orientation by start. Apply the other overlap bound separately. Check partial-index eligibility under the real prepared queries. GiST ranges and covering indexes remain alternatives with different predicate, extension, storage, and maintenance costs.
 
-Start without `INCLUDE` columns. Reuse documented PK and `UNIQUE` access paths for `AQ1` and identifier joins in `AQ2`, checking actual definitions before adding indexes. Foreign keys do not automatically index their referencing columns.
+Compare the baseline, individual candidates, and combined set with equivalent fixtures, parameters, statistics, operating profiles, and RLS. Keep integrity indexes and let the planner choose. Inspect actual plans with `EXPLAIN (ANALYZE, BUFFERS, SETTINGS, TIMING OFF, FORMAT JSON)`. Compare row estimates, filters, loops, buffers, timing, index sizes, and representative write costs. Include professional dates, service ranges, long blocks, historical reservations, and different selectivity. A sequential scan may be appropriate.
 
-For `IC1` and `IC2`, clinic and professional equalities precede `end_at > window_start`. Check `start_at < window_end` separately. This orientation can discard past occupation, while the alternative by `start_at` can discard later occupation. Compare both with equivalent workloads rather than retaining both automatically.
-
-`IC3` matches complete-week retrieval without an unused weekday search key. `IC4` supports service-first lookup across professionals, complementing the documented professional-first PK. Its active subset and `IC1`'s reserved subset require maintenance when membership changes.
-
-Keep state and activation predicates fixed and recognizable in the actual SQL. Verify partial-index eligibility with the application's prepared-query behavior. See [multicolumn indexes](https://www.postgresql.org/docs/18/indexes-multicolumn.html) and [partial indexes](https://www.postgresql.org/docs/18/indexes-partial.html).
-
-GiST range indexing remains an alternative requiring adapted overlap expressions and `btree_gist` for combined UUID keys. Covering variants require evidence that avoided heap access justifies their added size. Neither is part of the initial candidate set.
-
-**Verification plan**
-
-1. Establish a baseline retaining PK and `UNIQUE` indexes and all integrity protections
-2. Compare candidates individually, including temporal orientations, then evaluate the combined set
-3. Use identical fixtures, parameters, updated statistics, and actual operating profiles, transaction context, and RLS policies
-4. Capture plans using the following options without forcing index usage
-
-```sql
-EXPLAIN (ANALYZE, BUFFERS, SETTINGS, TIMING OFF, FORMAT JSON)
-```
-
-Inspect estimated and actual rows, filters, loops, buffers, global times, and index sizes. Include single-professional dates, service ranges, historical reserved appointments, long blocks, and differing selectivity. Compare representative mutation costs as well as reads.
-
-[`TIMING OFF`](https://www.postgresql.org/docs/18/sql-explain.html) retains total execution timing without per-node timing. Plan times do not represent complete API latency. A sequential scan can be appropriate.
-
-Retain indexes only when observed benefits justify their storage and write costs. Record plans, environment, revision, commands, and outcomes in the index section of `docs/performance-report.md`, with links to supporting evidence. Keep `docs/test-report.md` limited to its requirement-coverage table. The section 5 concurrency protocols remain authoritative.
+Keep only indexes supported by the evidence. Report plans, environment, revision, and commands in the index section of the performance report. SQL plan times and API latency measure different scopes.
 
 ## Cache Evaluation and Evidence Plan
 
 ### Design Problem
 
-Cache measurements must compare equivalent availability responses, including the PostgreSQL authorization and version validation that remain on cache hits. Initialization, different fixtures, or changing dates can distort the comparison.
-
-Functional tests must separately demonstrate that bookings, cancellations, and rescheduling remain visible through the cache (`I7`, `I8`).
+A useful comparison holds authorization, data, and request scope constant. Functional coherence needs separate evidence from latency.
 
 ### Design Decisions
 
-**Comparison scope**
+Compare complete API requests using direct PostgreSQL calculation with requests using valid Redis entries and definitive PostgreSQL validation. Use the same reception account and SQL profile, fixtures, indexes, parameters, and future date anchor. Use synthetic data with at least three clinics, several professionals per clinic, and appointments across time. Record the selected clinic, service, and eligible professional count.
 
-Compare direct PostgreSQL calculation through one authorized definitive SQL phase against the complete cache protocol with valid cached entries. Measure the full API request in both modes, including authentication and PostgreSQL validation.
+- **CW1.** Query one eligible professional and one future date (`RF7`)
+- **CW2.** Query one service across seven future dates and all eligible professionals (`RF8`)
 
-Reuse synthetic data containing at least three clinics and several professionals per clinic. Select one clinic and service, record its eligible professional count, and use the same reception account under its actual database profile and RLS policies for both modes. Other roles remain covered by functional authorization tests.
+Warm up each mode three times per workload. Run ten measured pairs per workload sequentially, alternating which mode goes first, for 40 measured requests. Populate and verify cache entries before timing. Bypass Redis in the direct mode. Keep domain data fixed.
 
-| Reference | Workload |
-| --- | --- |
-| `CW1` | `RF7`, one eligible professional and one future date |
-| `CW2` | `RF8`, the selected service across seven future dates and all its eligible professionals |
+Measure with a monotonic clock from submission through complete response receipt. Record duration, status, cache use, and response equivalence. Report mean and median by workload and mode. Keep errors and mismatches in the results. Record revision, service versions, fixtures, indexes, parameters, and commands for reproduction. This is a small latency comparison. Load testing is outside its scope.
 
-Keep fixtures, indexes, parameters, and the date anchor equivalent across modes. Do not change domain data during the timed comparison.
+Separately verify equivalent results, current-day filtering, missing units, mixed hits and misses, malformed JSON, unsupported formats, mismatched metadata, invalid starts, and oversized units. Check that extra fields are ignored and valid starts are sorted and deduplicated. Exercise Redis outages and lookup and publication timeouts. Also test version changes before definitive validation, late publication under older keys, and refusal to use candidates when PostgreSQL validation fails.
 
-**Sampling and measurements**
+Prime the cache, commit a booking, cancellation, or rescheduling, and consult again before expiry. Check that occupation and released time match PostgreSQL, including both ends of a move (`I7`, `I8`).
 
-For each workload, run three unmeasured warm-up requests per mode. Then run ten measured pairs, alternating PostgreSQL-first and cache-first order. Execute requests sequentially. Two workloads, ten pairs, and two modes produce 40 measured requests.
-
-Before each cached measurement, populate and verify the required current-version entries outside the timed interval. PostgreSQL-only measurements bypass Redis. Cache misses, malformed entries, and outages belong to the functional checks below rather than additional timed comparison groups.
-
-Measure elapsed time with a monotonic clock from request submission through complete response-body receipt. Record each duration, response status, whether cached units were used, and whether the responses are equivalent. Report mean and median latency for each workload and mode. Preserve and report errors or unequal results rather than replacing samples or presenting them as successful comparisons.
-
-Record the commands, revision, relevant service versions, fixture identifiers, request parameters, and index configuration needed to repeat the measurement. Use future dates that remain valid throughout the run. A faster cached response is an observed result, not a promised outcome.
-
-**Functional checks and evidence**
-
-Require equivalent grouped availability across modes. Separately check current-day filtering, invalid metadata, unsupported formats, oversized units, and invalid starts. Verify that additional fields are ignored and valid starts are sorted and deduplicated. Check lookup and publication timeouts without returning stale or truncated results.
-
-Cover missing entries, mixed hits and misses, malformed JSON, and Redis unavailability outside the latency comparison. Each case must fall back to PostgreSQL for the required units without changing the response's meaning.
-
-For booking, cancellation, and rescheduling, populate the cache, confirm the mutation, and query again before the earlier entry expires. Verify occupation changes against PostgreSQL, including both rescheduling endpoints and remaining availability rules.
-
-Also check version changes committed before the definitive snapshot, late publication under an earlier version, PostgreSQL validation failure with cached candidates, and publication failure after definitive confirmation. Preserve the response consistency boundary in [Transaction and Cache Coordination](#transaction-and-cache-coordination).
-
-When performance evaluation begins, agree the report structure with the human, then create `docs/performance-report.md` with separate cache-measurement and index-evidence sections. Store the timings and reproduction details there, linking supporting files when needed. Keep `docs/test-report.md` limited to its requirement-coverage table and link the performance report from it.
-
-This is a small sequential comparison, not a load test or a statistical performance guarantee.
+Agree the performance report structure before evaluation and create `docs/performance-report.md` when evaluation begins. Record cache measurements and index evidence in separate sections and link the report from the [test coverage table](test-report.md). These checks and measurements are planned evidence.
