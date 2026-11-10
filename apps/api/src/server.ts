@@ -7,6 +7,7 @@ import { createAuthenticationMiddleware, requireRoles } from "./middleware/authe
 import { listAuditRecords } from "./routes/audit-records.js";
 import { createClinicRequestHandler } from "./routes/clinics.js";
 import { createLogoutRequestHandler } from "./routes/logout.js";
+import { createUserRequestHandler } from "./routes/users.js";
 
 const host = process.env.HOST;
 const port = Number(process.env.PORT);
@@ -27,16 +28,19 @@ if(!internalUrl || !applicationId || !applicationSecret) {
 const configuration = { issuer, jwksUrl, audience };
 const authenticate = createAuthenticationMiddleware(createAccessTokenVerifier(configuration));
 const prepareLogout = createLogoutRequestHandler(createLogoutIdTokenVerifier(configuration), issuer);
-const registerClinic = createClinicRequestHandler({
+const keycloakAdminSettings = {
 	issuer: new URL(issuer),
 	internalUrl: new URL(internalUrl),
 	applicationId,
 	applicationSecret,
-});
+};
+const registerClinic = createClinicRequestHandler(keycloakAdminSettings);
+const registerUser = createUserRequestHandler(keycloakAdminSettings);
 
 router.post("/auth/logout-request", authenticate, prepareLogout);
 router.get("/audit-records", authenticate, requireRoles(UserRole.clinicAdministrator), listAuditRecords);
 router.post("/clinics", authenticate, requireRoles(UserRole.platformAdministrator), registerClinic);
+router.post("/users", authenticate, requireRoles(UserRole.clinicAdministrator), registerUser);
 
 app.listen({ port, host }, (error) => {
 

@@ -14,7 +14,7 @@ These preferences are explicit user instructions.
 
 - Keep code direct and scoped to the accepted [design](docs/design.md) and explicit user decisions. Add checks only for concrete agreed requirements or actual boundary failures. Avoid speculative defensive code, redundant checks, and abstractions without a current need
 - Use simple, descriptive names and parallel code structures for similar responsibilities. Follow existing patterns so related code is easy to read and navigate. Keep this uniformity without adding unnecessary layers or abstractions
-- Keep tests simple, direct, and easy to read. Focus each test on meaningful behavior, use only the setup and assertions it needs, and avoid convoluted helpers, unnecessary mocks, or extra abstraction
+- Keep tests simple, direct, and easy to read. Keep only cases that add distinct coverage, with the setup and assertions each case needs. Avoid convoluted helpers, unnecessary mocks, and extra abstraction
 
 ## Formatting
 

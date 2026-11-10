@@ -4,7 +4,7 @@ export default defineConfig({
 	test: {
 		include: [
 			"apps/api/tests/routes/audit-records.integration.test.ts",
-			"apps/api/tests/routes/clinics.integration.test.ts",
+			"apps/api/tests/routes/registrations.integration.test.ts",
 		],
 	},
 });

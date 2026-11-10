@@ -1027,6 +1027,19 @@ The API verifies the identity before opening the authorized transaction. It crea
 
 A confirmed partial update can leave both roles in Keycloak while PostgreSQL rolls back the registration. Both partial and indeterminate outcomes may require manual correction.
 
+### Clinic User Registration Endpoint
+
+`POST /users` requires an access token and an active local clinic administrator whose role matches the token. The request body contains exactly two fields.
+
+| Field | Accepted value |
+| --- | --- |
+| `identityId` | Nonblank ID of an existing Keycloak user, up to 255 characters |
+| `role` | `clinic_administrator`, `reception`, or `healthcare_professional` |
+
+The API checks local authorization before querying Keycloak. The registration transaction rechecks authorization under lock and inserts an active user into the clinic from that protected context. Professional profiles are registered separately. After Keycloak confirms the role and PostgreSQL confirms the commit, the API returns `201` with `userId`.
+
+The [clinic registration error statuses](#clinic-registration-endpoint) also apply, with `403` reflecting clinic administrator authorization. Additional fields, including `clinicId`, return `400`. An identity linked to any local user returns `409`, and the response omits the user's clinic.
+
 ## Consistent Concurrent Queries
 
 ### Concurrency Risk
@@ -1109,7 +1122,7 @@ Incomplete preparation can also appear as an ordinary empty result when policies
 
 The internal transaction runner checks out one connection from a shared `pg.Pool` configured with the runtime `DATABASE_URL`. It returns the callback result only after PostgreSQL confirms `COMMIT` and discards the connection when the transaction state is uncertain. Database initialization continues to use Prisma with the setup connection.
 
-The authorization wrapper selects isolation from the operation policy before opening the phase. It uses `READ COMMITTED` for `readAuditRecords` and `updateUserPermissions` (clinic administrators), `createClinic` (platform administrators), `replaceOwnWeeklySchedule` (healthcare professionals), and `rescheduleAppointment` (clinic administrators and reception). It uses `REPEATABLE READ` for `readDefinitiveAvailability` (clinic administrators, reception, and healthcare professionals), allowing its related queries to share a snapshot. Failed actor authorization raises a forbidden error before the callback. On success, the wrapper passes the scoped transaction client and the protected actor's user ID, nullable clinic ID, and authorized role to the callback.
+The authorization wrapper selects isolation from the operation policy before opening the phase. It uses `READ COMMITTED` for `readAuditRecords`, `createUser`, and `updateUserPermissions` (clinic administrators), `createClinic` (platform administrators), `replaceOwnWeeklySchedule` (healthcare professionals), and `rescheduleAppointment` (clinic administrators and reception). It uses `REPEATABLE READ` for `readDefinitiveAvailability` (clinic administrators, reception, and healthcare professionals), allowing its related queries to share a snapshot. Failed actor authorization raises a forbidden error before the callback. On success, the wrapper passes the scoped transaction client and the protected actor's user ID, nullable clinic ID, and authorized role to the callback.
 
 For `replaceOwnWeeklySchedule`, the wrapper resolves the actor's professional ID after validating the locked user and before selecting the SQL profile. A missing association raises a forbidden error. The callback receives the professional ID and can acquire the professional row lock through the own-profile function.
 

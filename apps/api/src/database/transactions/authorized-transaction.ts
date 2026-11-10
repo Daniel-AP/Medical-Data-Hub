@@ -37,6 +37,11 @@ const operationPolicies = {
 		requiresActorProfessionalId: false,
 		isolation: "readCommitted",
 	},
+	createUser: {
+		roles: [UserRole.clinicAdministrator],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
 	replaceOwnWeeklySchedule: {
 		roles: [UserRole.healthcareProfessional],
 		requiresActorProfessionalId: true,
@@ -64,8 +69,7 @@ type ActorContext = Pick<User, "userId" | "clinicId" | "role"> & {
 	destinationUser?: LockedUser;
 };
 
-type AuthorizedOperation =
-	| { name: Exclude<keyof typeof operationPolicies, "updateUserPermissions" | "rescheduleAppointment"> }
+type AuthorizedOperation = { name: Exclude<keyof typeof operationPolicies, "updateUserPermissions" | "rescheduleAppointment"> }
 	| { name: "updateUserPermissions"; targetUserId: string }
 	| { name: "rescheduleAppointment"; appointmentId: string; destinationProfessionalId: string };
 
@@ -163,8 +167,7 @@ export const runAuthorizedTransaction = async <T>(
 
 			const lockedActor = lockedUsers.get(actorUserId);
 			const actorRole = policy.roles.find((role) => databaseProfiles[role].databaseRole === lockedActor?.role);
-			const actorIsAuthorized =
-				lockedActor?.isActive &&
+			const actorIsAuthorized = lockedActor?.isActive &&
 				lockedActor.userId === actorUserId &&
 				lockedActor.clinicId === actorIdentity.clinicId &&
 				actorRole !== undefined &&

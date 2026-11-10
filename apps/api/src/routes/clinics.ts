@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import { getKeycloakAdminAccess, keycloakUserExists, replaceKeycloakUserRole } from "../clients/keycloak/admin-api.js";
+import { getKeycloakAdminAccess, isKeycloakIdentityId, keycloakUserExists, replaceKeycloakUserRole } from "../clients/keycloak/admin-api.js";
 import type { KeycloakAdminSettings } from "../clients/keycloak/admin-api.js";
 import { checkClinicCreationPermission, createClinic } from "../database/clinics.js";
 
@@ -27,15 +27,13 @@ export const createClinicRequestHandler = (settings: KeycloakAdminSettings, fetc
 
 	return async (request, response) => {
 
-		const name: unknown = request.body?.name;
-		const timeZone: unknown = request.body?.timeZone;
-		const administratorIdentityId: unknown = request.body?.administratorIdentityId;
+		const body = request.body;
+		const name: unknown = body?.name;
+		const timeZone: unknown = body?.timeZone;
+		const administratorIdentityId: unknown = body?.administratorIdentityId;
 		const validName = isRequiredText(name, 200);
 		const validTimeZone = isRequiredText(timeZone, 64) && isNamedTimeZone(timeZone);
-		const validIdentity =
-			isRequiredText(administratorIdentityId, 255) &&
-			administratorIdentityId !== "." && administratorIdentityId !== "..";
-		if(!validName || !validTimeZone || !validIdentity) {
+		if(!validName || !validTimeZone || !isKeycloakIdentityId(administratorIdentityId)) {
 			throw Object.assign(new Error("Invalid clinic registration"), { status: 400 });
 		}
 

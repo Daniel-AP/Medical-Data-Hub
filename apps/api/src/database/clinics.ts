@@ -37,8 +37,8 @@ export const createClinic = async (
 
 	} catch (error) {
 
-		const duplicateIdentity =
-			error instanceof TransactionFailure && error.sqlState === "23505" && error.constraint === "users_identity_id_key";
+		const duplicateIdentity = error instanceof TransactionFailure &&
+			error.sqlState === "23505" && error.constraint === "users_identity_id_key";
 		if(duplicateIdentity) {
 			throw Object.assign(new Error("Administrator identity is already registered"), { status: 409 });
 		}

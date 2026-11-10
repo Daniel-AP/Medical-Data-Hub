@@ -72,6 +72,15 @@ export const getKeycloakAdminAccess = async (
 
 };
 
+export const isKeycloakIdentityId = (value: unknown): value is string => {
+
+	const validText = typeof value === "string" && value.trim() !== "" &&
+		[...value].length <= 255 && !value.includes("\0");
+
+	return validText && value !== "." && value !== "..";
+
+};
+
 export const keycloakUserExists = async ({ adminUrl, headers, fetchKeycloak }: KeycloakAdminAccess, identityId: string) => {
 
 	const url = new URL(`users/${encodeURIComponent(identityId)}`, adminUrl);

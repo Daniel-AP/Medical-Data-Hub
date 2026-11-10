@@ -11,9 +11,7 @@ vi.mock("../../src/database/transactions/authorized-transaction.js", () => ({
 it("rejects clinic registration before contacting Keycloak when the actor has no local access", async () => {
 
 	vi.mocked(runAuthorizedTransaction).mockRejectedValueOnce(Object.assign(new Error("Operation forbidden"), { status: 403 }));
-	const fetchKeycloak = vi.fn<typeof fetch>()
-		.mockResolvedValueOnce(Response.json({ access_token: "synthetic" }))
-		.mockResolvedValueOnce(new Response(null, { status: 404 }));
+	const fetchKeycloak = vi.fn<typeof fetch>();
 	const handler = createClinicRequestHandler({
 		issuer: new URL("https://keycloak.example/realms/test"),
 		internalUrl: new URL("https://keycloak.example"),
