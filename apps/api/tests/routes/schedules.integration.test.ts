@@ -39,6 +39,13 @@ const getWeek = (targetId: string = professionalId, token = receptionToken, quer
 	return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
 };
 
+const getBlocks = (targetId: string = professionalId, token = receptionToken, query = "") => {
+	const url = new URL(`/professionals/${targetId}/blocks`, apiUrl);
+	url.search = query;
+
+	return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+};
+
 const readWeek = async (targetId: string = professionalId) => {
 
 	const { rows } = await setup.query(
@@ -105,6 +112,7 @@ beforeAll(async () => {
 afterEach(async () => {
 	await setup.query("DELETE FROM public.appointments WHERE professional_id = $1", [professionalId]);
 	await setup.query("DELETE FROM public.professional_schedules WHERE professional_id = $1", [professionalId]);
+	await setup.query("DELETE FROM public.professional_blocks WHERE professional_id = $1", [professionalId]);
 });
 
 afterAll(async () => {
@@ -173,6 +181,98 @@ it("returns the same not-found response for missing and foreign schedule read ta
 		const response = await getWeek(target);
 		expect(response.status).toBe(404);
 		expect(await response.json()).toEqual({ error: "Not Found" });
+	}
+
+});
+
+it("reads all past and future blocks in start and identifier order as each clinic role without changing availability", async () => {
+
+	const [firstId, secondId, thirdId] = [randomUUID(), randomUUID(), randomUUID()].sort();
+	await setup.query(
+		`INSERT INTO public.professional_blocks (clinic_id, professional_id, professional_block_id, start_at, end_at)
+		 VALUES ($1, $2, $3, '2030-01-07 10:00Z', '2030-01-07 10:30Z'),
+		        ($1, $2, $4, '2000-01-07 10:00Z', '2000-01-07 10:30Z'),
+		        ($1, $2, $5, '2030-01-07 10:00Z', '2030-01-07 11:00Z')`,
+		[clinic.clinicId, professionalId, thirdId, firstId, secondId],
+	);
+	const blocks = [
+		{ professionalBlockId: firstId, startAt: "2000-01-07T10:00:00.000Z", endAt: "2000-01-07T10:30:00.000Z" },
+		{ professionalBlockId: secondId, startAt: "2030-01-07T10:00:00.000Z", endAt: "2030-01-07T11:00:00.000Z" },
+		{ professionalBlockId: thirdId, startAt: "2030-01-07T10:00:00.000Z", endAt: "2030-01-07T10:30:00.000Z" },
+	];
+	const version = await readVersion();
+	for(const token of [administratorToken, receptionToken, professionalToken]) {
+
+		const response = await getBlocks(professionalId.toUpperCase(), token);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(await response.json()).toEqual({ blocks });
+
+	}
+	expect(await readVersion()).toBe(version);
+
+});
+
+it("returns an empty list for an accessible professional without blocks", async () => {
+	const response = await getBlocks();
+	expect(response.status).toBe(200);
+	expect(await response.json()).toEqual({ blocks: [] });
+});
+
+it("rejects invalid block read identifiers and extra query parameters", async () => {
+	expect((await getBlocks("invalid")).status).toBe(400);
+	expect((await getBlocks(professionalId, receptionToken, `clinicId=${clinic.clinicId}`)).status).toBe(400);
+});
+
+it("requires an authorized active local clinic user to read blocks", async () => {
+
+	expect((await getBlocks(professionalId, "")).status).toBe(401);
+	expect((await getBlocks(professionalId, platformToken)).status).toBe(403);
+	try {
+		await setup.query("UPDATE public.users SET is_active = false WHERE user_id = $1", [receptionUserId]);
+		expect((await getBlocks()).status).toBe(403);
+	} finally {
+		await setup.query("UPDATE public.users SET is_active = true WHERE user_id = $1", [receptionUserId]);
+	}
+
+});
+
+it("returns the same not-found response for missing and foreign block read targets", async () => {
+
+	for(const target of [randomUUID(), foreignProfessionalId]) {
+		const response = await getBlocks(target);
+		expect(response.status).toBe(404);
+		expect(await response.json()).toEqual({ error: "Not Found" });
+	}
+
+});
+
+it("reads only committed blocks without waiting for a controlled writer's professional lock", async () => {
+
+	const writer = await setup.connect();
+	try {
+
+		await writer.query("BEGIN");
+		await writer.query("SELECT 1 FROM public.professionals WHERE professional_id = $1 FOR NO KEY UPDATE", [professionalId]);
+		const { rows: [block] } = await writer.query(
+			`INSERT INTO public.professional_blocks (clinic_id, professional_id, start_at, end_at)
+			 VALUES ($1, $2, '2030-01-07 10:00Z', '2030-01-07 11:00Z')
+			 RETURNING professional_block_id AS "professionalBlockId", start_at AS "startAt", end_at AS "endAt"`,
+			[clinic.clinicId, professionalId],
+		);
+		const beforeCommit = await getBlocks();
+		expect(beforeCommit.status).toBe(200);
+		expect(await beforeCommit.json()).toEqual({ blocks: [] });
+		await writer.query("COMMIT");
+		const afterCommit = await getBlocks();
+		expect(afterCommit.status).toBe(200);
+		expect(await afterCommit.json()).toEqual({ blocks: [{
+			professionalBlockId: block.professionalBlockId, startAt: block.startAt.toISOString(), endAt: block.endAt.toISOString(),
+		}] });
+
+	} finally {
+		await writer.query("ROLLBACK");
+		writer.release();
 	}
 
 });
