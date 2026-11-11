@@ -8,6 +8,14 @@ export const isRequiredText = (value: unknown, maxLength: number): value is stri
 	return typeof value === "string" && value.trim() !== "" && [...value].length <= maxLength && !value.includes("\0");
 };
 
+export const isEmail = (value: unknown): value is string => {
+	return isRequiredText(value, 320) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+};
+
+export const isPhone = (value: unknown): value is string => {
+	return isRequiredText(value, 32) && /^\+?[0-9 ()-]+$/.test(value) && /[0-9]/.test(value);
+};
+
 export const isCalendarDate = (value: unknown): value is string => {
 
 	if(typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {

@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { Client, Pool } from "pg";
+import type { QueryResult } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { createPatient } from "../../src/database/patients.js";
-import type { User } from "../../src/generated/prisma/client.js";
+import { createPatient, updatePatient } from "../../src/database/patients.js";
+import type { Patient, User } from "../../src/generated/prisma/client.js";
 import { UserRole } from "../../src/generated/prisma/enums.js";
 
 const setupUrl = process.env.DATABASE_SETUP_URL;
@@ -116,6 +117,66 @@ it("withholds patient registration success without retry when commit confirmatio
 
 	} finally {
 		interceptedQuery.mockRestore();
+	}
+
+});
+
+it.each(["FOR UPDATE", "FOR NO KEY UPDATE"])("takes %s before returning patient contact data", async (lock) => {
+
+	const { rows: [patient] } = await setup.query<Pick<Patient, "patientId" | "identification">>(
+		`INSERT INTO public.patients (clinic_id, identification, name, date_of_birth, email)
+		 VALUES ($1, $2, $3, $4::date, $5) RETURNING patient_id AS "patientId", identification`,
+		[actor.clinicId, randomUUID(), registration.name, registration.dateOfBirth, registration.email],
+	);
+	const connection = await pool.connect();
+	const query = connection.query.bind(connection);
+	const readReady = Promise.withResolvers<void>();
+	const readGate = Promise.withResolvers<void>();
+	const interceptedQuery = vi.spyOn(connection, "query").mockImplementation((...args: unknown[]) => {
+
+		return Reflect.apply(query, connection, args).then(async (result: QueryResult) => {
+
+			if(result.fields.some(({ name }) => name === "email")) {
+				readReady.resolve();
+				await readGate.promise;
+			}
+
+			return result;
+
+		});
+
+	});
+	connection.release();
+	const changes = lock === "FOR UPDATE" ? { identification: patient.identification } : { name: "Updated synthetic patient" };
+	const operation = updatePatient({ identityId: actor.identityId, roles: [UserRole.reception] }, patient.patientId, changes, pool);
+
+	try {
+
+		await readReady.promise;
+		await setup.query("BEGIN");
+		const keyShare = setup.query("SELECT patient_id FROM public.patients WHERE patient_id = $1 FOR KEY SHARE NOWAIT", [patient.patientId]);
+		if(lock === "FOR UPDATE") {
+			await expect(keyShare).rejects.toMatchObject({ code: "55P03" });
+		} else {
+
+			expect((await keyShare).rows).toEqual([{ patient_id: patient.patientId }]);
+			await setup.query("ROLLBACK");
+			await setup.query("BEGIN");
+			await expect(setup.query("SELECT patient_id FROM public.patients WHERE patient_id = $1 FOR SHARE NOWAIT", [patient.patientId]))
+				.rejects.toMatchObject({ code: "55P03" });
+
+		}
+		await setup.query("ROLLBACK");
+		readGate.resolve();
+		await expect(operation).resolves.toEqual({ patientId: patient.patientId, updated: true });
+
+	} finally {
+
+		await setup.query("ROLLBACK");
+		readGate.resolve();
+		await operation;
+		interceptedQuery.mockRestore();
+
 	}
 
 });

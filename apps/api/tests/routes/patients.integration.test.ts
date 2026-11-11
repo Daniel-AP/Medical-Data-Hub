@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { decodeJwt } from "jose";
 import { Pool } from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import type { Patient } from "../../src/generated/prisma/client.js";
 
 const apiUrl = process.env.PATIENT_TEST_API_URL;
 const setupUrl = process.env.PATIENT_TEST_DATABASE_SETUP_URL;
@@ -32,6 +33,28 @@ const registerPatient = (body: unknown, token = receptionToken) => {
 		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
 		body: JSON.stringify(body),
 	});
+
+};
+
+const editPatient = (patientId: string, body: object, token = receptionToken) => {
+
+	return fetch(new URL(`/patients/${patientId}`, apiUrl), {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+		body: JSON.stringify(body),
+	});
+
+};
+
+const createPatientFixture = async () => {
+
+	const { rows: [patient] } = await setup.query<Pick<Patient, "patientId">>(
+		`INSERT INTO public.patients (clinic_id, identification, name, date_of_birth, email, phone)
+		 VALUES ($1, $2, $3, $4::date, $5, $6) RETURNING patient_id AS "patientId"`,
+		[actor.clinicId, randomUUID(), registration.name, registration.dateOfBirth, registration.email, registration.phone],
+	);
+
+	return patient.patientId;
 
 };
 
@@ -240,6 +263,170 @@ it("rolls back patient registration when the contact write event fails", async (
 		await setup.query(`
 			DROP TRIGGER reject_test_patient_audit ON public.audit_records;
 			DROP FUNCTION public.reject_test_patient_audit();
+		`);
+
+	}
+
+});
+
+it("updates supplied patient fields and commits attributed contact events without changing availability", async () => {
+
+	const patientId = await createPatientFixture();
+	const versionQuery = "SELECT version FROM public.clinic_availability_versions WHERE clinic_id = $1";
+	const version = (await setup.query(versionQuery, [actor.clinicId])).rows[0].version;
+	const changes = { identification: ` New-${randomUUID()} `, name: " Updated synthetic patient ", dateOfBirth: "2000-02-29", email: null, phone: "00123456" };
+	const response = await editPatient(patientId, changes);
+	expect(response.status).toBe(200);
+	expect(await response.json()).toEqual({ patientId, updated: true });
+	const { rows: [patient] } = await setup.query(
+		`SELECT patient_id AS "patientId", clinic_id AS "clinicId", identification, name,
+		        date_of_birth::text AS "dateOfBirth", email, phone, xmin::text AS "transactionId"
+		 FROM public.patients WHERE patient_id = $1`,
+		[patientId],
+	);
+	expect(patient).toEqual({ ...changes, patientId, clinicId: actor.clinicId, transactionId: expect.any(String) });
+	const { rows: events } = await setup.query(
+		`SELECT clinic_id AS "clinicId", user_id AS "userId", patient_id AS "patientId", resource,
+		        appointment_id AS "appointmentId", action, xmin::text AS "transactionId"
+		 FROM public.audit_records WHERE patient_id = $1 ORDER BY action`,
+		[patientId],
+	);
+	expect(events).toEqual(["read", "write"].map((action) => ({
+		...actor, patientId, resource: "patient_contact", appointmentId: null, action, transactionId: patient.transactionId,
+	})));
+	expect((await setup.query(versionQuery, [actor.clinicId])).rows[0].version).toBe(version);
+
+});
+
+it("authorizes and validates partial patient edits", async () => {
+
+	const patientId = await createPatientFixture();
+	const changes = { name: "Updated synthetic patient" };
+	expect((await editPatient(patientId, changes, "")).status).toBe(401);
+	for(const token of [professionalToken, platformToken]) {
+		expect((await editPatient(patientId, changes, token)).status).toBe(403);
+	}
+	expect((await editPatient("invalid", changes)).status).toBe(400);
+	const invalidBodies = [
+		{}, { identification: null }, { identification: " " }, { identification: "x".repeat(51) },
+		{ name: null }, { name: " " }, { name: "x".repeat(201) },
+		{ dateOfBirth: "2025-02-29" }, { email: "invalid" }, { phone: 123456 }, { phone: "" },
+		{ clinicId: randomUUID() }, { patientId: randomUUID() },
+	];
+	for(const body of invalidBodies) {
+		expect((await editPatient(patientId, body)).status, JSON.stringify(body)).toBe(400);
+	}
+	expect((await setup.query("SELECT 1 FROM public.audit_records WHERE patient_id = $1", [patientId])).rows).toEqual([]);
+
+});
+
+it("hides missing and foreign patients during edits without recording contact reads", async () => {
+
+	const patientId = await createPatientFixture();
+	const missing = await editPatient(randomUUID(), { name: "Missing" });
+	const foreign = await editPatient(patientId, { name: "Foreign" }, foreignAdministratorToken);
+	expect(missing.status).toBe(404);
+	expect(foreign.status).toBe(404);
+	expect(await missing.json()).toEqual({ error: "Not Found" });
+	expect(await foreign.json()).toEqual({ error: "Not Found" });
+	expect((await setup.query("SELECT 1 FROM public.audit_records WHERE patient_id = $1", [patientId])).rows).toEqual([]);
+
+});
+
+it.each([
+	{ label: "a name-only patient edit", changes: { name: "Updated synthetic patient" }, actions: ["read"] },
+	{ label: "an unchanged patient contact assignment", changes: { email: registration.email }, actions: ["read", "write"] },
+])("commits the required contact events for $label", async ({ changes, actions }) => {
+
+	const patientId = await createPatientFixture();
+	const response = await editPatient(patientId, changes, administratorToken);
+	expect(response.status).toBe(200);
+	expect(await response.json()).toEqual({ patientId, updated: true });
+	const { rows } = await setup.query("SELECT email, phone FROM public.patients WHERE patient_id = $1", [patientId]);
+	expect(rows).toEqual([{ email: registration.email, phone: registration.phone }]);
+	const events = await setup.query("SELECT action FROM public.audit_records WHERE patient_id = $1 ORDER BY action", [patientId]);
+	expect(events.rows).toEqual(actions.map((action) => ({ action })));
+
+});
+
+it("rejects invalid final patient records and duplicate identification without retaining contact reads", async () => {
+
+	const patientId = await createPatientFixture();
+	const otherPatientId = await createPatientFixture();
+	const { rows: [other] } = await setup.query("SELECT identification FROM public.patients WHERE patient_id = $1", [otherPatientId]);
+	const patientQuery = "SELECT identification, name, date_of_birth::text, email, phone FROM public.patients WHERE patient_id = $1";
+	const original = (await setup.query(patientQuery, [patientId])).rows;
+	const cases = [
+		{ changes: { email: null, phone: null }, status: 400 },
+		{ changes: { dateOfBirth: "9999-12-31" }, status: 400 },
+		{ changes: { identification: other.identification }, status: 409 },
+	];
+	for(const { changes, status } of cases) {
+
+		expect((await editPatient(patientId, changes)).status).toBe(status);
+		expect((await setup.query(patientQuery, [patientId])).rows).toEqual(original);
+		expect((await setup.query("SELECT 1 FROM public.audit_records WHERE patient_id = $1", [patientId])).rows).toEqual([]);
+
+	}
+
+});
+
+it("preserves valid concurrent partial patient edits to different fields", async () => {
+
+	const patientId = await createPatientFixture();
+	const responses = await Promise.all([
+		editPatient(patientId, { name: "Concurrent synthetic patient" }),
+		editPatient(patientId, { phone: "00987654" }),
+	]);
+	expect(responses.map(({ status }) => status)).toEqual([200, 200]);
+	const { rows } = await setup.query("SELECT name, email, phone FROM public.patients WHERE patient_id = $1", [patientId]);
+	expect(rows).toEqual([{ name: "Concurrent synthetic patient", email: registration.email, phone: "00987654" }]);
+
+});
+
+it("rejects the concurrent edit that would remove the final patient contact and rolls back its read event", async () => {
+
+	const patientId = await createPatientFixture();
+	const responses = await Promise.all([
+		editPatient(patientId, { email: null }),
+		editPatient(patientId, { phone: null }),
+	]);
+	expect(responses.map(({ status }) => status).sort()).toEqual([200, 400]);
+	const winner = responses.findIndex(({ status }) => status === 200);
+	const { rows } = await setup.query("SELECT email, phone FROM public.patients WHERE patient_id = $1", [patientId]);
+	expect(rows).toEqual([{
+		email: winner === 0 ? null : registration.email,
+		phone: winner === 1 ? null : registration.phone,
+	}]);
+	const events = await setup.query("SELECT action FROM public.audit_records WHERE patient_id = $1 ORDER BY action", [patientId]);
+	expect(events.rows).toEqual([{ action: "read" }, { action: "write" }]);
+
+});
+
+it.each(["read", "write"])("rolls back a patient edit when the contact %s event fails", async (action) => {
+
+	const patientId = await createPatientFixture();
+	await setup.query(`
+		CREATE FUNCTION public.reject_test_patient_edit_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'Synthetic patient edit audit failure'; END; $$;
+		CREATE TRIGGER reject_test_patient_edit_audit BEFORE INSERT ON public.audit_records
+		FOR EACH ROW WHEN (NEW.patient_id = '${patientId}'::uuid AND NEW.action = '${action}')
+		EXECUTE FUNCTION public.reject_test_patient_edit_audit();
+	`);
+	try {
+
+		const response = await editPatient(patientId, { email: "changed@example.test" });
+		expect(response.status).toBe(500);
+		expect(await response.json()).toEqual({ error: "Internal Server Error" });
+		const { rows } = await setup.query("SELECT email, phone FROM public.patients WHERE patient_id = $1", [patientId]);
+		expect(rows).toEqual([{ email: registration.email, phone: registration.phone }]);
+		expect((await setup.query("SELECT 1 FROM public.audit_records WHERE patient_id = $1", [patientId])).rows).toEqual([]);
+
+	} finally {
+
+		await setup.query(`
+			DROP TRIGGER reject_test_patient_edit_audit ON public.audit_records;
+			DROP FUNCTION public.reject_test_patient_edit_audit();
 		`);
 
 	}
