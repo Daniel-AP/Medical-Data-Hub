@@ -4,7 +4,7 @@ import "./config/database-timeouts.js";
 import "./config/redis-timeouts.js";
 import { UserRole } from "./generated/prisma/enums.js";
 import { createAuthenticationMiddleware, requireRoles } from "./middleware/authentication.js";
-import { listClinicAgenda, listOwnAgenda, listPatientAppointments, listProfessionalAgenda } from "./routes/appointment-queries.js";
+import { getAppointmentCounts, listClinicAgenda, listOwnAgenda, listPatientAppointments, listProfessionalAgenda } from "./routes/appointment-queries.js";
 import { listAuditRecords } from "./routes/audit-records.js";
 import { getClinicalNote, registerClinicalNote } from "./routes/clinical-notes.js";
 import { createClinicRequestHandler } from "./routes/clinics.js";
@@ -54,6 +54,7 @@ router.post("/services", authenticate, requireRoles(UserRole.clinicAdministrator
 router.patch("/services/:serviceId", authenticate, requireRoles(UserRole.clinicAdministrator), editService);
 router.get("/patients/:patientId/appointments", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), listPatientAppointments); 
 router.get("/appointments/agenda", authenticate, requireRoles(UserRole.reception), listClinicAgenda);
+router.get("/appointments/counts", authenticate, requireRoles(UserRole.clinicAdministrator), getAppointmentCounts);
 router.get("/professionals/me/agenda", authenticate, requireRoles(UserRole.healthcareProfessional), listOwnAgenda);
 router.get("/professionals/:professionalId/agenda", authenticate, requireRoles(UserRole.reception), listProfessionalAgenda);
 router.post("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), registerClinicalNote);

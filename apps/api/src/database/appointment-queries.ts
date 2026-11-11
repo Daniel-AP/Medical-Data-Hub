@@ -16,6 +16,30 @@ const agendaDateFilter = `(appointment.start_at AT TIME ZONE clinic.time_zone)::
 	AND ((appointment.end_at-interval '1 millisecond') AT TIME ZONE clinic.time_zone)::date >= $2::date
 	AND ($2::date::timestamp AT TIME ZONE clinic.time_zone) < (($2::date+1)::timestamp AT TIME ZONE clinic.time_zone)`;
 
+export const readAppointmentCounts = (authentication: Authentication, from: string, to: string) => {
+
+	return runAuthorizedTransaction(authentication, { name: "readAppointmentCounts" }, async (client, actor) => {
+
+		const { rows } = await client.query<{ state: Appointment["state"]; count: string }>(
+			`SELECT appointment.state, COUNT(*) AS count
+			 FROM public.clinics AS clinic
+			 JOIN public.appointments AS appointment USING (clinic_id)
+			 WHERE clinic.clinic_id = $1::uuid
+			   AND (appointment.start_at AT TIME ZONE clinic.time_zone)::date BETWEEN $2::date AND $3::date
+			 GROUP BY appointment.state`,
+			[actor.clinicId, from, to],
+		);
+		const counts = { reserved: 0, attended: 0, absent: 0, cancelled: 0, rescheduled: 0 };
+		for(const { state, count } of rows) {
+			counts[state] = Number(count);
+		}
+
+		return counts;
+
+	});
+
+};
+
 export const readPatientAppointmentHistory = (authentication: Authentication, patientId: string) => {
 
 	return runAuthorizedTransaction(authentication, { name: "readPatientAppointmentHistory" }, async (client, actor) => {

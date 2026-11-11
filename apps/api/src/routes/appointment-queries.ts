@@ -1,22 +1,44 @@
 import type { Request, RequestHandler } from "express";
-import { readClinicAgenda, readPatientAppointmentHistory, readProfessionalAgenda } from "../database/appointment-queries.js";
+import { readAppointmentCounts, readClinicAgenda, readPatientAppointmentHistory, readProfessionalAgenda } from "../database/appointment-queries.js";
 import { isUuid } from "../validation.js";
 
-const parseAgendaDate = (query: Request["query"]) => {
+const parseDate = (date: unknown) => {
 
-	const date = query.date;
-	const hasExtraParameters = Object.keys(query).some((name) => name !== "date");
-	if(typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) || hasExtraParameters) {
-		throw Object.assign(new Error("Invalid agenda date or query parameters"), { status: 400 });
+	if(typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+		throw Object.assign(new Error("Invalid calendar date"), { status: 400 });
 	}
 
 	const parsed = new Date(`${date}T00:00:00Z`);
 	const validDate = !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date && !date.startsWith("0000");
 	if(!validDate) {
-		throw Object.assign(new Error("Invalid agenda date"), { status: 400 });
+		throw Object.assign(new Error("Invalid calendar date"), { status: 400 });
 	}
 
 	return date;
+
+};
+
+const parseAgendaDate = (query: Request["query"]) => {
+
+	if(Object.keys(query).some((name) => name !== "date")) {
+		throw Object.assign(new Error("Invalid agenda query parameters"), { status: 400 });
+	}
+
+	return parseDate(query.date);
+
+};
+
+export const getAppointmentCounts: RequestHandler = async (request, response) => {
+
+	const from = parseDate(request.query.from);
+	const to = parseDate(request.query.to);
+	const hasExtraParameters = Object.keys(request.query).some((name) => name !== "from" && name !== "to");
+	if(from > to || hasExtraParameters) {
+		throw Object.assign(new Error("Invalid appointment count range or query parameters"), { status: 400 });
+	}
+
+	const counts = await readAppointmentCounts(request.authentication!, from, to);
+	response.set("Cache-Control", "no-store").type("json").end(JSON.stringify({ counts }));
 
 };
 
