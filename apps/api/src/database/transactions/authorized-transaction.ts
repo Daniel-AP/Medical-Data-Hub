@@ -137,6 +137,11 @@ const operationPolicies = {
 		requiresActorProfessionalId: false,
 		isolation: "readCommitted",
 	},
+	createProfessionalBlock: {
+		roles: [UserRole.clinicAdministrator, UserRole.healthcareProfessional],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
 	createClinicalNote: {
 		roles: [UserRole.healthcareProfessional],
 		requiresActorProfessionalId: true,

@@ -209,6 +209,28 @@ it("rejects cross-clinic schedule references through the composite foreign key",
 
 });
 
+it.each([
+	{ name: "an infinite start", start: "-infinity", end: "2030-01-07T10:00Z" },
+	{ name: "an infinite end", start: "2030-01-07T10:00Z", end: "infinity" },
+	{ name: "a zero duration", start: "2030-01-07T10:00Z", end: "2030-01-07T10:00Z" },
+])("rejects $name in PostgreSQL block constraints", async ({ start, end }) => {
+
+	await expect(api.query(
+		"INSERT INTO public.professional_blocks (clinic_id, professional_id, start_at, end_at) VALUES ($1, $2, $3::timestamptz, $4::timestamptz)",
+		[administrator.clinicId, localProfessional.professionalId, start, end],
+	)).rejects.toMatchObject({ code: "23514", constraint: "professional_blocks_interval_check" });
+
+});
+
+it("rejects cross-clinic block references through the composite foreign key", async () => {
+
+	const foreignProfessionalId = blocks.find((block) => block.clinicId !== administrator.clinicId)!.professionalId;
+	await expect(api.query(insertQueries.professional_blocks, [administrator.clinicId, foreignProfessionalId])).rejects.toMatchObject({
+		code: "23503", constraint: "professional_blocks_clinic_id_professional_id_fkey",
+	});
+
+});
+
 it.each(tableNames)(
 	"rejects another local professional's %s insertion by healthcare professionals",
 	async (tableName) => {

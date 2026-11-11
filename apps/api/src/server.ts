@@ -6,7 +6,7 @@ import { UserRole } from "./generated/prisma/enums.js";
 import { createAuthenticationMiddleware, requireRoles } from "./middleware/authentication.js";
 import { getAppointmentCounts, listClinicAgenda, listOwnAgenda, listPatientAppointments, listProfessionalAgenda } from "./routes/appointment-queries.js";
 import { listAuditRecords } from "./routes/audit-records.js";
-import { listBlocks } from "./routes/blocks.js";
+import { listBlocks, registerBlock } from "./routes/blocks.js";
 import { getClinicalNote, registerClinicalNote } from "./routes/clinical-notes.js";
 import { createClinicRequestHandler } from "./routes/clinics.js";
 import { createLogoutRequestHandler } from "./routes/logout.js";
@@ -68,6 +68,7 @@ router.get("/appointments/:appointmentId/clinical-note", authenticate, requireRo
 router.post("/professionals", authenticate, requireRoles(UserRole.clinicAdministrator), registerProfessional);
 router.get("/professionals/:professionalId/schedules", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), listSchedules);
 router.get("/professionals/:professionalId/blocks", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), listBlocks);
+router.post("/professionals/:professionalId/blocks", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.healthcareProfessional), registerBlock);
 router.put("/professionals/:professionalId/schedules", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.healthcareProfessional), replaceSchedules);
 router.patch("/professionals/:professionalId", authenticate, requireRoles(UserRole.clinicAdministrator), editProfessionalSpecialty);
 router.post("/professionals/:professionalId/services", authenticate, requireRoles(UserRole.clinicAdministrator), registerProfessionalService);

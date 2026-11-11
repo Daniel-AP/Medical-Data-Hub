@@ -17,7 +17,8 @@ if(!apiUrl || !setupUrl || !runtimeUrl || !administratorToken || !professionalTo
 const setup = new Pool({ connectionString: setupUrl });
 const professionalId = randomUUID();
 const userId = randomUUID();
-let clinic: { clinicId: string; specialtyId: string; serviceId: string; patientId: string };
+const blockRegistration = { startAt: "2000-01-07T08:00:00.123-06:00", endAt: "2000-01-07T14:00:00.124Z" };
+let clinic: { clinicId: string; specialtyId: string; serviceId: string; patientId: string; durationMinutes: number };
 let own: { professionalId: string; userId: string };
 let foreignProfessionalId: string;
 let receptionUserId: string;
@@ -45,6 +46,34 @@ const getBlocks = (targetId: string = professionalId, token = receptionToken, qu
 
 	return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
 };
+
+const registerBlock = (body: unknown, token = administratorToken, targetId: string = professionalId) => {
+
+	return fetch(new URL(`/professionals/${targetId}/blocks`, apiUrl), {
+		method: "POST",
+		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+		body: JSON.stringify(body),
+	});
+
+};
+
+const readBlocks = async () => {
+
+	const { rows } = await setup.query(
+		`SELECT professional_block_id AS "professionalBlockId", start_at AS "startAt", end_at AS "endAt"
+		 FROM public.professional_blocks WHERE professional_id = $1 ORDER BY start_at, professional_block_id`,
+		[professionalId],
+	);
+
+	return rows;
+
+};
+
+const createFullWeek = () => setup.query(
+	`INSERT INTO public.professional_schedules (clinic_id, professional_id, weekday, start_minute, end_minute)
+	 SELECT $1::uuid, $2::uuid, weekday, 0, 1440 FROM generate_series(1, 7) AS weekday`,
+	[clinic.clinicId, professionalId],
+);
 
 const readWeek = async (targetId: string = professionalId) => {
 
@@ -77,7 +106,7 @@ beforeAll(async () => {
 
 	const { rows: [row] } = await setup.query<typeof clinic>(
 		`SELECT users.clinic_id AS "clinicId", services.specialty_id AS "specialtyId", services.service_id AS "serviceId",
-		        patients.patient_id AS "patientId"
+		        patients.patient_id AS "patientId", services.duration_minutes AS "durationMinutes"
 		 FROM public.users
 		 JOIN public.services USING (clinic_id) JOIN public.patients USING (clinic_id)
 		 WHERE identity_id = $1 LIMIT 1`,
@@ -247,32 +276,232 @@ it("returns the same not-found response for missing and foreign block read targe
 
 });
 
-it("reads only committed blocks without waiting for a controlled writer's professional lock", async () => {
+it("holds the professional lock and exposes only committed blocks until availability can commit", async () => {
 
-	const writer = await setup.connect();
+	const registration = { startAt: "2030-01-07T14:00:00.000Z", endAt: "2030-01-07T15:00:00.000Z" };
+	const blocker = await setup.connect();
 	try {
 
-		await writer.query("BEGIN");
-		await writer.query("SELECT 1 FROM public.professionals WHERE professional_id = $1 FOR NO KEY UPDATE", [professionalId]);
-		const { rows: [block] } = await writer.query(
-			`INSERT INTO public.professional_blocks (clinic_id, professional_id, start_at, end_at)
-			 VALUES ($1, $2, '2030-01-07 10:00Z', '2030-01-07 11:00Z')
-			 RETURNING professional_block_id AS "professionalBlockId", start_at AS "startAt", end_at AS "endAt"`,
-			[clinic.clinicId, professionalId],
-		);
+		await blocker.query("BEGIN");
+		await blocker.query("SELECT 1 FROM public.clinic_availability_versions WHERE clinic_id = $1 FOR NO KEY UPDATE", [clinic.clinicId]);
+		let responded = false;
+		const creation = registerBlock(registration).then((response) => {
+			responded = true;
+
+			return response;
+		});
+		await waitForWriters(1);
+		expect(responded).toBe(false);
 		const beforeCommit = await getBlocks();
 		expect(beforeCommit.status).toBe(200);
 		expect(await beforeCommit.json()).toEqual({ blocks: [] });
-		await writer.query("COMMIT");
+		await expect(setup.query("SELECT 1 FROM public.professionals WHERE professional_id = $1 FOR NO KEY UPDATE NOWAIT", [professionalId])).rejects.toMatchObject({ code: "55P03" });
+		await blocker.query("COMMIT");
+		const response = await creation;
+		expect(response.status).toBe(201);
+		const block = await response.json();
 		const afterCommit = await getBlocks();
 		expect(afterCommit.status).toBe(200);
-		expect(await afterCommit.json()).toEqual({ blocks: [{
-			professionalBlockId: block.professionalBlockId, startAt: block.startAt.toISOString(), endAt: block.endAt.toISOString(),
-		}] });
+		expect(await afterCommit.json()).toEqual({ blocks: [{ professionalBlockId: block.professionalBlockId, ...registration }] });
+
+	} finally {
+		await blocker.query("ROLLBACK");
+		blocker.release();
+	}
+
+});
+
+it("creates a finite past block with explicit offsets and one committed availability increment", async () => {
+
+	const version = await readVersion();
+	const response = await registerBlock(blockRegistration);
+	expect(response.status).toBe(201);
+	const block = await response.json();
+	expect(block).toEqual({ professionalBlockId: expect.any(String) });
+	const { rows } = await setup.query(
+		`SELECT block.clinic_id AS "clinicId", block.professional_id AS "professionalId", block.start_at AS "startAt", block.end_at AS "endAt",
+		        block.xmin::text AS "blockTransaction", version.xmin::text AS "versionTransaction"
+		 FROM public.professional_blocks AS block JOIN public.clinic_availability_versions AS version USING (clinic_id)
+		 WHERE professional_block_id = $1`,
+		[block.professionalBlockId],
+	);
+	expect(rows).toEqual([{
+		clinicId: clinic.clinicId, professionalId,
+		startAt: new Date("2000-01-07T14:00:00.123Z"), endAt: new Date("2000-01-07T14:00:00.124Z"),
+		blockTransaction: expect.any(String), versionTransaction: rows[0].blockTransaction,
+	}]);
+	expect(await readVersion()).toBe(version+1n);
+
+});
+
+it("creates blocks only for the protected own profile and ignores other professionals' reservations", async () => {
+
+	await createFullWeek();
+	await setup.query(
+		`INSERT INTO public.appointments (clinic_id, professional_id, patient_id, service_id, start_at, end_at)
+		 VALUES ($1, $2, $3, $4, '2000-01-07 14:00Z', '2000-01-07 14:00Z'::timestamptz+$5::int*interval '1 minute')`,
+		[clinic.clinicId, professionalId, clinic.patientId, clinic.serviceId, clinic.durationMinutes],
+	);
+	let createdBlockId: string | undefined;
+	try {
+
+		const response = await registerBlock(blockRegistration, professionalToken, own.professionalId.toUpperCase());
+		expect(response.status).toBe(201);
+		createdBlockId = (await response.json()).professionalBlockId;
+		for(const target of [professionalId, foreignProfessionalId, randomUUID()]) {
+			expect((await registerBlock(blockRegistration, professionalToken, target)).status).toBe(403);
+		}
+		expect(await readBlocks()).toEqual([]);
+
+	} finally {
+		await setup.query("DELETE FROM public.professional_blocks WHERE professional_block_id = $1", [createdBlockId]);
+	}
+
+});
+
+it("requires a valid block writer token and current local authorization", async () => {
+
+	expect((await registerBlock(blockRegistration, "")).status).toBe(401);
+	for(const token of [receptionToken, platformToken]) {
+		expect((await registerBlock(blockRegistration, token)).status).toBe(403);
+	}
+	try {
+		await setup.query("UPDATE public.users SET is_active = false WHERE user_id = $1", [own.userId]);
+		expect((await registerBlock(blockRegistration, professionalToken, own.professionalId)).status).toBe(403);
+	} finally {
+		await setup.query("UPDATE public.users SET is_active = true WHERE user_id = $1", [own.userId]);
+	}
+
+});
+
+it("rejects invalid block registration fields and nonpositive durations without changes", async () => {
+
+	const version = await readVersion();
+	const invalidBodies = [
+		{}, { startAt: blockRegistration.startAt }, { endAt: blockRegistration.endAt },
+		{ ...blockRegistration, startAt: "2000-01-07T08:00" }, { ...blockRegistration, endAt: null },
+		{ ...blockRegistration, endAt: blockRegistration.startAt }, { ...blockRegistration, endAt: "1999-01-01T00:00Z" },
+		{ ...blockRegistration, clinicId: clinic.clinicId },
+	];
+	for(const body of invalidBodies) {
+		expect((await registerBlock(body)).status, JSON.stringify(body)).toBe(400);
+	}
+	expect((await registerBlock(blockRegistration, administratorToken, "invalid")).status).toBe(400);
+	expect(await readBlocks()).toEqual([]);
+	expect(await readVersion()).toBe(version);
+
+});
+
+it("hides missing and foreign professionals during block registration", async () => {
+	for(const target of [randomUUID(), foreignProfessionalId]) {
+		expect((await registerBlock(blockRegistration, administratorToken, target)).status).toBe(404);
+	}
+});
+
+it("reports reserved block conflicts across dates including past appointments without creating a block", async () => {
+
+	await createFullWeek();
+	const { rows: appointments } = await setup.query(
+		`INSERT INTO public.appointments (clinic_id, professional_id, patient_id, service_id, start_at, end_at, state)
+		 SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid, start_at, start_at+$5::int*interval '1 minute', state::public.appointment_state
+		 FROM (VALUES ('2000-01-08 03:00Z'::timestamptz, 'reserved'), ('2000-01-07 23:59Z', 'reserved'),
+		              ('2000-01-08 01:00Z', 'attended')) AS fixture(start_at, state)
+		 RETURNING appointment_id AS "appointmentId", patient_id AS "patientId", service_id AS "serviceId", start_at AS "startAt", end_at AS "endAt", state`,
+		[clinic.clinicId, professionalId, clinic.patientId, clinic.serviceId, clinic.durationMinutes],
+	);
+	const version = await readVersion();
+	const response = await registerBlock({ startAt: "2000-01-08T00:00Z", endAt: "2000-01-08T04:30Z" });
+	expect(response.status).toBe(409);
+	const conflicts = appointments.filter((row) => row.state === "reserved")
+		.sort((left, right) => left.startAt.getTime()-right.startAt.getTime())
+		.map(({ appointmentId, patientId, serviceId, startAt, endAt }) => ({ appointmentId, patientId, serviceId, startAt: startAt.toISOString(), endAt: endAt.toISOString() }));
+	expect(await response.json()).toEqual({ error: "Conflict", conflicts });
+	expect(await readBlocks()).toEqual([]);
+	expect(await readVersion()).toBe(version);
+	const persisted = await setup.query("SELECT state FROM public.appointments WHERE professional_id = $1 ORDER BY start_at", [professionalId]);
+	expect(persisted.rows).toEqual([{ state: "reserved" }, { state: "attended" }, { state: "reserved" }]);
+
+});
+
+it("allows adjacent reservations and overlapping blocks while ignoring final appointments", async () => {
+
+	await createFullWeek();
+	await setup.query(
+		`INSERT INTO public.appointments (clinic_id, professional_id, patient_id, service_id, start_at, end_at, state)
+		 SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid, start_at, start_at+$5::int*interval '1 minute', state::public.appointment_state
+		 FROM (VALUES ('2000-01-07 14:00Z'::timestamptz-$5::int*interval '1 minute', 'reserved'),
+		              ('2000-01-07 15:00Z', 'reserved'), ('2000-01-07 14:10Z', 'attended')) AS fixture(start_at, state)`,
+		[clinic.clinicId, professionalId, clinic.patientId, clinic.serviceId, clinic.durationMinutes],
+	);
+	await setup.query(
+		`INSERT INTO public.professional_blocks (clinic_id, professional_id, start_at, end_at)
+		 VALUES ($1, $2, '2000-01-07 14:00Z', '2000-01-07 14:30Z')`,
+		[clinic.clinicId, professionalId],
+	);
+	const version = await readVersion();
+	expect((await registerBlock({ startAt: "2000-01-07T14:00Z", endAt: "2000-01-07T15:00Z" })).status).toBe(201);
+	expect(await readBlocks()).toHaveLength(2);
+	expect(await readVersion()).toBe(version+1n);
+
+});
+
+it("rechecks reserved conflicts after a controlled booking writer releases the professional lock", async () => {
+
+	await createFullWeek();
+	const writer = new Client({ connectionString: runtimeUrl });
+	await writer.connect();
+	const version = await readVersion();
+	try {
+
+		await writer.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+		for(const target of [receptionUserId, userId].sort()) {
+			await writer.query("SELECT * FROM public.lock_user_for_share($1::uuid, $2::uuid)", [receptionUserId, target]);
+		}
+		await writer.query("SELECT set_config('app.user_id', $1, true), set_config('app.clinic_id', $2, true)", [receptionUserId, clinic.clinicId]);
+		await writer.query("SET LOCAL ROLE reception");
+		await writer.query("SELECT * FROM public.lock_service_for_share($1::uuid)", [clinic.serviceId]);
+		await writer.query("SELECT * FROM public.lock_professional_for_no_key_update($1::uuid)", [professionalId]);
+		await writer.query("SELECT 1 FROM public.patients WHERE patient_id = $1 FOR NO KEY UPDATE", [clinic.patientId]);
+		await writer.query(
+			`INSERT INTO public.appointments (clinic_id, professional_id, patient_id, service_id, start_at, end_at)
+			 VALUES ($1, $2, $3, $4, '2030-01-07 14:00Z', '2030-01-07 14:00Z'::timestamptz+$5::int*interval '1 minute')`,
+			[clinic.clinicId, professionalId, clinic.patientId, clinic.serviceId, clinic.durationMinutes],
+		);
+		const creation = registerBlock({ startAt: "2030-01-07T14:00Z", endAt: "2030-01-07T15:00Z" });
+		await waitForWriters(1);
+		await writer.query("UPDATE public.clinic_availability_versions SET version = version+1 WHERE clinic_id = $1", [clinic.clinicId]);
+		await writer.query("COMMIT");
+		expect((await creation).status).toBe(409);
+		expect(await readBlocks()).toEqual([]);
+		expect(await readVersion()).toBe(version+1n);
 
 	} finally {
 		await writer.query("ROLLBACK");
-		writer.release();
+		await writer.end();
+	}
+
+});
+
+it.each(["missing", "overflowed"])("rolls back block creation when the availability version is %s", async (failure) => {
+
+	const version = await readVersion();
+	try {
+
+		const query = failure === "missing"
+			? "DELETE FROM public.clinic_availability_versions WHERE clinic_id = $1"
+			: "UPDATE public.clinic_availability_versions SET version = 9223372036854775807 WHERE clinic_id = $1";
+		await setup.query(query, [clinic.clinicId]);
+		expect((await registerBlock(blockRegistration)).status).toBe(500);
+		expect(await readBlocks()).toEqual([]);
+
+	} finally {
+
+		await setup.query(
+			`INSERT INTO public.clinic_availability_versions (clinic_id, version) VALUES ($1, $2)
+			 ON CONFLICT (clinic_id) DO UPDATE SET version = EXCLUDED.version`,
+			[clinic.clinicId, version.toString()],
+		);
+
 	}
 
 });

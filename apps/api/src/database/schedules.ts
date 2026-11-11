@@ -1,12 +1,10 @@
-import type { Appointment, Clinic, Professional } from "../generated/prisma/client.js";
+import type { Clinic, Professional } from "../generated/prisma/client.js";
 import { UserRole } from "../generated/prisma/enums.js";
 import type { Authentication } from "../middleware/types.js";
 import { isScheduleCovered } from "../schedules/coverage.js";
-import type { ScheduleInterval } from "../schedules/types.js";
+import type { AppointmentConflict, ScheduleInterval } from "../schedules/types.js";
 import { incrementAvailabilityVersion } from "./availability-versions.js";
 import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
-
-type ScheduleConflict = Pick<Appointment, "appointmentId" | "patientId" | "serviceId" | "startAt" | "endAt">;
 
 export const readWeeklySchedule = (authentication: Authentication, professionalId: string) => {
 
@@ -47,7 +45,7 @@ export const replaceWeeklySchedule = (authentication: Authentication, profession
 			`SELECT time_zone AS "timeZone" FROM public.clinics WHERE clinic_id = $1::uuid`,
 			[actor.clinicId],
 		);
-		const { rows: reservations } = await transaction.query<ScheduleConflict>(
+		const { rows: reservations } = await transaction.query<AppointmentConflict>(
 			`SELECT appointment_id AS "appointmentId", patient_id AS "patientId", service_id AS "serviceId",
 			        start_at AS "startAt", end_at AS "endAt"
 			 FROM public.appointments WHERE professional_id = $1::uuid AND state = 'reserved'

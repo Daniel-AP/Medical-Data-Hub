@@ -1,4 +1,35 @@
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const timestampPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}(?::?\d{2})?)$/;
+
+const invalidTimestamp = () => {
+	return Object.assign(new Error("Invalid timestamp"), { status: 400 });
+};
+
+export const parseTimestamp = (value: unknown) => {
+
+	if(value === undefined) {
+		return undefined;
+	}
+	const match = typeof value === "string" ? timestampPattern.exec(value) : null;
+	if(!match) {
+		throw invalidTimestamp();
+	}
+
+	const [, minute, second = "00", fraction = "", offset] = match;
+	const local = `${minute}:${second}.${fraction.padEnd(3, "0")}`;
+	const localAsUtc = new Date(`${local}Z`);
+	if(Number.isNaN(localAsUtc.getTime()) || localAsUtc.toISOString() !== `${local}Z`) {
+		throw invalidTimestamp();
+	}
+
+	const instant = new Date(`${local}${offset.length === 3 ? `${offset}:00` : offset}`);
+	if(Number.isNaN(instant.getTime())) {
+		throw invalidTimestamp();
+	}
+
+	return instant;
+
+};
 
 export const isUuid = (value: unknown): value is string => {
 	return typeof value === "string" && uuidPattern.test(value);
