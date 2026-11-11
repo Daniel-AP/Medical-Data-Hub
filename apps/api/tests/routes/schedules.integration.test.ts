@@ -5,12 +5,11 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
 const apiUrl = process.env.SCHEDULE_TEST_API_URL;
 const setupUrl = process.env.SCHEDULE_TEST_DATABASE_SETUP_URL;
-const runtimeUrl = process.env.DATABASE_URL;
 const administratorToken = process.env.SCHEDULE_TEST_ADMIN_TOKEN;
 const professionalToken = process.env.SCHEDULE_TEST_PROFESSIONAL_TOKEN;
 const receptionToken = process.env.SCHEDULE_TEST_RECEPTION_TOKEN;
 const platformToken = process.env.SCHEDULE_TEST_PLATFORM_TOKEN;
-if(!apiUrl || !setupUrl || !runtimeUrl || !administratorToken || !professionalToken || !receptionToken || !platformToken) {
+if(!apiUrl || !setupUrl || !administratorToken || !professionalToken || !receptionToken || !platformToken) {
 	throw new Error("Configure the schedule test API, disposable database, and Keycloak tokens");
 }
 
@@ -445,39 +444,35 @@ it("allows adjacent reservations and overlapping blocks while ignoring final app
 
 });
 
-it("rechecks reserved conflicts after a controlled booking writer releases the professional lock", async () => {
+it.each(["weekly schedule", "block"])("rechecks %s conflicts after an API booking commits", async (resource) => {
 
 	await createFullWeek();
-	const writer = new Client({ connectionString: runtimeUrl });
-	await writer.connect();
+	const gate = new Client({ connectionString: setupUrl });
+	await gate.connect();
 	const version = await readVersion();
 	try {
 
-		await writer.query("BEGIN ISOLATION LEVEL READ COMMITTED");
-		for(const target of [receptionUserId, userId].sort()) {
-			await writer.query("SELECT * FROM public.lock_user_for_share($1::uuid, $2::uuid)", [receptionUserId, target]);
-		}
-		await writer.query("SELECT set_config('app.user_id', $1, true), set_config('app.clinic_id', $2, true)", [receptionUserId, clinic.clinicId]);
-		await writer.query("SET LOCAL ROLE reception");
-		await writer.query("SELECT * FROM public.lock_service_for_share($1::uuid)", [clinic.serviceId]);
-		await writer.query("SELECT * FROM public.lock_professional_for_no_key_update($1::uuid)", [professionalId]);
-		await writer.query("SELECT 1 FROM public.patients WHERE patient_id = $1 FOR NO KEY UPDATE", [clinic.patientId]);
-		await writer.query(
-			`INSERT INTO public.appointments (clinic_id, professional_id, patient_id, service_id, start_at, end_at)
-			 VALUES ($1, $2, $3, $4, '2030-01-07 14:00Z', '2030-01-07 14:00Z'::timestamptz+$5::int*interval '1 minute')`,
-			[clinic.clinicId, professionalId, clinic.patientId, clinic.serviceId, clinic.durationMinutes],
-		);
-		const creation = registerBlock({ startAt: "2030-01-07T14:00Z", endAt: "2030-01-07T15:00Z" });
+		await gate.query("BEGIN");
+		await gate.query("SELECT 1 FROM public.clinic_availability_versions WHERE clinic_id = $1 FOR NO KEY UPDATE", [clinic.clinicId]);
+		const booking = fetch(new URL("/appointments", apiUrl), {
+			method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${receptionToken}` },
+			body: JSON.stringify({ patientId: clinic.patientId, professionalId, serviceId: clinic.serviceId, startAt: "2035-01-08T14:00Z" }),
+		});
 		await waitForWriters(1);
-		await writer.query("UPDATE public.clinic_availability_versions SET version = version+1 WHERE clinic_id = $1", [clinic.clinicId]);
-		await writer.query("COMMIT");
-		expect((await creation).status).toBe(409);
+		const change = resource === "block"
+			? registerBlock({ startAt: "2035-01-08T14:00Z", endAt: "2035-01-08T15:00Z" })
+			: replaceWeek({ intervals: [] });
+		await waitForWriters(2);
+		await gate.query("COMMIT");
+		expect((await booking).status).toBe(201);
+		expect((await change).status).toBe(409);
+		expect(await readWeek()).toHaveLength(7);
 		expect(await readBlocks()).toEqual([]);
 		expect(await readVersion()).toBe(version+1n);
 
 	} finally {
-		await writer.query("ROLLBACK");
-		await writer.end();
+		await gate.query("ROLLBACK");
+		await gate.end();
 	}
 
 });
@@ -682,40 +677,6 @@ it("lets the later successful complete-week replacement win after a lock wait", 
 	} finally {
 		await blocker.query("ROLLBACK");
 		blocker.release();
-	}
-
-});
-
-it("rechecks reservations committed by a competing transaction after the professional lock wait", async () => {
-
-	const writer = new Client({ connectionString: runtimeUrl });
-	await writer.connect();
-	const intervals = [{ weekday: 1, startMinute: 480, endMinute: 540 }];
-	expect((await replaceWeek({ intervals })).status).toBe(204);
-	try {
-
-		await writer.query("BEGIN ISOLATION LEVEL READ COMMITTED");
-		await writer.query("SELECT * FROM public.lock_user_for_share($1::uuid, $1::uuid)", [receptionUserId]);
-		await writer.query("SELECT set_config('app.user_id', $1, true), set_config('app.clinic_id', $2, true)", [receptionUserId, clinic.clinicId]);
-		await writer.query("SET LOCAL ROLE reception");
-		await writer.query("SELECT * FROM public.lock_service_for_share($1::uuid)", [clinic.serviceId]);
-		await writer.query("SELECT * FROM public.lock_professional_for_no_key_update($1::uuid)", [professionalId]);
-		await writer.query("SELECT 1 FROM public.patients WHERE patient_id = $1 FOR NO KEY UPDATE", [clinic.patientId]);
-		await writer.query(
-			`INSERT INTO public.appointments (clinic_id, professional_id, patient_id, service_id, start_at, end_at)
-			 VALUES ($1, $2, $3, $4, '2030-01-07 14:00Z', '2030-01-07 14:30Z')`,
-			[clinic.clinicId, professionalId, clinic.patientId, clinic.serviceId],
-		);
-		const replacement = replaceWeek({ intervals: [] });
-		await waitForWriters(1);
-		await writer.query("UPDATE public.clinic_availability_versions SET version = version+1 WHERE clinic_id = $1", [clinic.clinicId]);
-		await writer.query("COMMIT");
-		expect((await replacement).status).toBe(409);
-		expect(await readWeek()).toEqual(intervals);
-
-	} finally {
-		await writer.query("ROLLBACK");
-		await writer.end();
 	}
 
 });

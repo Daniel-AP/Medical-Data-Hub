@@ -22,6 +22,11 @@ const databaseProfiles = {
 };
 
 const operationPolicies = {
+	createAppointment: {
+		roles: [UserRole.clinicAdministrator, UserRole.reception],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
 	createPatient: {
 		roles: [UserRole.clinicAdministrator, UserRole.reception],
 		requiresActorProfessionalId: false,
@@ -174,8 +179,9 @@ type ActorContext = Pick<User, "userId" | "clinicId" | "role"> & {
 	destinationUser?: LockedUser;
 };
 
-type AuthorizedOperation = { name: Exclude<keyof typeof operationPolicies, "updateUserPermissions" | "createProfessional" | "rescheduleAppointment"> }
+type AuthorizedOperation = { name: Exclude<keyof typeof operationPolicies, "updateUserPermissions" | "createProfessional" | "createAppointment" | "rescheduleAppointment"> }
 	| { name: "updateUserPermissions" | "createProfessional"; targetUserId: string }
+	| { name: "createAppointment"; professionalId: string }
 	| { name: "rescheduleAppointment"; appointmentId: string; destinationProfessionalId: string };
 
 const lockUserForShareQuery = `SELECT user_id AS "userId", clinic_id AS "clinicId", role, is_active AS "isActive"
@@ -251,6 +257,20 @@ export const runAuthorizedTransaction = async <T>(
 			}
 
 			let rescheduleReferences;
+			let bookingUserId: string | undefined;
+			if(operation.name === "createAppointment") {
+
+				const { rows: [professionalUser] } = await client.query<Pick<User, "userId">>(
+					`SELECT user_id AS "userId" FROM public.resolve_professional_user($1::uuid, $2::uuid)`,
+					[actorUserId, operation.professionalId],
+				);
+				if(!professionalUser) {
+					throw Object.assign(new Error("Professional not found"), { status: 404 });
+				}
+				bookingUserId = professionalUser.userId;
+				userIdsToLock.add(bookingUserId);
+
+			}
 			if(operation.name === "rescheduleAppointment") {
 				const { appointmentId, destinationProfessionalId } = operation;
 				rescheduleReferences = await resolveRescheduleReferences(client, actorUserId, appointmentId, destinationProfessionalId);
@@ -290,6 +310,9 @@ export const runAuthorizedTransaction = async <T>(
 			if(rescheduleReferences) {
 				actor.originalAppointment = rescheduleReferences.originalAppointment;
 				actor.destinationUser = lockedUsers.get(rescheduleReferences.destinationUserId);
+			}
+			if(bookingUserId !== undefined) {
+				actor.destinationUser = lockedUsers.get(bookingUserId);
 			}
 			if(policy.requiresActorProfessionalId) {
 

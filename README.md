@@ -1,5 +1,46 @@
 # Medical-Data-Hub
 
+## Appointment Booking API
+
+`POST /appointments` requires a Keycloak bearer access token for a clinic administrator or reception user whose current local role matches the token. Send a JSON body containing only the following fields:
+
+```json
+{
+    "patientId": "<uuid>",
+    "professionalId": "<uuid>",
+    "serviceId": "<uuid>",
+    "startAt": "2035-01-08T08:00:00-06:00"
+}
+```
+
+All three identifiers must be UUIDs for resources in the authenticated user's clinic. `startAt` must be a finite ISO timestamp with `Z` or an explicit offset and at most millisecond precision. Its absolute instant must be aligned to a whole UTC minute and strictly future when PostgreSQL inserts the appointment. The API derives the clinic from protected local authorization and the end from the locked service duration in elapsed minutes.
+
+Booking requires an active service, an active professional user with the healthcare professional role, an active professional-service association, matching specialties, and complete clinic-local weekly schedule coverage. Blocks and same-clinic reserved appointments must not overlap the interval for the professional or patient, across all services and dates. Intervals are half-open, so adjacent appointments are allowed. Only `reserved` occupies time.
+
+The operation uses `READ COMMITTED`, locks users before the service, professional, and patient, and checks fresh state under those locks. The new reservation and one availability-version increment commit together before the API returns success. Booking uses PostgreSQL directly and does not require availability consultation or Redis.
+
+| Status | Result |
+| --- | --- |
+| `201` | Returns `{"appointmentId":"<uuid>"}` after commit. The stored state is `reserved`. |
+| `400` | Invalid JSON, identifiers, body fields, timestamp, or a start that is not a future whole UTC minute. |
+| `401` | Missing or invalid access token. |
+| `403` | The token role or current local authorization denies booking. |
+| `404` | A patient, professional, or service is missing or belongs to another clinic, without distinguishing those cases. |
+| `409` | Ineligible service or professional, incomplete schedule coverage, or an overlapping block or reservation. |
+| `413` | The request exceeds the API's JSON body limit. |
+| `500` | An unexpected failure occurred. An unconfirmed commit includes `OPERATION_OUTCOME_UNKNOWN` and must not be automatically replayed. |
+| `503` | Keycloak verification keys are unavailable or a transient transaction failure prevents confirmation. |
+
+### Booking integration tests
+
+Use a seeded, disposable Compose project with the API, PostgreSQL, and Keycloak. Set `APPOINTMENT_TEST_API_URL` to the API origin and `APPOINTMENT_TEST_DATABASE_SETUP_URL` to the privileged connection URL for that disposable database. Supply `APPOINTMENT_TEST_ADMIN_TOKEN`, `APPOINTMENT_TEST_RECEPTION_TOKEN`, and `APPOINTMENT_TEST_PROFESSIONAL_TOKEN` for seeded users in the same clinic, plus `APPOINTMENT_TEST_PLATFORM_TOKEN`. The suite creates synthetic resources, temporarily changes local authorization and version data, and restores or removes its fixtures. Run files sequentially through the HTTP configuration.
+
+```sh
+npx vitest run --config vitest-http.config.ts apps/api/tests/routes/appointments.integration.test.ts
+```
+
+The booking races use two real API requests and SQL locks only as synchronization gates. Schedule and block races also use their real API writers. Missing and overflowing version rows are injected failures. Shared timestamp parsing and time-zone coverage have unit tests in the rapid suite; the HTTP booking tests include adjacent intervals across local midnight.
+
 ## Clinical Notes API
 
 ### Create a clinical note
