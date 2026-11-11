@@ -4,6 +4,7 @@ export default defineConfig({
 	test: {
 		fileParallelism: false,
 		include: [
+			"apps/api/tests/routes/schedules.integration.test.ts",
 			"apps/api/tests/routes/patients.integration.test.ts",
 			"apps/api/tests/routes/appointment-agendas.integration.test.ts",
 			"apps/api/tests/routes/appointment-counts.integration.test.ts",

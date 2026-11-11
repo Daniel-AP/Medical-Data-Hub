@@ -122,6 +122,11 @@ const operationPolicies = {
 		requiresActorProfessionalId: true,
 		isolation: "readCommitted",
 	},
+	replaceWeeklySchedule: {
+		roles: [UserRole.clinicAdministrator, UserRole.healthcareProfessional],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
 	createClinicalNote: {
 		roles: [UserRole.healthcareProfessional],
 		requiresActorProfessionalId: true,

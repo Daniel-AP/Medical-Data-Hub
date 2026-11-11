@@ -188,6 +188,27 @@ it("allows permitted block insertion as healthcare_professional", async () => {
 
 });
 
+it.each([
+	{ weekday: 0, startMinute: 0, endMinute: 60, constraint: "professional_schedules_weekday_check" },
+	{ weekday: 1, startMinute: 60, endMinute: 60, constraint: "professional_schedules_interval_check" },
+])("enforces $constraint in PostgreSQL", async ({ weekday, startMinute, endMinute, constraint }) => {
+
+	await expect(api.query(
+		"INSERT INTO public.professional_schedules (clinic_id, professional_id, weekday, start_minute, end_minute) VALUES ($1, $2, $3, $4, $5)",
+		[administrator.clinicId, localProfessional.professionalId, weekday, startMinute, endMinute],
+	)).rejects.toMatchObject({ code: "23514", constraint });
+
+});
+
+it("rejects cross-clinic schedule references through the composite foreign key", async () => {
+
+	const foreignProfessionalId = schedules.find((schedule) => schedule.clinicId !== administrator.clinicId)!.professionalId;
+	await expect(api.query(insertQueries.professional_schedules, [administrator.clinicId, foreignProfessionalId])).rejects.toMatchObject({
+		code: "23503", constraint: "professional_schedules_clinic_id_professional_id_fkey",
+	});
+
+});
+
 it.each(tableNames)(
 	"rejects another local professional's %s insertion by healthcare professionals",
 	async (tableName) => {

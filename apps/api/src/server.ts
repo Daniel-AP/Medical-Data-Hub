@@ -13,6 +13,7 @@ import { editPatient, getPatient, registerPatient } from "./routes/patients.js";
 import { editProfessionalSpecialty, registerProfessional } from "./routes/professionals.js";
 import { editProfessionalServiceActivity, registerProfessionalService } from "./routes/professional-services.js";
 import { editService, registerService } from "./routes/services.js";
+import { replaceSchedules } from "./routes/schedules.js";
 import { registerSpecialty } from "./routes/specialties.js";
 import { createUserRequestHandler, updateUserPermissionsRequestHandler } from "./routes/users.js";
 
@@ -64,6 +65,7 @@ router.get("/professionals/:professionalId/agenda", authenticate, requireRoles(U
 router.post("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), registerClinicalNote);
 router.get("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), getClinicalNote);
 router.post("/professionals", authenticate, requireRoles(UserRole.clinicAdministrator), registerProfessional);
+router.put("/professionals/:professionalId/schedules", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.healthcareProfessional), replaceSchedules);
 router.patch("/professionals/:professionalId", authenticate, requireRoles(UserRole.clinicAdministrator), editProfessionalSpecialty);
 router.post("/professionals/:professionalId/services", authenticate, requireRoles(UserRole.clinicAdministrator), registerProfessionalService);
 router.patch(

@@ -1,0 +1,53 @@
+import type { Appointment, Clinic, Professional } from "../generated/prisma/client.js";
+import { UserRole } from "../generated/prisma/enums.js";
+import type { Authentication } from "../middleware/types.js";
+import { isScheduleCovered } from "../schedules/coverage.js";
+import type { ScheduleInterval } from "../schedules/types.js";
+import { incrementAvailabilityVersion } from "./availability-versions.js";
+import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
+
+type ScheduleConflict = Pick<Appointment, "appointmentId" | "patientId" | "serviceId" | "startAt" | "endAt">;
+
+export const replaceWeeklySchedule = (authentication: Authentication, professionalId: string, intervals: ScheduleInterval[]) => {
+
+	return runAuthorizedTransaction(authentication, { name: "replaceWeeklySchedule" }, async (transaction, actor) => {
+
+		const isProfessional = actor.role === UserRole.healthcareProfessional;
+		const lockQuery = isProfessional
+			? `SELECT professional_id AS "professionalId" FROM public.lock_own_professional_for_no_key_update() WHERE professional_id = $1::uuid`
+			: `SELECT professional_id AS "professionalId" FROM public.professionals WHERE professional_id = $1::uuid FOR NO KEY UPDATE`;
+		const { rows: [professional] } = await transaction.query<Pick<Professional, "professionalId">>(lockQuery, [professionalId]);
+		if(!professional) {
+			throw Object.assign(new Error("Professional unavailable for schedule replacement"), { status: isProfessional ? 403 : 404 });
+		}
+
+		const { rows: [clinic] } = await transaction.query<Pick<Clinic, "timeZone">>(
+			`SELECT time_zone AS "timeZone" FROM public.clinics WHERE clinic_id = $1::uuid`,
+			[actor.clinicId],
+		);
+		const { rows: reservations } = await transaction.query<ScheduleConflict>(
+			`SELECT appointment_id AS "appointmentId", patient_id AS "patientId", service_id AS "serviceId",
+			        start_at AS "startAt", end_at AS "endAt"
+			 FROM public.appointments WHERE professional_id = $1::uuid AND state = 'reserved'
+			 ORDER BY start_at, appointment_id`,
+			[professional.professionalId],
+		);
+		const conflicts = reservations.filter((appointment) => !isScheduleCovered(intervals, appointment.startAt, appointment.endAt, clinic.timeZone));
+		if(conflicts.length > 0) {
+			return { conflicts };
+		}
+
+		await transaction.query("DELETE FROM public.professional_schedules WHERE professional_id = $1::uuid", [professional.professionalId]);
+		await transaction.query(
+			`INSERT INTO public.professional_schedules (clinic_id, professional_id, weekday, start_minute, end_minute)
+			 SELECT $1::uuid, $2::uuid, weekday, "startMinute", "endMinute"
+			 FROM jsonb_to_recordset($3::jsonb) AS interval(weekday smallint, "startMinute" smallint, "endMinute" smallint)`,
+			[actor.clinicId, professional.professionalId, JSON.stringify(intervals)],
+		);
+		await incrementAvailabilityVersion(transaction, actor.clinicId!);
+
+		return { conflicts: [] };
+
+	});
+
+};
