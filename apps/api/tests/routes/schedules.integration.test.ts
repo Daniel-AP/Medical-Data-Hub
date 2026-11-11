@@ -32,6 +32,13 @@ const replaceWeek = (body: unknown, token = administratorToken, targetId: string
 
 };
 
+const getWeek = (targetId: string = professionalId, token = receptionToken, query = "") => {
+	const url = new URL(`/professionals/${targetId}/schedules`, apiUrl);
+	url.search = query;
+
+	return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+};
+
 const readWeek = async (targetId: string = professionalId) => {
 
 	const { rows } = await setup.query(
@@ -106,6 +113,67 @@ afterAll(async () => {
 	await setup.query("DELETE FROM public.professionals WHERE professional_id = $1", [professionalId]);
 	await setup.query("DELETE FROM public.users WHERE user_id = $1", [userId]);
 	await setup.end();
+
+});
+
+it("reads the ordered stored week as each clinic role without changing availability", async () => {
+
+	await setup.query(
+		`INSERT INTO public.professional_schedules (clinic_id, professional_id, weekday, start_minute, end_minute)
+		 SELECT $1::uuid, $2::uuid, weekday, start_minute, end_minute
+		 FROM (VALUES (2, 780, 840), (1, 540, 600), (1, 480, 600), (1, 480, 540)) AS fixture(weekday, start_minute, end_minute)`,
+		[clinic.clinicId, professionalId],
+	);
+	const intervals = [
+		{ weekday: 1, startMinute: 480, endMinute: 540 },
+		{ weekday: 1, startMinute: 480, endMinute: 600 },
+		{ weekday: 1, startMinute: 540, endMinute: 600 },
+		{ weekday: 2, startMinute: 780, endMinute: 840 },
+	];
+	const version = await readVersion();
+	for(const token of [administratorToken, receptionToken, professionalToken]) {
+
+		const response = await getWeek(professionalId.toUpperCase(), token);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(await response.json()).toEqual({ intervals });
+
+	}
+	expect(await readVersion()).toBe(version);
+
+});
+
+it("returns an empty week for an accessible professional without schedules", async () => {
+	const response = await getWeek();
+	expect(response.status).toBe(200);
+	expect(await response.json()).toEqual({ intervals: [] });
+});
+
+it("rejects invalid schedule read identifiers and extra query parameters", async () => {
+	expect((await getWeek("invalid")).status).toBe(400);
+	expect((await getWeek(professionalId, receptionToken, `clinicId=${clinic.clinicId}`)).status).toBe(400);
+});
+
+it("requires an authorized active local clinic user to read schedules", async () => {
+
+	expect((await getWeek(professionalId, "")).status).toBe(401);
+	expect((await getWeek(professionalId, platformToken)).status).toBe(403);
+	try {
+		await setup.query("UPDATE public.users SET is_active = false WHERE user_id = $1", [receptionUserId]);
+		expect((await getWeek()).status).toBe(403);
+	} finally {
+		await setup.query("UPDATE public.users SET is_active = true WHERE user_id = $1", [receptionUserId]);
+	}
+
+});
+
+it("returns the same not-found response for missing and foreign schedule read targets", async () => {
+
+	for(const target of [randomUUID(), foreignProfessionalId]) {
+		const response = await getWeek(target);
+		expect(response.status).toBe(404);
+		expect(await response.json()).toEqual({ error: "Not Found" });
+	}
 
 });
 
@@ -325,23 +393,34 @@ it("rechecks reservations committed by a competing transaction after the profess
 
 it("holds the professional lock and withholds success until the availability write can commit", async () => {
 
+	const currentWeek = [{ weekday: 3, startMinute: 480, endMinute: 600 }];
+	const nextWeek = [{ weekday: 1, startMinute: 0, endMinute: 1440 }];
+	await setup.query(
+		"INSERT INTO public.professional_schedules (clinic_id, professional_id, weekday, start_minute, end_minute) VALUES ($1, $2, 3, 480, 600)",
+		[clinic.clinicId, professionalId],
+	);
 	const blocker = await setup.connect();
 	try {
 
 		await blocker.query("BEGIN");
 		await blocker.query("SELECT 1 FROM public.clinic_availability_versions WHERE clinic_id = $1 FOR NO KEY UPDATE", [clinic.clinicId]);
 		let responded = false;
-		const replacement = replaceWeek({ intervals: [{ weekday: 1, startMinute: 0, endMinute: 1440 }] }).then((response) => {
+		const replacement = replaceWeek({ intervals: nextWeek }).then((response) => {
 			responded = true;
 
 			return response;
 		});
 		await waitForWriters(1);
 		expect(responded).toBe(false);
-		expect(await readWeek()).toEqual([]);
+		const beforeCommit = await getWeek();
+		expect(beforeCommit.status).toBe(200);
+		expect(await beforeCommit.json()).toEqual({ intervals: currentWeek });
 		await expect(setup.query("SELECT 1 FROM public.professionals WHERE professional_id = $1 FOR NO KEY UPDATE NOWAIT", [professionalId])).rejects.toMatchObject({ code: "55P03" });
 		await blocker.query("COMMIT");
 		expect((await replacement).status).toBe(204);
+		const afterCommit = await getWeek();
+		expect(afterCommit.status).toBe(200);
+		expect(await afterCommit.json()).toEqual({ intervals: nextWeek });
 
 	} finally {
 		await blocker.query("ROLLBACK");

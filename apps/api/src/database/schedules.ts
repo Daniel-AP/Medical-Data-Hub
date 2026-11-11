@@ -8,6 +8,28 @@ import { runAuthorizedTransaction } from "./transactions/authorized-transaction.
 
 type ScheduleConflict = Pick<Appointment, "appointmentId" | "patientId" | "serviceId" | "startAt" | "endAt">;
 
+export const readWeeklySchedule = (authentication: Authentication, professionalId: string) => {
+
+	return runAuthorizedTransaction(authentication, { name: "readWeeklySchedule" }, async (transaction, actor) => {
+
+		const { rows } = await transaction.query<ScheduleInterval | { weekday: null }>(
+			`SELECT schedule.weekday, schedule.start_minute AS "startMinute", schedule.end_minute AS "endMinute"
+			 FROM public.professionals AS professional
+			 LEFT JOIN public.professional_schedules AS schedule USING (clinic_id, professional_id)
+			 WHERE professional.clinic_id = $1::uuid AND professional.professional_id = $2::uuid
+			 ORDER BY schedule.weekday, schedule.start_minute, schedule.end_minute`,
+			[actor.clinicId, professionalId],
+		);
+		if(rows.length === 0) {
+			throw Object.assign(new Error("Professional not found"), { status: 404 });
+		}
+
+		return rows.filter((interval) => interval.weekday !== null);
+
+	});
+
+};
+
 export const replaceWeeklySchedule = (authentication: Authentication, professionalId: string, intervals: ScheduleInterval[]) => {
 
 	return runAuthorizedTransaction(authentication, { name: "replaceWeeklySchedule" }, async (transaction, actor) => {

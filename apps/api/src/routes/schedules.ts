@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import { replaceWeeklySchedule } from "../database/schedules.js";
+import { readWeeklySchedule, replaceWeeklySchedule } from "../database/schedules.js";
 import type { ScheduleInterval } from "../schedules/types.js";
 import { isUuid } from "../validation.js";
 
@@ -14,6 +14,18 @@ const isScheduleInterval = (value: unknown): value is ScheduleInterval => {
 	return !hasOtherFields && typeof weekday === "number" && Number.isInteger(weekday) && weekday >= 1 && weekday <= 7 &&
 		typeof startMinute === "number" && Number.isInteger(startMinute) && startMinute >= 0 &&
 		typeof endMinute === "number" && Number.isInteger(endMinute) && endMinute <= 1440 && startMinute < endMinute;
+
+};
+
+export const listSchedules: RequestHandler = async (request, response) => {
+
+	const { professionalId } = request.params;
+	if(!isUuid(professionalId) || Object.keys(request.query).length !== 0) {
+		throw Object.assign(new Error("Invalid weekly schedule request"), { status: 400 });
+	}
+
+	const intervals = await readWeeklySchedule(request.authentication!, professionalId);
+	response.set("Cache-Control", "no-store").type("json").end(JSON.stringify({ intervals }));
 
 };
 
