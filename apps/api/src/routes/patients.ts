@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import { createPatient, updatePatient } from "../database/patients.js";
+import { createPatient, readPatient, updatePatient } from "../database/patients.js";
 import { isCalendarDate, isEmail, isPhone, isRequiredText, isUuid } from "../validation.js";
 
 const patientFields = ["identification", "name", "dateOfBirth", "email", "phone"];
@@ -49,5 +49,18 @@ export const editPatient: RequestHandler = async (request, response) => {
 
 	const patient = await updatePatient(request.authentication!, patientId, { identification, name, dateOfBirth, email, phone });
 	response.status(200).json(patient);
+
+};
+
+export const getPatient: RequestHandler = async (request, response) => {
+
+	const { patientId } = request.params;
+	if(!isUuid(patientId)) {
+		throw Object.assign(new Error("Invalid patient identifier"), { status: 400 });
+	}
+
+	response.set("Cache-Control", "no-store");
+	const patient = await readPatient(request.authentication!, patientId);
+	response.status(200).type("json").end(JSON.stringify(patient));
 
 };

@@ -10,6 +10,9 @@ type PatientRegistration = Pick<Patient, "identification" | "name" | "email" | "
 type PatientChanges = Partial<PatientRegistration>;
 type StoredPatient = PatientRegistration & Pick<Patient, "patientId">;
 
+const patientColumns = `patient_id AS "patientId", identification, name,
+	date_of_birth::text AS "dateOfBirth", email, phone`;
+
 const throwPatientWriteError = (error: unknown): never => {
 
 	const duplicateIdentification = error instanceof TransactionFailure && error.sqlState === "23505" &&
@@ -50,7 +53,7 @@ export const updatePatient = (authentication: Authentication, patientId: string,
 
 		const lock = changes.identification === undefined ? "FOR NO KEY UPDATE" : "FOR UPDATE";
 		const { rows: [patient] } = await transaction.query<StoredPatient>(
-			`SELECT patient_id AS "patientId", identification, name, date_of_birth::text AS "dateOfBirth", email, phone
+			`SELECT ${patientColumns}
 			 FROM public.patients WHERE patient_id = $1::uuid AND clinic_id = $2::uuid ${lock}`,
 			[patientId, actor.clinicId],
 		);
@@ -99,5 +102,25 @@ export const updatePatient = (authentication: Authentication, patientId: string,
 		return { patientId: patient.patientId, updated: true };
 
 	}, pool).catch(throwPatientWriteError);
+
+};
+
+export const readPatient = (authentication: Authentication, patientId: string, pool?: Pool) => {
+
+	return runAuthorizedTransaction(authentication, { name: "readPatient" }, async (transaction, actor) => {
+
+		const { rows: [patient] } = await transaction.query<StoredPatient>(
+			`SELECT ${patientColumns} FROM public.patients WHERE patient_id = $1::uuid AND clinic_id = $2::uuid`,
+			[patientId, actor.clinicId],
+		);
+		if(!patient) {
+			throw Object.assign(new Error("Patient not found"), { status: 404 });
+		}
+		const recordReads = createAuditReadRecorder(transaction, actor);
+		await recordReads([{ resource: "patient_contact", patientId: patient.patientId }]);
+
+		return patient;
+
+	}, pool);
 
 };

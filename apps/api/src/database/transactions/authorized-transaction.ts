@@ -32,6 +32,11 @@ const operationPolicies = {
 		requiresActorProfessionalId: false,
 		isolation: "readCommitted",
 	},
+	readPatient: {
+		roles: [UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
 	readAppointmentCounts: {
 		roles: [UserRole.clinicAdministrator],
 		requiresActorProfessionalId: false,

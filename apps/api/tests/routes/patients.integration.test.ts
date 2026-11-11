@@ -46,6 +46,14 @@ const editPatient = (patientId: string, body: object, token = receptionToken) =>
 
 };
 
+const getPatient = (patientId: string, token = receptionToken, headers: Record<string, string> = {}) => {
+
+	return fetch(new URL(`/patients/${patientId}`, apiUrl), {
+		headers: { ...headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+	});
+
+};
+
 const createPatientFixture = async () => {
 
 	const { rows: [patient] } = await setup.query<Pick<Patient, "patientId">>(
@@ -57,6 +65,19 @@ const createPatientFixture = async () => {
 	return patient.patientId;
 
 };
+
+const rejectPatientAudit = (patientId: string, action: "read" | "write") => setup.query(`
+	CREATE FUNCTION public.reject_test_patient_audit_event() RETURNS trigger LANGUAGE plpgsql AS $$
+	BEGIN RAISE EXCEPTION 'Synthetic patient audit failure'; END; $$;
+	CREATE TRIGGER reject_test_patient_audit_event BEFORE INSERT ON public.audit_records
+	FOR EACH ROW WHEN (NEW.patient_id = '${patientId}'::uuid AND NEW.action = '${action}')
+	EXECUTE FUNCTION public.reject_test_patient_audit_event();
+`);
+
+const restorePatientAudit = () => setup.query(`
+	DROP TRIGGER reject_test_patient_audit_event ON public.audit_records;
+	DROP FUNCTION public.reject_test_patient_audit_event();
+`);
 
 beforeAll(async () => {
 
@@ -403,16 +424,10 @@ it("rejects the concurrent edit that would remove the final patient contact and 
 
 });
 
-it.each(["read", "write"])("rolls back a patient edit when the contact %s event fails", async (action) => {
+it.each(["read", "write"] as const)("rolls back a patient edit when the contact %s event fails", async (action) => {
 
 	const patientId = await createPatientFixture();
-	await setup.query(`
-		CREATE FUNCTION public.reject_test_patient_edit_audit() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN RAISE EXCEPTION 'Synthetic patient edit audit failure'; END; $$;
-		CREATE TRIGGER reject_test_patient_edit_audit BEFORE INSERT ON public.audit_records
-		FOR EACH ROW WHEN (NEW.patient_id = '${patientId}'::uuid AND NEW.action = '${action}')
-		EXECUTE FUNCTION public.reject_test_patient_edit_audit();
-	`);
+	await rejectPatientAudit(patientId, action);
 	try {
 
 		const response = await editPatient(patientId, { email: "changed@example.test" });
@@ -423,12 +438,77 @@ it.each(["read", "write"])("rolls back a patient edit when the contact %s event 
 		expect((await setup.query("SELECT 1 FROM public.audit_records WHERE patient_id = $1", [patientId])).rows).toEqual([]);
 
 	} finally {
+		await restorePatientAudit();
+	}
 
-		await setup.query(`
-			DROP TRIGGER reject_test_patient_edit_audit ON public.audit_records;
-			DROP FUNCTION public.reject_test_patient_edit_audit();
-		`);
+});
 
+it("returns the patient record without caching after committing a contact read for each permitted clinic role", async () => {
+
+	const patientId = await createPatientFixture();
+	const { rows: [patient] } = await setup.query("UPDATE public.patients SET email = NULL WHERE patient_id = $1 RETURNING identification", [patientId]);
+	const tokens = [administratorToken, receptionToken, professionalToken];
+	for(const token of tokens) {
+
+		const response = await getPatient(patientId, token, { "If-None-Match": "*", "If-Modified-Since": "Thu, 01 Jan 2099 00:00:00 GMT" });
+		expect(response.status).toBe(200);
+		expect(response.headers.get("cache-control")).toBe("no-store");
+		expect(response.headers.get("etag")).toBeNull();
+		expect(await response.json()).toEqual({ ...registration, patientId, identification: patient.identification, email: null });
+
+	}
+	const { rows } = await setup.query(
+		`SELECT actor.identity_id AS "identityId", event.clinic_id AS "clinicId", event.resource, event.action,
+		        event.appointment_id AS "appointmentId"
+		 FROM public.audit_records AS event JOIN public.users AS actor USING (clinic_id, user_id)
+		 WHERE event.patient_id = $1 ORDER BY actor.identity_id`,
+		[patientId],
+	);
+	const identities = tokens.map((token) => decodeJwt(token).sub!).sort();
+	expect(rows).toEqual(identities.map((identityId) => ({
+		identityId, clinicId: actor.clinicId, resource: "patient_contact", action: "read", appointmentId: null,
+	})));
+
+});
+
+it("requires valid authentication and a patient UUID to retrieve a patient record", async () => {
+
+	const patientId = await createPatientFixture();
+	for(const token of ["", "invalid-token"]) {
+		expect((await getPatient(patientId, token)).status).toBe(401);
+	}
+	expect((await getPatient(patientId, platformToken)).status).toBe(403);
+	expect((await getPatient("invalid")).status).toBe(400);
+	expect((await setup.query("SELECT 1 FROM public.audit_records WHERE patient_id = $1", [patientId])).rows).toEqual([]);
+
+});
+
+it("hides missing and foreign patient records and ignores clinic overrides without recording a contact read", async () => {
+
+	const patientId = await createPatientFixture();
+	const missing = await getPatient(randomUUID());
+	const foreign = await getPatient(`${patientId}?clinicId=${actor.clinicId}`, foreignAdministratorToken);
+	expect(missing.status).toBe(404);
+	expect(foreign.status).toBe(404);
+	expect(await missing.json()).toEqual({ error: "Not Found" });
+	expect(await foreign.json()).toEqual({ error: "Not Found" });
+	expect((await setup.query("SELECT 1 FROM public.audit_records WHERE patient_id = $1", [patientId])).rows).toEqual([]);
+
+});
+
+it("withholds the patient record when the contact read event fails", async () => {
+
+	const patientId = await createPatientFixture();
+	await rejectPatientAudit(patientId, "read");
+	try {
+
+		const response = await getPatient(patientId);
+		expect(response.status).toBe(500);
+		expect(await response.json()).toEqual({ error: "Internal Server Error" });
+		expect((await setup.query("SELECT 1 FROM public.audit_records WHERE patient_id = $1", [patientId])).rows).toEqual([]);
+
+	} finally {
+		await restorePatientAudit();
 	}
 
 });

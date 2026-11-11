@@ -179,6 +179,8 @@ Inactive associations remain stored for historical appointment references.
 - CHECK patients_name_check: name <> ''
 - CHECK patients_contact_check: At least one of email or phone must be provided, and neither may be an empty string when provided
 
+Application validation requires non-whitespace identification and name, a real `YYYY-MM-DD` birth date no later than today in the clinic's time zone, and at least one valid contact method. Validate each provided contact: email uses `name@domain.ext`; phone allows digits, spaces, hyphens, parentheses, and an optional leading `+`, with at least one digit. Preserve submitted text.
+
 ## appointments
 
 ### Fields

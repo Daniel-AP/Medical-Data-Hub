@@ -9,7 +9,7 @@ import { listAuditRecords } from "./routes/audit-records.js";
 import { getClinicalNote, registerClinicalNote } from "./routes/clinical-notes.js";
 import { createClinicRequestHandler } from "./routes/clinics.js";
 import { createLogoutRequestHandler } from "./routes/logout.js";
-import { editPatient, registerPatient } from "./routes/patients.js";
+import { editPatient, getPatient, registerPatient } from "./routes/patients.js";
 import { editProfessionalSpecialty, registerProfessional } from "./routes/professionals.js";
 import { editProfessionalServiceActivity, registerProfessionalService } from "./routes/professional-services.js";
 import { editService, registerService } from "./routes/services.js";
@@ -55,6 +55,7 @@ router.post("/services", authenticate, requireRoles(UserRole.clinicAdministrator
 router.patch("/services/:serviceId", authenticate, requireRoles(UserRole.clinicAdministrator), editService);
 router.post("/patients", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), registerPatient);
 router.patch("/patients/:patientId", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), editPatient);
+router.get("/patients/:patientId", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), getPatient);
 router.get("/patients/:patientId/appointments", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), listPatientAppointments); 
 router.get("/appointments/agenda", authenticate, requireRoles(UserRole.reception), listClinicAgenda);
 router.get("/appointments/counts", authenticate, requireRoles(UserRole.clinicAdministrator), getAppointmentCounts);

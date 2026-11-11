@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Client, Pool } from "pg";
 import type { QueryResult } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { createPatient, updatePatient } from "../../src/database/patients.js";
+import { createPatient, readPatient, updatePatient } from "../../src/database/patients.js";
 import type { Patient, User } from "../../src/generated/prisma/client.js";
 import { UserRole } from "../../src/generated/prisma/enums.js";
 
@@ -32,6 +32,18 @@ afterAll(async () => {
 	await pool.end();
 	await setup.end();
 });
+
+const createPatientFixture = async () => {
+
+	const { rows: [patient] } = await setup.query<Pick<Patient, "patientId" | "identification">>(
+		`INSERT INTO public.patients (clinic_id, identification, name, date_of_birth, email)
+		 VALUES ($1, $2, $3, $4::date, $5) RETURNING patient_id AS "patientId", identification`,
+		[actor.clinicId, randomUUID(), registration.name, registration.dateOfBirth, registration.email],
+	);
+
+	return patient;
+
+};
 
 it("withholds patient registration success until the patient and audit event commit", async () => {
 
@@ -123,11 +135,7 @@ it("withholds patient registration success without retry when commit confirmatio
 
 it.each(["FOR UPDATE", "FOR NO KEY UPDATE"])("takes %s before returning patient contact data", async (lock) => {
 
-	const { rows: [patient] } = await setup.query<Pick<Patient, "patientId" | "identification">>(
-		`INSERT INTO public.patients (clinic_id, identification, name, date_of_birth, email)
-		 VALUES ($1, $2, $3, $4::date, $5) RETURNING patient_id AS "patientId", identification`,
-		[actor.clinicId, randomUUID(), registration.name, registration.dateOfBirth, registration.email],
-	);
+	const patient = await createPatientFixture();
 	const connection = await pool.connect();
 	const query = connection.query.bind(connection);
 	const readReady = Promise.withResolvers<void>();
@@ -177,6 +185,86 @@ it.each(["FOR UPDATE", "FOR NO KEY UPDATE"])("takes %s before returning patient 
 		await operation;
 		interceptedQuery.mockRestore();
 
+	}
+
+});
+
+it("withholds patient contact data until its read event commits", async () => {
+
+	const patient = await createPatientFixture();
+	const connection = await pool.connect();
+	const query = connection.query.bind(connection);
+	const commitGate = Promise.withResolvers<void>();
+	const commitReady = Promise.withResolvers<void>();
+	const interceptedQuery = vi.spyOn(connection, "query").mockImplementation((...args: unknown[]) => {
+
+		if(args[0] === "COMMIT") {
+			commitReady.resolve();
+
+			return commitGate.promise.then(() => query("COMMIT"));
+		}
+
+		return Reflect.apply(query, connection, args);
+
+	});
+	connection.release();
+	let delivered = false;
+	const operation = readPatient({ identityId: actor.identityId, roles: [UserRole.reception] }, patient.patientId, pool).then((record) => {
+		delivered = true;
+
+		return record;
+	});
+
+	try {
+
+		await commitReady.promise;
+		expect(delivered).toBe(false);
+		const auditQuery = "SELECT action FROM public.audit_records WHERE patient_id = $1";
+		expect((await setup.query(auditQuery, [patient.patientId])).rows).toEqual([]);
+		commitGate.resolve();
+		expect(await operation).toEqual({ ...registration, ...patient });
+		expect((await setup.query(auditQuery, [patient.patientId])).rows).toEqual([{ action: "read" }]);
+
+	} finally {
+
+		commitGate.resolve();
+		await operation;
+		interceptedQuery.mockRestore();
+
+	}
+
+});
+
+it("withholds patient contact data without retry when read commit confirmation is lost", async () => {
+
+	const patient = await createPatientFixture();
+	const connection = await pool.connect();
+	const query = connection.query.bind(connection);
+	const lostConfirmation = new Error("Synthetic loss of patient read commit confirmation");
+	const interceptedQuery = vi.spyOn(connection, "query").mockImplementation((...args: unknown[]) => {
+
+		if(args[0] === "COMMIT") {
+			return query("COMMIT").then(() => {
+				throw lostConfirmation;
+			});
+		}
+
+		return Reflect.apply(query, connection, args);
+
+	});
+	connection.release();
+
+	try {
+
+		await expect(readPatient(
+			{ identityId: actor.identityId, roles: [UserRole.reception] }, patient.patientId, pool,
+		)).rejects.toMatchObject({ stage: "commit", kind: "indeterminateCommit", cause: lostConfirmation });
+		expect(interceptedQuery.mock.calls.filter(([statement]) => statement === "COMMIT")).toHaveLength(1);
+		const { rows } = await setup.query("SELECT action FROM public.audit_records WHERE patient_id = $1", [patient.patientId]);
+		expect(rows).toEqual([{ action: "read" }]);
+
+	} finally {
+		interceptedQuery.mockRestore();
 	}
 
 });
