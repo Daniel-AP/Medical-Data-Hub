@@ -22,6 +22,21 @@ const databaseProfiles = {
 };
 
 const operationPolicies = {
+	readClinicAgenda: {
+		roles: [UserRole.reception],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
+	readProfessionalAgenda: {
+		roles: [UserRole.reception],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
+	readOwnAgenda: {
+		roles: [UserRole.healthcareProfessional],
+		requiresActorProfessionalId: true,
+		isolation: "readCommitted",
+	},
 	readPatientAppointmentHistory: {
 		roles: [UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional],
 		requiresActorProfessionalId: false,
