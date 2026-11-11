@@ -1,16 +1,10 @@
 import type { Request, RequestHandler } from "express";
 import { readAppointmentCounts, readClinicAgenda, readPatientAppointmentHistory, readProfessionalAgenda } from "../database/appointment-queries.js";
-import { isUuid } from "../validation.js";
+import { isCalendarDate, isUuid } from "../validation.js";
 
 const parseDate = (date: unknown) => {
 
-	if(typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-		throw Object.assign(new Error("Invalid calendar date"), { status: 400 });
-	}
-
-	const parsed = new Date(`${date}T00:00:00Z`);
-	const validDate = !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date && !date.startsWith("0000");
-	if(!validDate) {
+	if(!isCalendarDate(date)) {
 		throw Object.assign(new Error("Invalid calendar date"), { status: 400 });
 	}
 

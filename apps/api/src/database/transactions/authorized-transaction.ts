@@ -22,6 +22,11 @@ const databaseProfiles = {
 };
 
 const operationPolicies = {
+	createPatient: {
+		roles: [UserRole.clinicAdministrator, UserRole.reception],
+		requiresActorProfessionalId: false,
+		isolation: "readCommitted",
+	},
 	readAppointmentCounts: {
 		roles: [UserRole.clinicAdministrator],
 		requiresActorProfessionalId: false,
