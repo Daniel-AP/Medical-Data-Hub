@@ -208,7 +208,7 @@ const resolveRescheduleReferences = async (
 		[actorUserId, appointmentId],
 	);
 	if(!originalAppointment) {
-		throw forbidden();
+		throw Object.assign(new Error("Appointment not found"), { status: 404 });
 	}
 
 	const {
@@ -218,7 +218,7 @@ const resolveRescheduleReferences = async (
 		[actorUserId, destinationProfessionalId],
 	);
 	if(!destinationUser) {
-		throw forbidden();
+		throw Object.assign(new Error("Professional not found"), { status: 404 });
 	}
 
 	return { originalAppointment, destinationUserId: destinationUser.userId };

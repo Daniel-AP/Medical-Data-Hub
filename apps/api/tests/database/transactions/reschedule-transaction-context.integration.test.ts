@@ -157,7 +157,7 @@ it.each(["original appointment", "destination professional"])(
 				callback,
 				pool,
 			),
-		).rejects.toMatchObject({ status: 403 });
+		).rejects.toMatchObject({ status: 404 });
 		expect(callback).not.toHaveBeenCalled();
 
 	},

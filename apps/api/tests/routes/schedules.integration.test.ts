@@ -444,19 +444,35 @@ it("allows adjacent reservations and overlapping blocks while ignoring final app
 
 });
 
-it.each(["weekly schedule", "block"])("rechecks %s conflicts after an API booking commits", async (resource) => {
+it.each([
+	{ resource: "weekly schedule", operation: "booking" }, { resource: "block", operation: "booking" },
+	{ resource: "weekly schedule", operation: "rescheduling" }, { resource: "block", operation: "rescheduling" },
+])("rechecks $resource conflicts after an API $operation commits", async ({ resource, operation }) => {
 
 	await createFullWeek();
 	const gate = new Client({ connectionString: setupUrl });
 	await gate.connect();
+	let appointmentId: string | undefined;
+	if(operation === "rescheduling") {
+
+		const response = await fetch(new URL("/appointments", apiUrl), {
+			method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${receptionToken}` },
+			body: JSON.stringify({ patientId: clinic.patientId, professionalId, serviceId: clinic.serviceId, startAt: new Date(Date.parse("2035-01-08T14:00Z")-clinic.durationMinutes*60_000).toISOString() }),
+		});
+		expect(response.status).toBe(201);
+		appointmentId = (await response.json()).appointmentId;
+
+	}
 	const version = await readVersion();
 	try {
 
 		await gate.query("BEGIN");
 		await gate.query("SELECT 1 FROM public.clinic_availability_versions WHERE clinic_id = $1 FOR NO KEY UPDATE", [clinic.clinicId]);
-		const booking = fetch(new URL("/appointments", apiUrl), {
+		const path = appointmentId ? `/appointments/${appointmentId}/reschedule` : "/appointments";
+		const body = { professionalId, startAt: "2035-01-08T14:00Z", ...(appointmentId ? {} : { patientId: clinic.patientId, serviceId: clinic.serviceId }) };
+		const reservation = fetch(new URL(path, apiUrl), {
 			method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${receptionToken}` },
-			body: JSON.stringify({ patientId: clinic.patientId, professionalId, serviceId: clinic.serviceId, startAt: "2035-01-08T14:00Z" }),
+			body: JSON.stringify(body),
 		});
 		await waitForWriters(1);
 		const change = resource === "block"
@@ -464,7 +480,7 @@ it.each(["weekly schedule", "block"])("rechecks %s conflicts after an API bookin
 			: replaceWeek({ intervals: [] });
 		await waitForWriters(2);
 		await gate.query("COMMIT");
-		expect((await booking).status).toBe(201);
+		expect((await reservation).status).toBe(201);
 		expect((await change).status).toBe(409);
 		expect(await readWeek()).toHaveLength(7);
 		expect(await readBlocks()).toEqual([]);

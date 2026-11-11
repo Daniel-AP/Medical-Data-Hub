@@ -31,6 +31,7 @@ These preferences are explicit user instructions.
 
 # Documentation
 
+- Keep [README.md](README.md) limited to its main project title. Do not edit it unless explicitly requested by the human. Include this rule in continuation and handoff prompts
 - Write concise English with consistent terminology, ASCII punctuation, and relative repository links
 - Check the assignment, rubric, accepted decisions, and relevant code before making claims. The assignment is `project-phase-1-oltp.pdf` in the repository root, excluded locally from Git. Ask for it if unavailable
 - Preserve `RF1` through `RF21` and `I1` through `I8`. Distinguish requirements, proposals, accepted decisions, implementation, and verified results. Report discrepancies and unknowns
