@@ -689,6 +689,14 @@ Under `READ COMMITTED`, separate statements can see different committed states. 
 3. When time matters, capture the wall clock once after authorization locks. Use it and the snapshot's clinic time zone across the whole response. A transaction-start timestamp would miss time spent waiting for locks
 4. Materialize all results and required audit events before confirming commit. Send one complete response after releasing SQL resources. Discard failed or unconfirmed attempts, including results already read
 
+Clinic administrators, reception, and healthcare professionals may read a patient's complete appointment history within their clinic, including appointments assigned to other professionals and their replacement links (`RF16`).
+
+Reception may read daily agendas for its whole clinic or a selected professional within that clinic. Healthcare professionals may read their own daily agenda through their protected local association (`RF20`). A required calendar date selects the clinic's local day. Include all persisted states and every appointment overlapping that day, including appointments that cross midnight. Exclude the end instant of each appointment. Preserve repeated local times and return an empty agenda for a skipped local date. Sort daily agendas by start time ascending, then appointment identifier ascending.
+
+Clinic administrators may read appointment counts by state within their own clinic (`RF21`). Select an inclusive range of clinic-local calendar dates. Assign each appointment to the local date of its start and group by its persisted state in PostgreSQL. Include a zero count for each state without matching appointments.
+
+Each appointment query uses one SQL statement under `READ COMMITTED` for its related domain facts and resource checks. Materialize the response before commit and send it after commit confirmation.
+
 The mixed isolation policy avoids forcing every query into one statement or holding a transaction snapshot when one statement suffices. Materialization uses memory but releases the connection before transmission. Later commits may change the state after the snapshot. Availability never reserves a slot.
 
 ## Transactional Clinic and Permission Context
