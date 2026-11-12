@@ -405,9 +405,12 @@ it("reuses cached units, fills missing dates and replaces invalid cache data", a
 
 		await gate.query("BEGIN");
 		await gate.query("LOCK public.professional_schedules IN ACCESS EXCLUSIVE MODE");
-		const hit = await getAvailability(path, serviceQuery, receptionToken);
-		expect(hit.status).toBe(200);
-		expect(await hit.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts));
+		const professionalHit = await getAvailability(professionalPath(firstProfessionalId), professionalQuery, receptionToken);
+		expect(professionalHit.status).toBe(200);
+		expect(await professionalHit.json()).toEqual({ professionalId: firstProfessionalId, serviceId, date: monday, starts: firstStarts });
+		const serviceHit = await getAvailability(path, serviceQuery, receptionToken);
+		expect(serviceHit.status).toBe(200);
+		expect(await serviceHit.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts));
 
 		await gate.query("LOCK public.clinic_availability_versions IN ACCESS EXCLUSIVE MODE");
 		expect((await getAvailability(path, serviceQuery, receptionToken)).status).toBe(503);
