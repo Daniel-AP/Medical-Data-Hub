@@ -1,19 +1,23 @@
 import { randomUUID } from "node:crypto";
 import { decodeJwt } from "jose";
 import { Pool } from "pg";
+import { createClient } from "redis";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
 const apiUrl = process.env.AVAILABILITY_TEST_API_URL;
 const setupUrl = process.env.AVAILABILITY_TEST_DATABASE_SETUP_URL;
+const redisUrl = process.env.AVAILABILITY_TEST_REDIS_URL;
 const administratorToken = process.env.AVAILABILITY_TEST_ADMIN_TOKEN;
 const receptionToken = process.env.AVAILABILITY_TEST_RECEPTION_TOKEN;
 const professionalToken = process.env.AVAILABILITY_TEST_PROFESSIONAL_TOKEN;
 const platformToken = process.env.AVAILABILITY_TEST_PLATFORM_TOKEN;
-if(!apiUrl || !setupUrl || !administratorToken || !receptionToken || !professionalToken || !platformToken) {
-	throw new Error("Configure the availability test API, disposable database setup URL, and Keycloak tokens");
+if(!apiUrl || !setupUrl || !redisUrl || !administratorToken || !receptionToken || !professionalToken || !platformToken) {
+	throw new Error("Configure the availability test API, disposable PostgreSQL and Redis URLs, and Keycloak tokens");
 }
 
 const setup = new Pool({ connectionString: setupUrl });
+const cache = createClient({ url: redisUrl });
+cache.on("error", () => undefined);
 const [firstProfessionalId, secondProfessionalId] = [randomUUID(), randomUUID()].sort();
 const specialtyId = randomUUID();
 const otherSpecialtyId = randomUUID();
@@ -86,8 +90,19 @@ const expectedRange = (firstMonday: string[], secondTuesday: string[]) => ({
 	],
 });
 
+const readCacheKey = async (professionalId: string, localDate: string) => {
+
+	const { rows: [{ version }] } = await setup.query<{ version: string }>(
+		"SELECT version::text AS version FROM public.clinic_availability_versions WHERE clinic_id = $1", [actor.clinicId],
+	);
+
+	return `availability:${actor.clinicId}:${professionalId}:${serviceId}:${localDate}:${version}`;
+
+};
+
 beforeAll(async () => {
 
+	await cache.connect();
 	const { rows } = await setup.query<typeof actor>(
 		`SELECT account.clinic_id AS "clinicId", account.user_id AS "userId", clinic.time_zone AS "timeZone"
 		 FROM public.users AS account JOIN public.clinics AS clinic USING (clinic_id) WHERE identity_id = $1`,
@@ -154,8 +169,12 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+
 	await setup.query("DELETE FROM public.appointments WHERE patient_id = $1", [patientId]);
 	await setup.query("DELETE FROM public.professional_blocks WHERE professional_id = ANY($1::uuid[])", [professionalIds]);
+	await setup.query("DELETE FROM public.professional_services WHERE service_id = $1", [emptyServiceId]);
+	await setup.query("UPDATE public.clinic_availability_versions SET version = version+1 WHERE clinic_id = $1", [actor.clinicId]);
+
 });
 
 afterAll(async () => {
@@ -171,7 +190,12 @@ afterAll(async () => {
 		await setup.query("DELETE FROM public.patients WHERE patient_id = $1", [patientId]);
 
 	} finally {
+
+		if(cache.isOpen) {
+			cache.destroy();
+		}
 		await setup.end();
+
 	}
 
 });
@@ -295,12 +319,15 @@ it("subtracts cross-date blocks and reservations for another service", async () 
 
 });
 
-it("keeps availability coherent across dates and professionals during a concurrent reschedule", async () => {
+it("revalidates cached availability after rescheduling and cancellation", async () => {
 
 	const path = servicePath(serviceId);
 	const available = await getAvailability(path, serviceQuery, receptionToken);
 	expect(available.status).toBe(200);
 	expect(await available.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts));
+	const oldKey = await readCacheKey(firstProfessionalId, monday);
+	const oldValue = await cache.get(oldKey);
+	expect(oldValue).not.toBeNull();
 
 	const booked = await post("/appointments", administratorToken, {
 		professionalId: firstProfessionalId, serviceId, patientId, startAt: firstStarts[2],
@@ -314,6 +341,7 @@ it("keeps availability coherent across dates and professionals during a concurre
 
 	const gate = await setup.connect();
 	let reading: Promise<Response> | undefined;
+	let replacementId: string;
 	try {
 
 		await gate.query("BEGIN");
@@ -333,6 +361,7 @@ it("keeps availability coherent across dates and professionals during a concurre
 			professionalId: secondProfessionalId, startAt: secondTuesdayStarts[0],
 		});
 		expect(moved.status).toBe(201);
+		replacementId = (await moved.json()).appointmentId;
 
 	} finally {
 		await gate.query("ROLLBACK");
@@ -341,10 +370,139 @@ it("keeps availability coherent across dates and professionals during a concurre
 	}
 	const snapshot = await reading;
 	expect(snapshot.status).toBe(200);
-	expect(await snapshot.json()).toEqual(before);
+	expect(await snapshot.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts.slice(1)));
 
-	const latest = await getAvailability(path, serviceQuery, receptionToken);
-	expect(latest.status).toBe(200);
-	expect(await latest.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts.slice(1)));
+	expect((await post("/appointments/"+replacementId+"/cancel", receptionToken, { cancellationReason: "Synthetic cache test" })).status).toBe(200);
+	const canceled = await getAvailability(path, serviceQuery, receptionToken);
+	expect(canceled.status).toBe(200);
+	expect(await canceled.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts));
+	expect(await cache.get(oldKey)).toBe(oldValue);
+
+});
+
+it("reuses cached units, fills missing dates and replaces invalid cache data", async () => {
+
+	await setup.query("UPDATE public.clinic_availability_versions SET version = $2 WHERE clinic_id = $1", [actor.clinicId, "9007199254740993"]);
+	const path = servicePath(serviceId);
+	expect((await getAvailability(path, serviceQuery, receptionToken)).status).toBe(200);
+	const key = await readCacheKey(firstProfessionalId, monday);
+	const original = await cache.get(key);
+	expect(original).not.toBeNull();
+	const unit = JSON.parse(original!);
+	const cachedValue = JSON.stringify({ ...unit, starts: [...firstStarts].reverse().concat(firstStarts[0]), extra: "ignored" });
+	await cache.set(key, cachedValue, { expiration: { type: "EX", value: 30 } });
+
+	const gate = await setup.connect();
+	try {
+
+		await gate.query("BEGIN");
+		await gate.query("LOCK public.professional_schedules IN ACCESS EXCLUSIVE MODE");
+		const hit = await getAvailability(path, serviceQuery, receptionToken);
+		expect(hit.status).toBe(200);
+		expect(await hit.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts));
+
+		await gate.query("LOCK public.clinic_availability_versions IN ACCESS EXCLUSIVE MODE");
+		expect((await getAvailability(path, serviceQuery, receptionToken)).status).toBe(503);
+
+	} finally {
+		await gate.query("ROLLBACK");
+		gate.release();
+	}
+
+	const missingKey = await readCacheKey(secondProfessionalId, tuesday);
+	await cache.del(missingKey);
+	const mixed = await getAvailability(path, serviceQuery, receptionToken);
+	expect(mixed.status).toBe(200);
+	expect(await mixed.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts));
+	expect(await cache.get(key)).toBe(cachedValue);
+	expect(await cache.ttl(key)).toBeLessThanOrEqual(30);
+	expect(await cache.ttl(missingKey)).toBeGreaterThan(290);
+
+	for(const value of [
+		"{",
+		JSON.stringify({ ...unit, version: "9007199254740992", starts: [] }),
+		JSON.stringify({ ...unit, starts: ["invalid"] }),
+		JSON.stringify({ ...unit, starts: [], extra: "\u00e9".repeat(33_000) }),
+	]) {
+
+		await cache.set(key, value, { expiration: { type: "EX", value: 30 } });
+		const response = await getAvailability(path, serviceQuery, receptionToken);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts));
+
+	}
+
+});
+
+it("includes newly eligible professionals when preparation found no candidates", async () => {
+
+	const gate = await setup.connect();
+	let reading: Promise<Response> | undefined;
+	try {
+
+		await gate.query("BEGIN");
+		const { rows: [{ pid }] } = await gate.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+		await gate.query("SELECT 1 FROM public.users WHERE user_id = $1 FOR NO KEY UPDATE", [actor.userId]);
+		reading = getAvailability(servicePath(emptyServiceId), "from="+monday+"&to="+monday, receptionToken);
+		await vi.waitFor(async () => {
+
+			const { rows } = await setup.query(
+				"SELECT 1 FROM pg_stat_activity WHERE $1::integer = ANY(pg_blocking_pids(pid)) AND query LIKE '%lock_user_for_share%'", [pid],
+			);
+			expect(rows).toHaveLength(1);
+
+		}, { interval: 10, timeout: 800 });
+		await gate.query(
+			"INSERT INTO public.professional_services (clinic_id, professional_id, service_id) VALUES ($1, $2, $3)",
+			[actor.clinicId, firstProfessionalId, emptyServiceId],
+		);
+		await gate.query("UPDATE public.clinic_availability_versions SET version = version+1 WHERE clinic_id = $1", [actor.clinicId]);
+		await gate.query("COMMIT");
+
+	} finally {
+		await gate.query("ROLLBACK");
+		gate.release();
+		await reading;
+	}
+	const response = await reading;
+	expect(response.status).toBe(200);
+	expect(await response.json()).toEqual({
+		serviceId: emptyServiceId,
+		dates: [{ date: monday, professionals: [{ professionalId: firstProfessionalId, starts: firstStarts }] }],
+	});
+
+});
+
+it("returns PostgreSQL availability during Redis timeouts and separates late publications by version", async () => {
+
+	const path = servicePath(serviceId);
+	const oldKey = await readCacheKey(firstProfessionalId, monday);
+	let newKey: string;
+	await cache.clientPause(60_000, "WRITE");
+	try {
+
+		const before = await getAvailability(path, serviceQuery, receptionToken);
+		expect(before.status).toBe(200);
+		expect(await before.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts));
+		expect(await cache.get(oldKey)).toBeNull();
+
+		const booked = await post("/appointments", receptionToken, {
+			professionalId: firstProfessionalId, serviceId, patientId, startAt: firstStarts[2],
+		});
+		expect(booked.status).toBe(201);
+		newKey = await readCacheKey(firstProfessionalId, monday);
+		const reserved = await getAvailability(path, serviceQuery, receptionToken);
+		expect(reserved.status).toBe(200);
+		expect(await reserved.json()).toEqual(expectedRange([firstStarts[0], firstStarts[1], firstStarts[4]], secondTuesdayStarts));
+
+	} finally {
+		await cache.clientUnpause();
+	}
+
+	await vi.waitFor(async () => {
+		expect(await cache.exists([oldKey, newKey])).toBe(2);
+	});
+	expect(JSON.parse((await cache.get(oldKey))!).starts).toEqual(firstStarts);
+	expect(JSON.parse((await cache.get(newKey))!).starts).toEqual([firstStarts[0], firstStarts[1], firstStarts[4]]);
 
 });

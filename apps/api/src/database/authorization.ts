@@ -172,6 +172,11 @@ const operationPolicies = {
 		requiresActorProfessionalId: false,
 		isolation: "readCommitted",
 	},
+	prepareAvailability: {
+		roles: [UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional],
+		requiresActorProfessionalId: false,
+		isolation: "repeatableRead",
+	},
 	readDefinitiveAvailability: {
 		roles: [UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional],
 		requiresActorProfessionalId: false,

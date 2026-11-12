@@ -1,10 +1,6 @@
-import type { Clinic, Professional, Service } from "../generated/prisma/client.js";
 import { createLocalTimeReader } from "../database/schedule-coverage.js";
 import { redis, runRedisBatch } from "./redis.js";
-
-type AvailabilityScope = Pick<Clinic, "clinicId" | "timeZone"> & Pick<Professional, "professionalId"> &
-	Pick<Service, "serviceId" | "durationMinutes"> & { localDate: string; version: string };
-type AvailabilityUnit = AvailabilityScope & { starts: string[] };
+import type { AvailabilityScope, AvailabilityUnit } from "./types.js";
 
 const maxUnitBytes = 64*1024;
 const unitTtlSeconds = 300;

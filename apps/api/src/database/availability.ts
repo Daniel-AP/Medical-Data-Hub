@@ -1,3 +1,5 @@
+import { getAvailabilityKey, parseAvailabilityUnit, publishAvailabilityCache, readAvailabilityCache } from "../clients/availability-cache.js";
+import type { AvailabilityUnit } from "../clients/types.js";
 import type { Clinic, Professional, Service } from "../generated/prisma/client.js";
 import type { Authentication } from "../middleware/types.js";
 import { runAuthorizedTransaction } from "./authorization.js";
@@ -12,7 +14,7 @@ type ProfessionalEligibility = Pick<Professional, "professionalId"> & { eligible
 type ProfessionalScheduleInterval = Pick<Professional, "professionalId"> & ScheduleInterval;
 type ProfessionalOccupation = Pick<Professional, "professionalId"> & { startAt: Date; endAt: Date };
 
-const readEligibleProfessionals = async (
+const readAvailabilityProfessionals = async (
 	transaction: TransactionClient, clinicId: string, { serviceId, specialtyId }: AvailabilityMetadata, professionalId?: string,
 ) => {
 
@@ -32,22 +34,12 @@ const readEligibleProfessionals = async (
 		 WHERE $4::uuid IS NOT NULL OR eligible ORDER BY professional_id`,
 		[clinicId, serviceId, specialtyId, professionalId ?? null],
 	);
-	if(professionalId !== undefined) {
 
-		if(!rows[0]) {
-			throw Object.assign(new Error("Professional not found"), { status: 404 });
-		}
-		if(!rows[0].eligible) {
-			throw Object.assign(new Error("Professional is not eligible for service"), { status: 409 });
-		}
-
-	}
-
-	return rows.map((row) => row.professionalId);
+	return rows;
 
 };
 
-const readAvailabilitySnapshot = async (transaction: TransactionClient, clinicId: string, query: AvailabilityQuery, now: Date) => {
+const readAvailabilityScope = async (transaction: TransactionClient, clinicId: string, query: AvailabilityQuery) => {
 
 	const { rows: [metadata] } = await transaction.query<AvailabilityMetadata>(
 		`SELECT service.service_id AS "serviceId", service.specialty_id AS "specialtyId",
@@ -66,20 +58,65 @@ const readAvailabilitySnapshot = async (transaction: TransactionClient, clinicId
 		throw new Error("Missing clinic availability version");
 	}
 
-	const timeReference = getAvailabilityTimeReference(timeZone, now);
 	const from = "date" in query ? query.date : query.from;
 	const to = "date" in query ? query.date : query.to;
+	const professionalId = "professionalId" in query ? query.professionalId : undefined;
+	const professionals = await readAvailabilityProfessionals(transaction, clinicId, metadata, professionalId);
+	const calendar = prepareAvailabilityCalendar(from, to, timeZone);
+
+	return { scope: { clinicId, serviceId, timeZone, durationMinutes, version }, calendar, professionals };
+
+};
+
+const readAvailabilitySnapshot = async (
+	transaction: TransactionClient, clinicId: string, query: AvailabilityQuery, now: Date, cached: Map<string, string | null>,
+) => {
+
+	const { scope, calendar, professionals: eligibility } = await readAvailabilityScope(transaction, clinicId, query);
+	const { timeZone, durationMinutes } = scope;
+	const timeReference = getAvailabilityTimeReference(timeZone, now);
+	const from = "date" in query ? query.date : query.from;
 	if(from < timeReference.today) {
 		throw Object.assign(new Error("Availability date precedes today in the clinic"), { status: 400 });
 	}
+	if("professionalId" in query) {
 
-	const professionalId = "professionalId" in query ? query.professionalId : undefined;
-	const professionalIds = await readEligibleProfessionals(transaction, clinicId, metadata, professionalId);
-	const calendar = prepareAvailabilityCalendar(from, to, timeZone);
-	const windows = getOccupationWindows(calendar, durationMinutes);
+		if(!eligibility[0]) {
+			throw Object.assign(new Error("Professional not found"), { status: 404 });
+		}
+		if(!eligibility[0].eligible) {
+			throw Object.assign(new Error("Professional is not eligible for service"), { status: 409 });
+		}
+
+	}
+
+	const professionals = eligibility.filter(({ eligible }) => eligible).map(({ professionalId }) => {
+
+		const units: AvailabilityUnit[] = [];
+		const missingDates = new Map<number, string>();
+		for(const [day, localDate] of calendar.dates) {
+
+			const unitScope = { ...scope, professionalId, localDate };
+			const unit = parseAvailabilityUnit(cached.get(getAvailabilityKey(unitScope)) ?? null, unitScope);
+			if(unit) {
+				units.push(unit);
+			} else {
+				missingDates.set(day, localDate);
+			}
+
+		}
+
+		return { professionalId, units, calendar: { ...calendar, dates: missingDates } };
+
+	});
+	const missing = professionals.filter((professional) => professional.calendar.dates.size > 0);
+	const professionalIds = missing.map(({ professionalId }) => professionalId);
+	const windows = missing.flatMap(({ professionalId, calendar }) => {
+		return getOccupationWindows(calendar, durationMinutes).map((window) => ({ professionalId, ...window }));
+	});
 	let schedules: ProfessionalScheduleInterval[] = [];
 	let occupation: ProfessionalOccupation[] = [];
-	if(professionalIds.length > 0 && windows.length > 0) {
+	if(windows.length > 0) {
 
 		({ rows: schedules } = await transaction.query<ProfessionalScheduleInterval>(
 			`SELECT professional_id AS "professionalId", weekday, start_minute AS "startMinute", end_minute AS "endMinute"
@@ -88,19 +125,24 @@ const readAvailabilitySnapshot = async (transaction: TransactionClient, clinicId
 		));
 		({ rows: occupation } = await transaction.query<ProfessionalOccupation>(
 			`WITH search_windows AS (
-			     SELECT to_timestamp(span.start/1000.0) AS start_at, to_timestamp(span."end"/1000.0) AS end_at
-			     FROM jsonb_to_recordset($3::jsonb) AS span(start bigint, "end" bigint)
+			     SELECT span."professionalId" AS professional_id,
+			            to_timestamp(span.start/1000.0) AS start_at, to_timestamp(span."end"/1000.0) AS end_at
+			     FROM jsonb_to_recordset($3::jsonb) AS span("professionalId" uuid, start bigint, "end" bigint)
 			 )
 			 SELECT appointment.professional_id AS "professionalId", appointment.start_at AS "startAt", appointment.end_at AS "endAt"
 			 FROM public.appointments AS appointment
 			 WHERE appointment.clinic_id = $1::uuid AND appointment.professional_id = ANY($2::uuid[])
 			   AND appointment.state = 'reserved'
-			   AND EXISTS (SELECT 1 FROM search_windows WHERE appointment.start_at < end_at AND appointment.end_at > start_at)
+			   AND EXISTS (SELECT 1 FROM search_windows AS search_window
+			               WHERE search_window.professional_id = appointment.professional_id
+			                 AND appointment.start_at < search_window.end_at AND appointment.end_at > search_window.start_at)
 			 UNION ALL
 			 SELECT block.professional_id AS "professionalId", block.start_at AS "startAt", block.end_at AS "endAt"
 			 FROM public.professional_blocks AS block
 			 WHERE block.clinic_id = $1::uuid AND block.professional_id = ANY($2::uuid[])
-			   AND EXISTS (SELECT 1 FROM search_windows WHERE block.start_at < end_at AND block.end_at > start_at)`,
+			   AND EXISTS (SELECT 1 FROM search_windows AS search_window
+			               WHERE search_window.professional_id = block.professional_id
+			                 AND block.start_at < search_window.end_at AND block.end_at > search_window.start_at)`,
 			[clinicId, professionalIds, JSON.stringify(windows)],
 		));
 
@@ -108,12 +150,22 @@ const readAvailabilitySnapshot = async (transaction: TransactionClient, clinicId
 
 	const weeksByProfessional = Map.groupBy(schedules, (schedule) => schedule.professionalId);
 	const occupationByProfessional = Map.groupBy(occupation, (interval) => interval.professionalId);
-	const professionals = professionalIds.map((id) => ({
-		professionalId: id,
-		units: calculateDailyAvailability(calendar, weeksByProfessional.get(id) ?? [], occupationByProfessional.get(id) ?? [], durationMinutes),
-	}));
+	const calculatedUnits: AvailabilityUnit[] = [];
+	for(const professional of missing) {
 
-	return { clinicId, serviceId, timeZone, durationMinutes, version, timeReference, dates: [...calendar.dates.values()], professionals };
+		const { professionalId, calendar } = professional;
+		const units = calculateDailyAvailability(
+			calendar, weeksByProfessional.get(professionalId) ?? [], occupationByProfessional.get(professionalId) ?? [], durationMinutes,
+		);
+		for(const unit of units) {
+			const calculated = { ...scope, professionalId, ...unit };
+			professional.units.push(calculated);
+			calculatedUnits.push(calculated);
+		}
+
+	}
+
+	return { ...scope, timeReference, dates: [...calendar.dates.values()], professionals, calculatedUnits };
 
 };
 
@@ -149,12 +201,25 @@ const buildAvailabilityResponse = (query: AvailabilityQuery, snapshot: Awaited<R
 
 };
 
-export const readAvailability = (authentication: Authentication, query: AvailabilityQuery) => {
+export const readAvailability = async (authentication: Authentication, query: AvailabilityQuery) => {
 
-	return runAuthorizedTransaction(authentication, { name: "readDefinitiveAvailability" }, async (transaction, actor) => {
-		const snapshot = await readAvailabilitySnapshot(transaction, actor.clinicId!, query, new Date());
+	const scopes = await runAuthorizedTransaction(authentication, { name: "prepareAvailability" }, async (transaction, actor) => {
 
-		return buildAvailabilityResponse(query, snapshot);
+		const { scope, calendar, professionals } = await readAvailabilityScope(transaction, actor.clinicId!, query);
+
+		return professionals.filter(({ eligible }) => eligible).flatMap(({ professionalId }) => {
+			return [...calendar.dates.values()].map((localDate) => ({ ...scope, professionalId, localDate }));
+		});
+
 	});
+	const cached = await readAvailabilityCache(scopes);
+	const { response, calculatedUnits } = await runAuthorizedTransaction(authentication, { name: "readDefinitiveAvailability" }, async (transaction, actor) => {
+		const snapshot = await readAvailabilitySnapshot(transaction, actor.clinicId!, query, new Date(), cached);
+
+		return { response: buildAvailabilityResponse(query, snapshot), calculatedUnits: snapshot.calculatedUnits };
+	});
+	await publishAvailabilityCache(calculatedUnits);
+
+	return response;
 
 };
