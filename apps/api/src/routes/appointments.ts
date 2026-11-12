@@ -1,6 +1,6 @@
 import type { RequestHandler } from "express";
-import { createAppointment, rescheduleAppointment } from "../database/appointments.js";
-import { isUuid, parseTimestamp } from "../validation.js";
+import { cancelAppointment, createAppointment, rescheduleAppointment } from "../database/appointments.js";
+import { isRequiredText, isUuid, parseTimestamp } from "../validation.js";
 
 export const registerAppointment: RequestHandler = async (request, response) => {
 
@@ -30,5 +30,20 @@ export const moveAppointment: RequestHandler = async (request, response) => {
 
 	const appointment = await rescheduleAppointment(request.authentication!, appointmentId, { professionalId: body.professionalId, startAt });
 	response.status(201).json(appointment);
+
+};
+
+export const cancelAppointmentHandler: RequestHandler = async (request, response) => {
+
+	const { appointmentId } = request.params;
+	const body = request.body;
+	const cancellationReason: unknown = body?.cancellationReason;
+	const hasOtherFields = Object.keys(body ?? {}).some((field) => field !== "cancellationReason");
+	if(!isUuid(appointmentId) || !isRequiredText(cancellationReason, 500) || hasOtherFields) {
+		throw Object.assign(new Error("Invalid appointment cancellation"), { status: 400 });
+	}
+
+	const appointment = await cancelAppointment(request.authentication!, appointmentId, cancellationReason);
+	response.status(200).json(appointment);
 
 };

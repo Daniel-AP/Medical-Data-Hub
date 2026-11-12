@@ -189,3 +189,31 @@ export const rescheduleAppointment = (authentication: Authentication, appointmen
 	});
 
 };
+
+export const cancelAppointment = (authentication: Authentication, appointmentId: string, cancellationReason: string) => {
+
+	return runAuthorizedTransaction(authentication, { name: "cancelAppointment" }, async (transaction, actor) => {
+
+		const { rows: [appointment] } = await transaction.query<Pick<Appointment, "appointmentId" | "state">>(
+			`SELECT appointment_id AS "appointmentId", state FROM public.appointments WHERE appointment_id = $1::uuid FOR NO KEY UPDATE`,
+			[appointmentId],
+		);
+		if(!appointment) {
+			throw Object.assign(new Error("Appointment not found"), { status: 404 });
+		}
+		if(appointment.state !== "reserved") {
+			throw Object.assign(new Error("Appointment is no longer reserved"), { status: 409 });
+		}
+
+		await transaction.query(
+			`UPDATE public.appointments SET state = 'cancelled', cancellation_reason = $2::text, cancelled_by_user_id = $3::uuid
+			 WHERE appointment_id = $1::uuid`,
+			[appointment.appointmentId, cancellationReason, actor.userId],
+		);
+		await incrementAvailabilityVersion(transaction, actor.clinicId!);
+
+		return { appointmentId: appointment.appointmentId };
+
+	});
+
+};
