@@ -15,7 +15,7 @@ if(!refreshTokenA || !refreshTokenB) {
 	throw new Error("Set KEYCLOAK_LOGOUT_REFRESH_TOKEN and KEYCLOAK_OTHER_REFRESH_TOKEN to two active sessions");
 }
 
-const issuer = "http://localhost:8080/realms/medical-data-hub";
+const issuer = process.env.KEYCLOAK_TEST_ISSUER ?? "http://localhost:8080/realms/medical-data-hub";
 const clientId = "medical-data-hub-postman";
 const configuration = { issuer, audience: "medical-data-hub-api", jwksUrl: `${issuer}/protocol/openid-connect/certs` };
 const verifyAccessToken = createAccessTokenVerifier(configuration);

@@ -8,6 +8,7 @@
 	"scripts": {
 		"lint": "eslint .",
 		"test": "vitest run",
+		"test:all": "node scripts/test-all.ts",
 		"test:auth": "vitest run --config vitest-auth.config.ts",
 		"test:watch": "vitest"
 	},

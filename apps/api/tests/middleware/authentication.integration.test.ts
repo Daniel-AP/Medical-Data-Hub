@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import type { RequestHandler } from "express";
 import { decodeJwt } from "jose";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { getTestComposeArguments } from "../../../../scripts/test-compose.js";
 import { app, router } from "../../src/app.js";
 import { createAccessTokenVerifier } from "../../src/clients/keycloak-tokens.js";
 import { UserRole } from "../../src/generated/prisma/enums.js";
@@ -17,11 +18,14 @@ if(!accessToken) {
 	throw new Error("Set KEYCLOAK_TEST_ACCESS_TOKEN to a fresh reception access token");
 }
 
-const issuer = "http://localhost:8080/realms/medical-data-hub";
+const issuer = process.env.KEYCLOAK_TEST_ISSUER ?? "http://localhost:8080/realms/medical-data-hub";
 const configuration = { issuer, audience: "medical-data-hub-api", jwksUrl: `${issuer}/protocol/openid-connect/certs` };
 const requestOptions = { headers: { Authorization: `Bearer ${accessToken}` } };
 const execFileAsync = promisify(execFile);
-const composeArguments = ["compose", "--project-name", "mdh-auth-tests", "--env-file", ".env.example"];
+const composeProject = process.env.KEYCLOAK_TEST_COMPOSE_PROJECT;
+const composeArguments = composeProject
+	? getTestComposeArguments(composeProject)
+	: ["compose", "--project-name", "mdh-auth-tests", "--env-file", ".env.example"];
 const sendNoContent: RequestHandler = (_request, response) => {
 	response.sendStatus(204);
 };
@@ -44,7 +48,7 @@ beforeAll(async () => {
 	router.get(
 		"/wrong-issuer-check",
 		createAuthentication(
-			createAccessTokenVerifier({ ...configuration, issuer: "http://localhost:8080/realms/another-realm" }),
+			createAccessTokenVerifier({ ...configuration, issuer: new URL("/realms/another-realm", issuer).href }),
 		),
 		sendNoContent,
 	);
@@ -159,7 +163,7 @@ it("uses cached keys during a Keycloak outage and recovers cold verification", a
 		expect(await coldResponse.json()).toEqual({ error: STATUS_CODES[503] });
 
 	} finally {
-		await execFileAsync("docker", [...composeArguments, "up", "--wait", "--wait-timeout", "180", "keycloak"], {
+		await execFileAsync("docker", [...composeArguments, "start", "--wait", "--wait-timeout", "180", "keycloak"], {
 			timeout: 190_000,
 		});
 	}
