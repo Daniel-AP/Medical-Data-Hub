@@ -941,15 +941,15 @@ A cached unit needs an unambiguous scope, version, and format. Incompatible or m
 
 ### Design Decisions
 
-Store one JSON string per clinic, professional, service, local date, and exact source version. Separate format namespaces from domain versions so incompatible producers cannot overwrite each other's units.
+Store one JSON string per clinic, professional, service, local date, and exact source version. Use one payload format without a separate format version; handle incompatible format changes when needed.
 
 ```text
-availability:fmt1:<clinicId>:<professionalId>:<serviceId>:<localDate>:<version>
+availability:<clinicId>:<professionalId>:<serviceId>:<localDate>:<version>
 ```
 
-Use lowercase hyphenated UUIDs, `YYYY-MM-DD` dates, and canonical nonnegative decimal version strings. The payload repeats `clinicId`, `professionalId`, `serviceId`, `localDate`, and `version` from the key. It also requires integer `formatVersion` equal to 1, `timeZone`, `durationMinutes`, and the complete unfiltered `starts` array. Store starts as sorted, distinct ISO UTC strings ending in `:00.000Z`. An empty array is a valid result. Cache no patient contact or clinical content.
+Use lowercase hyphenated UUIDs, `YYYY-MM-DD` dates, and canonical nonnegative decimal version strings. The payload repeats `clinicId`, `professionalId`, `serviceId`, `localDate`, and `version` from the key. It also requires `timeZone`, `durationMinutes`, and the complete unfiltered `starts` array. Store starts as sorted, distinct ISO UTC strings ending in `:00.000Z`. An empty array is a valid result. Cache no patient contact or clinical content.
 
-Use one schema for required fields and their types. Validate scope, time zone, duration, and the exact source version against the definitive snapshot. Each start must be a valid whole-minute UTC instant on the requested local date. Ignore additional fields and sort and deduplicate valid starts. Reject the entire unit on a field or start mismatch. Compare versions without lossy conversion.
+Validate required fields and their types in one place. Match scope, time zone, duration, and the exact source version against the definitive snapshot. Each start must be a valid whole-minute UTC instant on the requested local date. Ignore additional fields and sort and deduplicate valid starts. Reject the entire unit on a field or start mismatch. Compare versions without lossy conversion.
 
 Readable keys and explicit UTC starts favor inspection over hashes or compact ranges. The [cache protocol](#transaction-and-cache-coordination) controls when validated units may be used or published.
 
@@ -1025,7 +1025,7 @@ Warm up each mode three times per workload. Run ten measured pairs per workload 
 
 Measure with a monotonic clock from submission through complete response receipt. Record duration, status, cache use, and response equivalence. Report mean and median by workload and mode. Keep errors and mismatches in the results. Record revision, service versions, fixtures, indexes, parameters, and commands for reproduction. This is a small latency comparison. Load testing is outside its scope.
 
-Separately verify equivalent results, current-day filtering, missing units, mixed hits and misses, malformed JSON, unsupported formats, mismatched metadata, invalid starts, and oversized units. Check that extra fields are ignored and valid starts are sorted and deduplicated. Exercise Redis outages and lookup and publication timeouts. Also test version changes before definitive validation, late publication under older keys, and refusal to use candidates when PostgreSQL validation fails.
+Separately verify equivalent results, current-day filtering, missing units, mixed hits and misses, malformed JSON, invalid field types, mismatched metadata, invalid starts, and oversized units. Check that extra fields are ignored and valid starts are sorted and deduplicated. Exercise Redis outages and lookup and publication timeouts. Also test version changes before definitive validation, late publication under older keys, and refusal to use candidates when PostgreSQL validation fails.
 
 Prime the cache, commit a booking, cancellation, or rescheduling, and consult again before expiry. Check that occupation and released time match PostgreSQL, including both ends of a move (`I7`, `I8`).
 

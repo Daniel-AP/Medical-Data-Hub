@@ -1,0 +1,76 @@
+import type { Clinic, Professional, Service } from "../generated/prisma/client.js";
+import { createLocalTimeReader } from "../database/schedule-coverage.js";
+
+type AvailabilityScope = Pick<Clinic, "clinicId" | "timeZone"> & Pick<Professional, "professionalId"> &
+	Pick<Service, "serviceId" | "durationMinutes"> & { localDate: string; version: string };
+type AvailabilityUnit = AvailabilityScope & { starts: string[] };
+
+const maxUnitBytes = 64*1024;
+
+const isMinuteInstant = (value: unknown): value is string => {
+
+	if(typeof value !== "string" || !value.endsWith(":00.000Z")) {
+		return false;
+	}
+	const instant = Date.parse(value);
+
+	return Number.isFinite(instant) && new Date(instant).toISOString() === value;
+
+};
+
+export const getAvailabilityKey = ({ clinicId, professionalId, serviceId, localDate, version }: AvailabilityScope) => {
+	return `availability:${clinicId}:${professionalId}:${serviceId}:${localDate}:${version}`;
+};
+
+export const parseAvailabilityUnit = (value: string | null, scope: AvailabilityScope) => {
+
+	if(value === null || Buffer.byteLength(value, "utf8") > maxUnitBytes) {
+		return null;
+	}
+	let decoded: unknown;
+	try {
+		decoded = JSON.parse(value);
+	} catch {
+		return null;
+	}
+
+	if(decoded === null || typeof decoded !== "object") {
+		return null;
+	}
+	const unit = decoded as Record<string, unknown>;
+	const matchesScope = unit.clinicId === scope.clinicId &&
+		unit.professionalId === scope.professionalId &&
+		unit.serviceId === scope.serviceId &&
+		unit.localDate === scope.localDate &&
+		unit.version === scope.version &&
+		unit.timeZone === scope.timeZone &&
+		unit.durationMinutes === scope.durationMinutes;
+	if(!matchesScope || !Array.isArray(unit.starts)) {
+		return null;
+	}
+
+	const readLocalTime = createLocalTimeReader(scope.timeZone);
+	const requestedDay = Date.parse(scope.localDate);
+	const starts = new Set<string>();
+	for(const start of unit.starts) {
+
+		if(!isMinuteInstant(start)) {
+			return null;
+		}
+		const local = readLocalTime(Date.parse(start));
+		if(local.date.setUTCHours(0, 0, 0, 0) !== requestedDay) {
+			return null;
+		}
+		starts.add(start);
+
+	}
+
+	return { ...scope, starts: [...starts].sort((left, right) => Date.parse(left)-Date.parse(right)) };
+
+};
+
+export const serializeAvailabilityUnit = (unit: AvailabilityUnit) => {
+	const value = JSON.stringify(unit);
+
+	return Buffer.byteLength(value, "utf8") <= maxUnitBytes ? value : null;
+};
