@@ -850,6 +850,28 @@ Availability depends on service duration and professional eligibility. An invali
 - **Dates.** Require valid calendar dates, an ordered range, and a start date no earlier than today in the clinic. For today, keep starts strictly after the common time reference
 - **Meaning.** Inactive services remain consultable. Valid queries may return no starts. Failures surface as errors. Consultation neither evaluates patient conflicts nor grants a booking
 
+### HTTP Contract
+
+| Requirement | Method and path | Required query parameters | Successful response |
+| --- | --- | --- | --- |
+| RF7 | `GET /professionals/:professionalId/availability` | `serviceId`, `date` | `{ professionalId, serviceId, date, starts }` |
+| RF8 | `GET /services/:serviceId/availability` | `from`, `to` | `{ serviceId, dates: [{ date, professionals: [{ professionalId, starts }] }] }` |
+
+Identifiers are UUIDs. Dates use `YYYY-MM-DD` in the authorized clinic's time zone. Clinic administrators, reception, and healthcare professionals can query availability within their clinic. Both routes accept inactive services. Successful responses use `Cache-Control: no-store`.
+
+Each `starts` array contains ISO 8601 UTC instants aligned to whole minutes, in ascending instant order. RF7 returns an empty `starts` array when the eligible professional has no available starts. RF8 returns every date in the inclusive range in ascending order, with eligible professionals that have available starts ordered by identifier. A date without available starts has an empty `professionals` array.
+
+| Status | Condition |
+| --- | --- |
+| `200` | The query is valid, including an empty result. |
+| `400` | An identifier or date is malformed, a query parameter is missing, repeated, or unrecognized, the first date precedes today in the clinic, or the range is reversed or exceeds 31 dates. |
+| `401` | The access token is missing or invalid. |
+| `403` | Token roles or protected local authorization deny the operation. |
+| `404` | A required service or professional is missing or outside the authorized clinic. |
+| `409` | RF7 selects an in-clinic professional who is ineligible for the selected in-clinic service. |
+| `500` | An internal failure occurs. An unconfirmed commit carries `OPERATION_OUTCOME_UNKNOWN`. |
+| `503` | Authentication or the database is temporarily unavailable under the shared error classification. |
+
 ## Time Zones and Interval Boundaries
 
 ### Design Problem
@@ -882,6 +904,8 @@ Independent schedule checks can miss coverage supplied by adjacent intervals. Oc
 For example, a 30-minute service in a free interval from 09:00 to 10:00 has starts from 09:00 through 09:30, one minute apart.
 
 TypeScript keeps interval logic reusable and testable. Merging intervals avoids repeating checks for every start. SQL range calculations would transfer less input but put more logic in specialized queries. Compare performance before preferring either on speed.
+
+Run the calculation and shared schedule coverage unit tests with `npm test -- apps/api/tests/schedules`.
 
 ## Service Availability Across Date Ranges
 
