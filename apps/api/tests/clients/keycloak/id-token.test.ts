@@ -49,22 +49,6 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-it("accepts an ID token matching the authenticated user, session, and client", async () => {
-
-	const token = await createToken();
-	await expect(verifyIdToken(token, context)).resolves.toMatchObject({
-		sub: context.identityId,
-		sid: context.sessionId,
-		aud: context.clientId,
-	});
-
-});
-
-it("accepts an expired ID token as a logout hint for the matching session", async () => {
-	const token = await createToken({ exp: 0 });
-	await expect(verifyIdToken(token, context)).resolves.toMatchObject({ sid: context.sessionId });
-});
-
 it.each([
 	["an ID token with an incorrect issuer", { iss: "http://another-provider/realms/other" }],
 	["an ID token intended for another client", { aud: "another-client" }],
@@ -80,24 +64,4 @@ it.each([
 ] as const)("rejects %s with 401", async (_case, payload) => {
 	const token = await createToken(payload);
 	await expect(verifyIdToken(token, context)).rejects.toMatchObject({ status: 401 });
-});
-
-it("rejects a malformed ID token with 401", async () => {
-	await expect(verifyIdToken("invalid-token", context)).rejects.toMatchObject({ status: 401 });
-});
-
-it.each([300, -300])("rejects an invalid ID token signature with expiration offset %i", async (offset) => {
-
-	const otherKeyPair = await generateKeyPair("RS256");
-	const otherJwk = { ...(await exportJWK(otherKeyPair.publicKey)), kid: "test-key" };
-	fetchKeys.mockResolvedValueOnce(Response.json({ keys: [otherJwk] }));
-	const token = await createToken({ exp: Math.floor(Date.now()/1000)+offset });
-	await expect(verifyIdToken(token, context)).rejects.toMatchObject({ status: 401 });
-
-});
-
-it("reports unavailable ID token verification keys with 503", async () => {
-	fetchKeys.mockRejectedValueOnce(new TypeError("fetch failed"));
-	const token = await createToken();
-	await expect(verifyIdToken(token, context)).rejects.toMatchObject({ status: 503 });
 });

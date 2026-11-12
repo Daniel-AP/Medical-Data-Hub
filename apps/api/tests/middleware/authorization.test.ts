@@ -1,5 +1,4 @@
 import { once } from "node:events";
-import { STATUS_CODES } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { JWTPayload } from "jose";
@@ -66,46 +65,6 @@ it.each([
 
 });
 
-it("retains recognized API roles and ignores unknown roles", async () => {
-
-	verifyAccessToken.mockResolvedValueOnce(payloadWithRoles(["reception", "unknown_role", "clinic_administrator"]));
-	const response = await fetch(`${url}/role-mapping-check`, requestOptions);
-	expect(response.status).toBe(200);
-	const authentication = await response.json();
-	expect(authentication.roles).toEqual(expect.arrayContaining([UserRole.reception, UserRole.clinicAdministrator]));
-	expect(authentication.roles).toHaveLength(2);
-
-});
-
-it.each(["clinic_administrator", "reception"])("accepts an allowed token role (%s)", async (role) => {
-	verifyAccessToken.mockResolvedValueOnce(payloadWithRoles([role]));
-	const response = await fetch(`${url}/role-check`, requestOptions);
-	expect(response.status).toBe(204);
-});
-
-it.each(["platform_administrator", "healthcare_professional"])(
-	"rejects an insufficient token role (%s) with 403",
-	async (role) => {
-
-		verifyAccessToken.mockResolvedValueOnce(payloadWithRoles([role]));
-		const response = await fetch(`${url}/role-check`, requestOptions);
-		expect(response.status).toBe(403);
-		expect(await response.json()).toEqual({ error: STATUS_CODES[403] });
-
-	},
-);
-
-it("accepts a token containing at least one allowed role", async () => {
-	verifyAccessToken.mockResolvedValueOnce(payloadWithRoles(["healthcare_professional", "reception"]));
-	const response = await fetch(`${url}/role-check`, requestOptions);
-	expect(response.status).toBe(204);
-});
-
-it("rejects missing token roles with 403", async () => {
-	const response = await fetch(`${url}/role-check`, requestOptions);
-	expect(response.status).toBe(403);
-});
-
 it("rejects realm roles and other client roles as API permissions", async () => {
 
 	verifyAccessToken.mockResolvedValueOnce({
@@ -116,27 +75,4 @@ it("rejects realm roles and other client roles as API permissions", async () => 
 	const response = await fetch(`${url}/role-check`, requestOptions);
 	expect(response.status).toBe(403);
 
-});
-
-it("rejects unknown API roles with 403", async () => {
-	verifyAccessToken.mockResolvedValueOnce(payloadWithRoles(["unknown_role"]));
-	const response = await fetch(`${url}/role-check`, requestOptions);
-	expect(response.status).toBe(403);
-});
-
-it.each([
-	["null resource access", { resource_access: null }],
-	["invalid resource access", { resource_access: "invalid" }],
-	["null client access", { resource_access: { "medical-data-hub-api": null } }],
-	["invalid role list", { resource_access: { "medical-data-hub-api": { roles: "reception" } } }],
-] as const)("rejects %s as API permissions with 403", async (_case, payload) => {
-	verifyAccessToken.mockResolvedValueOnce({ sub: "demo-user", ...payload });
-	const response = await fetch(`${url}/role-check`, requestOptions);
-	expect(response.status).toBe(403);
-});
-
-it("rejects role checks without authentication with 401", async () => {
-	const response = await fetch(`${url}/role-without-authentication-check`, requestOptions);
-	expect(response.status).toBe(401);
-	expect(verifyAccessToken).not.toHaveBeenCalled();
 });

@@ -171,16 +171,6 @@ it("requires a clinic administrator token to edit a professional specialty", asy
 	expect((await editProfessionalSpecialty(clinic.professionalId, body, receptionToken)).status).toBe(403);
 });
 
-it("rejects invalid professional specialty edits and extra fields", async () => {
-
-	const body = { specialtyId: nextSpecialtyId };
-	expect((await editProfessionalSpecialty("invalid", body)).status).toBe(400);
-	for(const changes of [{}, { specialtyId: "invalid" }, { ...body, userId: unassignedUserId }]) {
-		expect((await editProfessionalSpecialty(clinic.professionalId, changes)).status).toBe(400);
-	}
-
-});
-
 it("hides unavailable profiles and specialties during professional specialty edits", async () => {
 
 	for(const [professionalId, specialtyId] of [

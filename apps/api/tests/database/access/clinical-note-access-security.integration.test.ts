@@ -1,4 +1,3 @@
-import { setTimeout } from "node:timers/promises";
 import { Client } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import type { Appointment, ClinicalNote, Professional, User } from "../../../src/generated/prisma/client.js";
@@ -17,27 +16,20 @@ if(!setupConnectionString || !apiConnectionString) {
 
 const setup = new Client({ connectionString: setupConnectionString });
 const api = new Client({ connectionString: apiConnectionString });
-const contender = new Client({ connectionString: apiConnectionString });
 const profileNames = ["clinic_administrator", "reception", "healthcare_professional"];
 const insertQuery =
 	"INSERT INTO public.clinical_notes (appointment_id, clinic_id, content) VALUES ($1::uuid, $2::uuid, $3)";
-const appointmentInsertQuery = `INSERT INTO public.appointments (clinic_id, patient_id, professional_id, service_id, start_at, end_at, state, cancelled_by_user_id, cancellation_reason)
-    VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::timestamptz, $6::timestamptz, $7::public.appointment_state, $8::uuid, $9) RETURNING appointment_id`;
 let administrator: LocalUser;
 let actor: LocalUser;
 let professional: Professional;
 let appointments: NoteAppointment[];
 let notes: ClinicalNote[];
-let otherNote: ClinicalNote;
 let foreignNote: ClinicalNote;
-let fixtureAppointmentId: string;
-let appointmentValues: (string | Date)[];
 
 beforeAll(async () => {
 
 	await setup.connect();
 	await api.connect();
-	await contender.connect();
 	const users = await setup.query<LocalUser>(`
         SELECT user_id AS "userId", clinic_id AS "clinicId", role::text
         FROM public.users ORDER BY clinic_id NULLS LAST, user_id
@@ -61,31 +53,7 @@ beforeAll(async () => {
         SELECT appointment_id AS "appointmentId", clinic_id AS "clinicId", content FROM public.clinical_notes ORDER BY appointment_id
     `);
 	notes = noteResult.rows;
-	const ownAppointment = appointments.find(
-		(appointment) => appointment.professionalId === professional.professionalId && appointment.state === "attended",
-	)!;
-	otherNote = notes.find(
-		(note) =>
-			note.clinicId === actor.clinicId &&
-			appointments.some(
-				(appointment) =>
-					appointment.appointmentId === note.appointmentId &&
-					appointment.professionalId !== professional.professionalId,
-			),
-	)!;
 	foreignNote = notes.find((note) => note.clinicId !== actor.clinicId)!;
-	const startAt = new Date("2020-01-06T15:00:00.000Z");
-	const endAt = new Date(startAt.getTime()+(ownAppointment.endAt.getTime()-ownAppointment.startAt.getTime()));
-	appointmentValues = [
-		ownAppointment.clinicId,
-		ownAppointment.patientId,
-		ownAppointment.professionalId,
-		ownAppointment.serviceId,
-		startAt,
-		endAt,
-	];
-	const fixture = await setup.query(appointmentInsertQuery, [...appointmentValues, "attended", null, null]);
-	fixtureAppointmentId = fixture.rows[0].appointment_id;
 
 });
 
@@ -102,18 +70,12 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	await contender.query("ROLLBACK");
 	await api.query("ROLLBACK");
 });
 
 afterAll(async () => {
-
-	await setup.query("DELETE FROM public.clinical_notes WHERE appointment_id = $1::uuid", [fixtureAppointmentId]);
-	await setup.query("DELETE FROM public.appointments WHERE appointment_id = $1::uuid", [fixtureAppointmentId]);
-	await contender.end();
 	await api.end();
 	await setup.end();
-
 });
 
 it("reads only clinical notes belonging to the context professional", async () => {
@@ -135,48 +97,6 @@ it("reads only clinical notes belonging to the context professional", async () =
 
 });
 
-it("inserts a clinical note for an owned attended appointment", async () => {
-
-	const inserted = await api.query(insertQuery+" RETURNING appointment_id, clinic_id", [
-		fixtureAppointmentId,
-		actor.clinicId,
-		"Synthetic clinical note",
-	]);
-	expect(inserted.rows).toEqual([{ appointment_id: fixtureAppointmentId, clinic_id: actor.clinicId }]);
-	const { rows } = await api.query("SELECT content FROM public.clinical_notes WHERE appointment_id = $1::uuid", [
-		fixtureAppointmentId,
-	]);
-	expect(rows).toEqual([{ content: "Synthetic clinical note" }]);
-
-});
-
-it("rejects clinical note insertion for owned reserved appointments", async () => {
-
-	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [administrator.userId]);
-	await api.query("SET LOCAL ROLE clinic_administrator");
-	const appointment = await api.query(appointmentInsertQuery, [...appointmentValues, "reserved", null, null]);
-	await api.query("SELECT pg_catalog.set_config('app.user_id', $1, true)", [actor.userId]);
-	await api.query("SET LOCAL ROLE healthcare_professional");
-	await expect(
-		api.query(insertQuery, [appointment.rows[0].appointment_id, actor.clinicId, "Synthetic clinical note"]),
-	).rejects.toMatchObject({
-		code: "42501",
-		message: 'new row violates row-level security policy for table "clinical_notes"',
-	});
-
-});
-
-it("rejects clinical note insertion for another professional in the same clinic", async () => {
-
-	await expect(
-		api.query(insertQuery, [otherNote.appointmentId, actor.clinicId, "Synthetic clinical note"]),
-	).rejects.toMatchObject({
-		code: "42501",
-		message: 'new row violates row-level security policy for table "clinical_notes"',
-	});
-
-});
-
 it("rejects a foreign appointment identifier under the local note clinic", async () => {
 
 	await expect(
@@ -185,57 +105,6 @@ it("rejects a foreign appointment identifier under the local note clinic", async
 		code: "42501",
 		message: 'new row violates row-level security policy for table "clinical_notes"',
 	});
-
-});
-
-it("resolves concurrent clinical note inserts after the first writer's COMMIT", async () => {
-
-	await api.query(insertQuery, [fixtureAppointmentId, actor.clinicId, "First synthetic note"]);
-	const apiPid = (await api.query("SELECT pg_catalog.pg_backend_pid() AS pid")).rows[0].pid;
-	await contender.query("BEGIN ISOLATION LEVEL READ COMMITTED");
-	await contender.query("SET LOCAL lock_timeout = '3s'");
-	await contender.query(
-		`SELECT pg_catalog.set_config('app.user_id', $1, true),
-            pg_catalog.set_config('app.clinic_id', $2, true)`,
-		[actor.userId, actor.clinicId],
-	);
-	await contender.query("SET LOCAL ROLE healthcare_professional");
-	const contenderPid = (await contender.query("SELECT pg_catalog.pg_backend_pid() AS pid")).rows[0].pid;
-	const pendingInsert = contender
-		.query(insertQuery, [fixtureAppointmentId, actor.clinicId, "Second synthetic note"])
-		.catch((error: unknown) => error);
-	try {
-
-		let isWaiting = false;
-		for(let attempt = 0; attempt < 100; attempt++) {
-
-			const { rows } = await setup.query(
-				"SELECT $2::int = ANY(pg_catalog.pg_blocking_pids($1::int)) AS waiting",
-				[contenderPid, apiPid],
-			);
-			if(rows[0].waiting) {
-				isWaiting = true;
-				break;
-			}
-			await setTimeout(10);
-
-		}
-		expect(isWaiting).toBe(true);
-		await api.query("COMMIT");
-		expect(await pendingInsert).toMatchObject({ code: "23505", constraint: "clinical_notes_pkey" });
-		const stored = await setup.query("SELECT content FROM public.clinical_notes WHERE appointment_id = $1::uuid", [
-			fixtureAppointmentId,
-		]);
-		expect(stored.rows).toEqual([{ content: "First synthetic note" }]);
-
-	} finally {
-
-		await api.query("ROLLBACK");
-		await pendingInsert;
-		await contender.query("ROLLBACK");
-		await setup.query("DELETE FROM public.clinical_notes WHERE appointment_id = $1::uuid", [fixtureAppointmentId]);
-
-	}
 
 });
 

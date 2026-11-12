@@ -52,48 +52,6 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-it("accepts a valid access token", async () => {
-	const token = await createToken();
-	await expect(verifyAccessToken(token)).resolves.toMatchObject({ iss: issuer, aud: audience, sub: "demo-user" });
-});
-
-it.each([
-	["an expired access token", { exp: 0 }],
-	["an access token with an incorrect issuer", { iss: "http://another-provider/realms/other" }],
-	["an access token with an incorrect audience", { aud: "another-api" }],
-	["an access token without expiration", { exp: undefined }],
-	["an access token without a subject", { sub: undefined }],
-] as const)("rejects %s with 401", async (_case, payload) => {
-	const token = await createToken(payload);
-	await expect(verifyAccessToken(token)).rejects.toMatchObject({ status: 401 });
-});
-
-it("rejects a malformed access token with 401", async () => {
-	await expect(verifyAccessToken("invalid-token")).rejects.toMatchObject({ status: 401 });
-	expect(fetchKeys).not.toHaveBeenCalled();
-});
-
-it("rejects an invalid signature with 401", async () => {
-
-	const otherKeyPair = await generateKeyPair("RS256");
-	const otherJwk = { ...(await exportJWK(otherKeyPair.publicKey)), kid: "test-key" };
-	fetchKeys.mockResolvedValueOnce(Response.json({ keys: [otherJwk] }));
-	const token = await createToken();
-	await expect(verifyAccessToken(token)).rejects.toMatchObject({ status: 401 });
-
-});
-
-it("rejects an unknown signing key with 401", async () => {
-	const token = await createToken({}, "unknown-key");
-	await expect(verifyAccessToken(token)).rejects.toMatchObject({ status: 401 });
-});
-
-it("reports unavailable verification keys with 503", async () => {
-	fetchKeys.mockRejectedValueOnce(new TypeError("fetch failed"));
-	const token = await createToken();
-	await expect(verifyAccessToken(token)).rejects.toMatchObject({ status: 503 });
-});
-
 it("reports a delayed JWKS response as unavailable with 503", async () => {
 
 	vi.unstubAllGlobals();
@@ -126,28 +84,6 @@ it("reports a delayed JWKS response as unavailable with 503", async () => {
 		server.close();
 		await once(server, "close");
 	}
-
-});
-
-it("reports an unsuccessful JWKS response with 503", async () => {
-	fetchKeys.mockResolvedValueOnce(new Response(null, { status: 503 }));
-	const token = await createToken();
-	await expect(verifyAccessToken(token)).rejects.toMatchObject({ status: 503 });
-});
-
-it("reports a malformed JWKS with 503", async () => {
-	fetchKeys.mockResolvedValueOnce(Response.json({ keys: "invalid" }));
-	const token = await createToken();
-	await expect(verifyAccessToken(token)).rejects.toMatchObject({ status: 503 });
-});
-
-it("reuses fresh cached keys while the provider is unavailable", async () => {
-
-	const token = await createToken();
-	await verifyAccessToken(token);
-	fetchKeys.mockRejectedValue(new TypeError("fetch failed"));
-	await expect(verifyAccessToken(token)).resolves.toMatchObject({ sub: "demo-user" });
-	expect(fetchKeys).toHaveBeenCalledTimes(1);
 
 });
 

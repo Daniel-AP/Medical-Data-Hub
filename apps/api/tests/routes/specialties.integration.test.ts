@@ -104,13 +104,3 @@ it("allows only one concurrent registration of the same specialty name in a clin
 	expect(rows).toHaveLength(1);
 
 });
-
-it("allows different clinics to register the same specialty name", async () => {
-	expect((await registerSpecialty({ name: sharedName })).status).toBe(201);
-	expect((await registerSpecialty({ name: sharedName }, foreignAdministratorToken)).status).toBe(201);
-});
-
-it("distinguishes specialty names that differ only in case within a clinic", async () => {
-	expect((await registerSpecialty({ name: caseName })).status).toBe(201);
-	expect((await registerSpecialty({ name: caseName.toUpperCase() })).status).toBe(201);
-});

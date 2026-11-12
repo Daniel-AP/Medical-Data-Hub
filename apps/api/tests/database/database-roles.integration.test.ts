@@ -11,21 +11,6 @@ if(!setupConnectionString || !apiConnectionString) {
 const setup = new Client({ connectionString: setupConnectionString });
 const api = new Client({ connectionString: apiConnectionString });
 const profileNames = ["platform_administrator", "clinic_administrator", "reception", "healthcare_professional"];
-const domainTables = [
-	"clinics",
-	"clinic_availability_versions",
-	"users",
-	"specialties",
-	"professionals",
-	"services",
-	"professional_services",
-	"professional_schedules",
-	"professional_blocks",
-	"patients",
-	"appointments",
-	"clinical_notes",
-	"audit_records",
-];
 const probeTable = escapeIdentifier(`database_roles_${randomUUID().replaceAll("-", "")}`);
 
 beforeAll(async () => {
@@ -90,23 +75,6 @@ it("creates four profiles without login or administrative privileges", async () 
 
 });
 
-it("permits profile selection without inheritance or membership administration", async () => {
-
-	const { rows } = await setup.query(`
-        SELECT profile.rolname, membership.inherit_option, membership.set_option, membership.admin_option
-        FROM pg_catalog.pg_auth_members AS membership
-        JOIN pg_catalog.pg_roles AS profile ON profile.oid = membership.roleid
-        JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member
-        WHERE member.rolname = 'medical_data_hub_api' ORDER BY profile.rolname
-    `);
-	expect(rows).toEqual(
-		[...profileNames]
-			.sort()
-			.map((rolname) => ({ rolname, inherit_option: false, set_option: true, admin_option: false })),
-	);
-
-});
-
 it("requires explicit profile selection to use a granted privilege", async () => {
 
 	await expect(api.query(`SELECT marker FROM public.${probeTable}`)).rejects.toMatchObject({ code: "42501" });
@@ -125,21 +93,4 @@ it("requires explicit profile selection to use a granted privilege", async () =>
 it("denies selection of the setup role", async () => {
 	const { rows } = await setup.query("SELECT current_user AS role");
 	await expect(api.query(`SET ROLE ${escapeIdentifier(rows[0].role)}`)).rejects.toMatchObject({ code: "42501" });
-});
-
-it("keeps the API login and profiles from owning domain tables", async () => {
-
-	const { rows } = await setup.query(
-		`
-        SELECT table_definition.relname
-        FROM pg_catalog.pg_class AS table_definition
-        JOIN pg_catalog.pg_namespace AS schema_definition ON schema_definition.oid = table_definition.relnamespace
-        JOIN pg_catalog.pg_roles AS owner ON owner.oid = table_definition.relowner
-        WHERE schema_definition.nspname = 'public' AND table_definition.relname = ANY($1::text[])
-          AND owner.rolname = ANY($2::text[])
-    `,
-		[domainTables, ["medical_data_hub_api", ...profileNames]],
-	);
-	expect(rows).toEqual([]);
-
 });

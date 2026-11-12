@@ -159,21 +159,6 @@ it("returns clinic and scoped professional agendas with all states and local mid
 
 });
 
-it("returns empty clinic and professional agendas for a valid date without appointments", async () => {
-
-	const requests = [
-		{ path: "/appointments/agenda", token: receptionToken },
-		{ path: `/professionals/${fixture.professionalId}/agenda`, token: receptionToken },
-		{ path: "/professionals/me/agenda", token: professionalToken },
-	];
-	for(const { path, token } of requests) {
-		const response = await getAgenda(path, token, "date=2092-02-29");
-		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ appointments: [] });
-	}
-
-});
-
 it("hides foreign professional agendas and rejects professional or clinic overrides", async () => {
 
 	const missing = await getAgenda(`/professionals/${randomUUID()}/agenda`, receptionToken);

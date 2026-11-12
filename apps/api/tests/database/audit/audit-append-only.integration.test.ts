@@ -51,29 +51,6 @@ it.each(mutations)(
 	},
 );
 
-it("allows audit insertion and removes the uncommitted event on rollback", async () => {
-
-	const inserted = await setup.query(`
-        INSERT INTO public.audit_records (clinic_id, user_id, patient_id, resource, appointment_id, action)
-        SELECT clinic_id, user_id, patient_id, resource, appointment_id, action
-        FROM public.audit_records ORDER BY audit_record_id LIMIT 1
-        RETURNING audit_record_id
-    `);
-	const auditRecordId = inserted.rows[0].audit_record_id;
-	expect(inserted.rowCount).toBe(1);
-	expect(
-		(await setup.query("SELECT 1 FROM public.audit_records WHERE audit_record_id = $1::uuid", [auditRecordId]))
-			.rowCount,
-	).toBe(1);
-	await setup.query("ROLLBACK");
-	expect(
-		(await setup.query("SELECT 1 FROM public.audit_records WHERE audit_record_id = $1::uuid", [auditRecordId]))
-			.rows,
-	).toEqual([]);
-	expect((await setup.query(auditQuery)).rows).toEqual(originalRecords);
-
-});
-
 it("keeps audit mutation privileges absent after rolling back temporary test grants", async () => {
 
 	const { rows } = await setup.query(

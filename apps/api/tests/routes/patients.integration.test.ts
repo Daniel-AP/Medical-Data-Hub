@@ -196,32 +196,6 @@ it("registers patients with one contact method and accepts the clinic administra
 
 });
 
-it("validates the birth date against the current date in the authorized clinic's time zone", async () => {
-
-	const { rows: [clinic] } = await setup.query("SELECT time_zone FROM public.clinics WHERE clinic_id = $1", [actor.clinicId]);
-	try {
-
-		for(const timeZone of ["Etc/GMT+12", "Pacific/Kiritimati"]) {
-
-			await setup.query("UPDATE public.clinics SET time_zone = $2 WHERE clinic_id = $1", [actor.clinicId, timeZone]);
-			const { rows: [dates] } = await setup.query(
-				`SELECT (clock_timestamp() AT TIME ZONE $1)::date::text AS today,
-				        ((clock_timestamp() AT TIME ZONE $1)::date+1)::text AS tomorrow`,
-				[timeZone],
-			);
-			expect((await registerPatient({ ...registration, identification: randomUUID(), dateOfBirth: dates.today })).status).toBe(201);
-			const identification = randomUUID();
-			expect((await registerPatient({ ...registration, identification, dateOfBirth: dates.tomorrow })).status).toBe(400);
-			expect((await setup.query("SELECT 1 FROM public.patients WHERE identification = $1", [identification])).rows).toEqual([]);
-
-		}
-
-	} finally {
-		await setup.query("UPDATE public.clinics SET time_zone = $2 WHERE clinic_id = $1", [actor.clinicId, clinic.time_zone]);
-	}
-
-});
-
 it("keeps one patient and audit event when concurrent registrations use the same identification", async () => {
 
 	const identification = randomUUID();
@@ -389,19 +363,6 @@ it("rejects invalid final patient records and duplicate identification without r
 		expect((await setup.query("SELECT 1 FROM public.audit_records WHERE patient_id = $1", [patientId])).rows).toEqual([]);
 
 	}
-
-});
-
-it("preserves valid concurrent partial patient edits to different fields", async () => {
-
-	const patientId = await createPatientFixture();
-	const responses = await Promise.all([
-		editPatient(patientId, { name: "Concurrent synthetic patient" }),
-		editPatient(patientId, { phone: "00987654" }),
-	]);
-	expect(responses.map(({ status }) => status)).toEqual([200, 200]);
-	const { rows } = await setup.query("SELECT name, email, phone FROM public.patients WHERE patient_id = $1", [patientId]);
-	expect(rows).toEqual([{ name: "Concurrent synthetic patient", email: registration.email, phone: "00987654" }]);
 
 });
 

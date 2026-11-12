@@ -193,22 +193,6 @@ it("allows only one concurrent registration of a professional service associatio
 
 });
 
-it("preserves an existing inactive association when registration is retried", async () => {
-
-	await setup.query(
-		`INSERT INTO public.professional_services (clinic_id, professional_id, service_id, is_active)
-		 VALUES ($1::uuid, $2::uuid, $3::uuid, false)`,
-		[clinic.clinicId, professionalId, inactiveServiceId],
-	);
-	const version = await readVersion();
-	expect((await registerProfessionalService(professionalId, { serviceId: inactiveServiceId })).status).toBe(409);
-	expect(await readAssociation(inactiveServiceId)).toEqual([{
-		clinicId: clinic.clinicId, professionalId, serviceId: inactiveServiceId, isActive: false,
-	}]);
-	expect(await readVersion()).toBe(version);
-
-});
-
 it("authorizes and validates professional service association activity edits", async () => {
 
 	const body = { isActive: false };

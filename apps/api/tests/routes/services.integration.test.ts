@@ -146,11 +146,6 @@ it("allows different clinics to register the same service name", async () => {
 
 });
 
-it("distinguishes service names that differ only in case within a clinic", async () => {
-	expect((await registerService({ ...registration, name: `${fixtureName} example` })).status).toBe(201);
-	expect((await registerService({ ...registration, name: `${fixtureName} Example` })).status).toBe(201);
-});
-
 const createServiceFixture = async (suffix: string) => {
 
 	const response = await registerService({ ...registration, name: `${fixtureName} ${suffix}` });

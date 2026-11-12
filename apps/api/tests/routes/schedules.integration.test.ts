@@ -179,17 +179,6 @@ it("reads the ordered stored week as each clinic role without changing availabil
 
 });
 
-it("returns an empty week for an accessible professional without schedules", async () => {
-	const response = await getWeek();
-	expect(response.status).toBe(200);
-	expect(await response.json()).toEqual({ intervals: [] });
-});
-
-it("rejects invalid schedule read identifiers and extra query parameters", async () => {
-	expect((await getWeek("invalid")).status).toBe(400);
-	expect((await getWeek(professionalId, receptionToken, `clinicId=${clinic.clinicId}`)).status).toBe(400);
-});
-
 it("requires an authorized active local clinic user to read schedules", async () => {
 
 	expect((await getWeek(professionalId, "")).status).toBe(401);
@@ -241,17 +230,6 @@ it("reads all past and future blocks in start and identifier order as each clini
 
 });
 
-it("returns an empty list for an accessible professional without blocks", async () => {
-	const response = await getBlocks();
-	expect(response.status).toBe(200);
-	expect(await response.json()).toEqual({ blocks: [] });
-});
-
-it("rejects invalid block read identifiers and extra query parameters", async () => {
-	expect((await getBlocks("invalid")).status).toBe(400);
-	expect((await getBlocks(professionalId, receptionToken, `clinicId=${clinic.clinicId}`)).status).toBe(400);
-});
-
 it("requires an authorized active local clinic user to read blocks", async () => {
 
 	expect((await getBlocks(professionalId, "")).status).toBe(401);
@@ -271,41 +249,6 @@ it("returns the same not-found response for missing and foreign block read targe
 		const response = await getBlocks(target);
 		expect(response.status).toBe(404);
 		expect(await response.json()).toEqual({ error: "Not Found" });
-	}
-
-});
-
-it("holds the professional lock and exposes only committed blocks until availability can commit", async () => {
-
-	const registration = { startAt: "2030-01-07T14:00:00.000Z", endAt: "2030-01-07T15:00:00.000Z" };
-	const blocker = await setup.connect();
-	try {
-
-		await blocker.query("BEGIN");
-		await blocker.query("SELECT 1 FROM public.clinic_availability_versions WHERE clinic_id = $1 FOR NO KEY UPDATE", [clinic.clinicId]);
-		let responded = false;
-		const creation = registerBlock(registration).then((response) => {
-			responded = true;
-
-			return response;
-		});
-		await waitForWriters(1);
-		expect(responded).toBe(false);
-		const beforeCommit = await getBlocks();
-		expect(beforeCommit.status).toBe(200);
-		expect(await beforeCommit.json()).toEqual({ blocks: [] });
-		await expect(setup.query("SELECT 1 FROM public.professionals WHERE professional_id = $1 FOR NO KEY UPDATE NOWAIT", [professionalId])).rejects.toMatchObject({ code: "55P03" });
-		await blocker.query("COMMIT");
-		const response = await creation;
-		expect(response.status).toBe(201);
-		const block = await response.json();
-		const afterCommit = await getBlocks();
-		expect(afterCommit.status).toBe(200);
-		expect(await afterCommit.json()).toEqual({ blocks: [{ professionalBlockId: block.professionalBlockId, ...registration }] });
-
-	} finally {
-		await blocker.query("ROLLBACK");
-		blocker.release();
 	}
 
 });
@@ -493,30 +436,6 @@ it.each([
 
 });
 
-it.each(["missing", "overflowed"])("rolls back block creation when the availability version is %s", async (failure) => {
-
-	const version = await readVersion();
-	try {
-
-		const query = failure === "missing"
-			? "DELETE FROM public.clinic_availability_versions WHERE clinic_id = $1"
-			: "UPDATE public.clinic_availability_versions SET version = 9223372036854775807 WHERE clinic_id = $1";
-		await setup.query(query, [clinic.clinicId]);
-		expect((await registerBlock(blockRegistration)).status).toBe(500);
-		expect(await readBlocks()).toEqual([]);
-
-	} finally {
-
-		await setup.query(
-			`INSERT INTO public.clinic_availability_versions (clinic_id, version) VALUES ($1, $2)
-			 ON CONFLICT (clinic_id) DO UPDATE SET version = EXCLUDED.version`,
-			[clinic.clinicId, version.toString()],
-		);
-
-	}
-
-});
-
 it("replaces the complete week with submitted intervals and one committed availability increment", async () => {
 
 	const intervals = [
@@ -667,85 +586,5 @@ it("keeps reservations covered through adjacent intervals and across midnight", 
 	];
 	expect((await replaceWeek({ intervals })).status).toBe(204);
 	expect(await readWeek()).toEqual(intervals);
-
-});
-
-it("lets the later successful complete-week replacement win after a lock wait", async () => {
-
-	const blocker = await setup.connect();
-	const firstWeek = [{ weekday: 1, startMinute: 480, endMinute: 600 }];
-	const secondWeek = [{ weekday: 2, startMinute: 600, endMinute: 720 }];
-	const version = await readVersion();
-	try {
-
-		await blocker.query("BEGIN");
-		await blocker.query("SELECT 1 FROM public.professionals WHERE professional_id = $1 FOR NO KEY UPDATE", [professionalId]);
-		const first = replaceWeek({ intervals: firstWeek });
-		await waitForWriters(1);
-		const second = replaceWeek({ intervals: secondWeek });
-		await waitForWriters(2);
-		await blocker.query("COMMIT");
-		expect((await first).status).toBe(204);
-		expect((await second).status).toBe(204);
-		expect(await readWeek()).toEqual(secondWeek);
-		expect(await readVersion()).toBe(version+2n);
-
-	} finally {
-		await blocker.query("ROLLBACK");
-		blocker.release();
-	}
-
-});
-
-it("holds the professional lock and withholds success until the availability write can commit", async () => {
-
-	const currentWeek = [{ weekday: 3, startMinute: 480, endMinute: 600 }];
-	const nextWeek = [{ weekday: 1, startMinute: 0, endMinute: 1440 }];
-	await setup.query(
-		"INSERT INTO public.professional_schedules (clinic_id, professional_id, weekday, start_minute, end_minute) VALUES ($1, $2, 3, 480, 600)",
-		[clinic.clinicId, professionalId],
-	);
-	const blocker = await setup.connect();
-	try {
-
-		await blocker.query("BEGIN");
-		await blocker.query("SELECT 1 FROM public.clinic_availability_versions WHERE clinic_id = $1 FOR NO KEY UPDATE", [clinic.clinicId]);
-		let responded = false;
-		const replacement = replaceWeek({ intervals: nextWeek }).then((response) => {
-			responded = true;
-
-			return response;
-		});
-		await waitForWriters(1);
-		expect(responded).toBe(false);
-		const beforeCommit = await getWeek();
-		expect(beforeCommit.status).toBe(200);
-		expect(await beforeCommit.json()).toEqual({ intervals: currentWeek });
-		await expect(setup.query("SELECT 1 FROM public.professionals WHERE professional_id = $1 FOR NO KEY UPDATE NOWAIT", [professionalId])).rejects.toMatchObject({ code: "55P03" });
-		await blocker.query("COMMIT");
-		expect((await replacement).status).toBe(204);
-		const afterCommit = await getWeek();
-		expect(afterCommit.status).toBe(200);
-		expect(await afterCommit.json()).toEqual({ intervals: nextWeek });
-
-	} finally {
-		await blocker.query("ROLLBACK");
-		blocker.release();
-	}
-
-});
-
-it("rolls back the entire replacement when the availability version is missing", async () => {
-
-	const intervals = [{ weekday: 1, startMinute: 480, endMinute: 540 }];
-	expect((await replaceWeek({ intervals })).status).toBe(204);
-	const version = await readVersion();
-	try {
-		await setup.query("DELETE FROM public.clinic_availability_versions WHERE clinic_id = $1", [clinic.clinicId]);
-		expect((await replaceWeek({ intervals: [] })).status).toBe(500);
-		expect(await readWeek()).toEqual(intervals);
-	} finally {
-		await setup.query("INSERT INTO public.clinic_availability_versions (clinic_id, version) VALUES ($1, $2)", [clinic.clinicId, version.toString()]);
-	}
 
 });

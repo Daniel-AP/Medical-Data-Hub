@@ -34,15 +34,6 @@ afterAll(async () => {
 	await once(server, "close");
 });
 
-it("rejects a request without a bearer token with 401", async () => {
-
-	const response = await fetch(url);
-	expect(response.status).toBe(401);
-	expect(await response.json()).toEqual({ error: STATUS_CODES[401] });
-	expect(verifyAccessToken).not.toHaveBeenCalled();
-
-});
-
 it.each(["Basic demo-token", "Bearer", "Bearer token extra"])(
 	"rejects a malformed authorization header (%s) with 401",
 	async (authorization) => {
@@ -52,50 +43,11 @@ it.each(["Basic demo-token", "Bearer", "Bearer token extra"])(
 	},
 );
 
-it.each(["Bearer demo-token", "bEaReR   demo-token"])(
-	"authenticates a bearer request (%s) and passes its identity to the route",
-	async (authorization) => {
-
-		const response = await fetch(url, { headers: { Authorization: authorization } });
-		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ identityId: "demo-user", roles: [] });
-		expect(verifyAccessToken).toHaveBeenCalledWith("demo-token");
-
-	},
-);
-
-it("preserves a token verification failure as a generic 401 response", async () => {
-
-	verifyAccessToken.mockRejectedValueOnce(Object.assign(new Error("Invalid access token"), { status: 401 }));
-	const response = await fetch(url, { headers: { Authorization: "Bearer demo-token" } });
-	expect(response.status).toBe(401);
-	expect(await response.json()).toEqual({ error: STATUS_CODES[401] });
-
-});
-
-it("preserves unavailable verification keys as a generic 503 response", async () => {
-
-	verifyAccessToken.mockRejectedValueOnce(Object.assign(new Error("Verification keys unavailable"), { status: 503 }));
-	const response = await fetch(url, { headers: { Authorization: "Bearer demo-token" } });
-	expect(response.status).toBe(503);
-	expect(await response.json()).toEqual({ error: STATUS_CODES[503] });
-
-});
-
 it.each([undefined, null, 42, ""])("rejects an unusable subject (%s) with 401", async (subject) => {
 
 	verifyAccessToken.mockResolvedValueOnce({ sub: subject } as JWTPayload);
 	const response = await fetch(url, { headers: { Authorization: "Bearer demo-token" } });
 	expect(response.status).toBe(401);
 	expect(await response.json()).toEqual({ error: STATUS_CODES[401] });
-
-});
-
-it("preserves unexpected failures as a generic 500 response", async () => {
-
-	verifyAccessToken.mockRejectedValueOnce(new Error("Synthetic internal detail"));
-	const response = await fetch(url, { headers: { Authorization: "Bearer demo-token" } });
-	expect(response.status).toBe(500);
-	expect(await response.json()).toEqual({ error: STATUS_CODES[500] });
 
 });

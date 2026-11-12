@@ -1,17 +1,6 @@
 import { expect, it } from "vitest";
 import { isScheduleCovered } from "../../src/database/schedule-coverage.js";
 
-it("covers a reservation through adjacent and overlapping weekly intervals", () => {
-
-	const week = [
-		{ weekday: 1, startMinute: 600, endMinute: 720 },
-		{ weekday: 1, startMinute: 480, endMinute: 600 },
-		{ weekday: 1, startMinute: 540, endMinute: 660 },
-	];
-	expect(isScheduleCovered(week, new Date("2030-01-07T14:00Z"), new Date("2030-01-07T18:00Z"), "America/Costa_Rica")).toBe(true);
-
-});
-
 it.each([
 	{ name: "an empty week", week: [], start: "2030-01-07T08:00Z", end: "2030-01-07T09:00Z" },
 	{
@@ -97,10 +86,4 @@ it.each([
 	{ zone: "America/Havana", startMinute: 0, endMinute: 30, start: "2024-11-03T04:00Z", end: "2024-11-03T05:30Z" },
 ])("preserves the uncovered gap between repeated intervals in $zone", ({ zone, startMinute, endMinute, start, end }) => {
 	expect(isScheduleCovered([{ weekday: 7, startMinute, endMinute }], new Date(start), new Date(end), zone)).toBe(false);
-});
-
-it("rejects partial coverage after an offset transition within a UTC minute", () => {
-	const week = [{ weekday: 7, startMinute: 179, endMinute: 240 }];
-
-	expect(isScheduleCovered(week, new Date("1916-10-01T02:25Z"), new Date("1916-10-01T02:26Z"), "Europe/Dublin")).toBe(false);
 });

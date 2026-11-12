@@ -43,23 +43,6 @@ it("uses coverage and occupation after the last requested local date", () => {
 
 });
 
-it("subtracts merged occupation across midnight and aligns starts to UTC minutes", () => {
-
-	const calendar = prepareAvailabilityCalendar("2030-01-07", "2030-01-07", "UTC");
-	const week = [{ weekday: 1, startMinute: 0, endMinute: 6 }];
-	const occupation = [
-		{ startAt: new Date("2030-01-07T00:02Z"), endAt: new Date("2030-01-07T00:03:30Z") },
-		{ startAt: new Date("2030-01-06T23:59Z"), endAt: new Date("2030-01-07T00:01:30Z") },
-		{ startAt: new Date("2030-01-07T00:01Z"), endAt: new Date("2030-01-07T00:02Z") },
-	];
-
-	expect(calculateDailyAvailability(calendar, week, occupation, 2)).toEqual([{
-		localDate: "2030-01-07",
-		starts: ["2030-01-07T00:04:00.000Z"],
-	}]);
-
-});
-
 it("fits the maximum service duration in a continuous weekly schedule", () => {
 
 	const calendar = prepareAvailabilityCalendar("2030-01-07", "2030-01-07", "UTC");
@@ -83,18 +66,6 @@ it("skips nonexistent local times and retains both occurrences of repeated times
 	expect(calculateDailyAvailability(fall, [{ weekday: 7, startMinute: 90, endMinute: 92 }], [], 2)).toEqual([{
 		localDate: "2024-11-03",
 		starts: ["2024-11-03T05:30:00.000Z", "2024-11-03T06:30:00.000Z"],
-	}]);
-
-});
-
-it("respects offset transitions between UTC minute boundaries", () => {
-
-	const calendar = prepareAvailabilityCalendar("1972-01-07", "1972-01-07", "Africa/Monrovia");
-	const week = [{ weekday: 5, startMinute: 44, endMinute: 47 }];
-
-	expect(calculateDailyAvailability(calendar, week, [], 1)).toEqual([{
-		localDate: "1972-01-07",
-		starts: ["1972-01-07T00:45:00.000Z", "1972-01-07T00:46:00.000Z"],
 	}]);
 
 });

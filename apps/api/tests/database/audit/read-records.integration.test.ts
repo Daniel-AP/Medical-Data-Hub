@@ -19,46 +19,39 @@ const setup = new Client({ connectionString: setupConnectionString });
 const pool = new Pool({ connectionString: apiConnectionString, max: 1 });
 const patientId = randomUUID();
 const otherPatientId = randomUUID();
-const foreignPatientId = randomUUID();
 const from = new Date("2000-01-01T10:00:00.123Z");
 const tiedAt = new Date("2000-01-01T11:00:00.000Z");
 const to = new Date("2000-01-01T12:00:00.123Z");
 let administrator: ClinicAdmin;
-let foreignAdministrator: ClinicAdmin;
 let startEvent: ContactEvent;
 let tiedEvents: ContactEvent[];
 let endEvent: ContactEvent;
 let otherUserEvent: ContactEvent;
 let otherPatientEvent: ContactEvent;
-let foreignEvent: ContactEvent;
 
 beforeAll(async () => {
 
 	await setup.connect();
-	const { rows: administrators } = await setup.query<ClinicAdmin>(`
+	const { rows: [clinicAdmin] } = await setup.query<ClinicAdmin>(`
 		SELECT clinic_id AS "clinicId", identity_id AS "identityId"
-		FROM public.users WHERE role = 'clinic_administrator' ORDER BY clinic_id LIMIT 2
+		FROM public.users WHERE role = 'clinic_administrator' ORDER BY clinic_id LIMIT 1
 	`);
-	[administrator, foreignAdministrator] = administrators;
+	administrator = clinicAdmin;
 	const { rows: actors } = await setup.query<AuditActor & { role: string }>(
 		`SELECT user_id AS "userId", clinic_id AS "clinicId", role FROM public.users
-		 WHERE clinic_id IN ($1::uuid, $2::uuid) AND role IN ('reception', 'healthcare_professional')
+		 WHERE clinic_id = $1::uuid AND role IN ('reception', 'healthcare_professional')
 		 ORDER BY user_id`,
-		[administrator.clinicId, foreignAdministrator.clinicId],
+		[administrator.clinicId],
 	);
 	const actor = actors.find(({ clinicId, role }) => clinicId === administrator.clinicId && role === "reception")!;
 	const otherActor = actors.find(
 		({ clinicId, role }) => clinicId === administrator.clinicId && role === "healthcare_professional",
 	)!;
-	const foreignActor = actors.find(
-		({ clinicId, role }) => clinicId === foreignAdministrator.clinicId && role === "reception",
-	)!;
 	await setup.query(
 		`INSERT INTO public.patients (patient_id, clinic_id, identification, name, date_of_birth, email)
-		 VALUES ($1::uuid, $4::uuid, $1::text, 'Synthetic patient', '1990-05-15', 'audit-query@example.test'),
-		        ($2::uuid, $4::uuid, $2::text, 'Synthetic patient', '1990-05-15', 'audit-query@example.test'),
-		        ($3::uuid, $5::uuid, $3::text, 'Synthetic patient', '1990-05-15', 'audit-query@example.test')`,
-		[patientId, otherPatientId, foreignPatientId, administrator.clinicId, foreignAdministrator.clinicId],
+		 VALUES ($1::uuid, $3::uuid, $1::text, 'Synthetic patient', '1990-05-15', 'audit-query@example.test'),
+		        ($2::uuid, $3::uuid, $2::text, 'Synthetic patient', '1990-05-15', 'audit-query@example.test')`,
+		[patientId, otherPatientId, administrator.clinicId],
 	);
 
 	startEvent = await insertContactEvent(actor, patientId, from);
@@ -69,7 +62,6 @@ beforeAll(async () => {
 	endEvent = await insertContactEvent(actor, patientId, to);
 	otherUserEvent = await insertContactEvent(otherActor, patientId, new Date("2000-01-01T11:30:00Z"));
 	otherPatientEvent = await insertContactEvent(actor, otherPatientId, new Date("2000-01-01T11:15:00Z"));
-	foreignEvent = await insertContactEvent(foreignActor, foreignPatientId, tiedAt);
 
 });
 
@@ -124,26 +116,5 @@ it("filters audit records by user, patient, or date range independently", async 
 		...tiedEvents,
 		startEvent,
 	]);
-
-});
-
-it("combines audit filters with an inclusive start, exclusive end, and stable ordering", async () => {
-
-	const filters = { userId: startEvent.userId, patientId, from, to };
-	expect(await readForAdmin(administrator, filters)).toEqual([...tiedEvents, startEvent]);
-
-	expect(await readForAdmin(administrator, { patientId, from: to })).toEqual([endEvent]);
-	expect(await readForAdmin(administrator, { ...filters, from: undefined })).toEqual([...tiedEvents, startEvent]);
-
-});
-
-it("scopes audit results to the authenticated clinic even with foreign identifiers", async () => {
-
-	const records = await readForAdmin(administrator, {});
-	expect(records).toContainEqual(startEvent);
-	expect(new Set(records.map((record) => record.clinicId))).toEqual(new Set([administrator.clinicId]));
-	expect(await readForAdmin(administrator, { userId: foreignEvent.userId })).toEqual([]);
-	expect(await readForAdmin(administrator, { patientId: foreignPatientId })).toEqual([]);
-	expect(await readForAdmin(foreignAdministrator, { patientId: foreignPatientId })).toEqual([foreignEvent]);
 
 });

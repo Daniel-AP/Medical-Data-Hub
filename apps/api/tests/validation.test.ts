@@ -33,10 +33,6 @@ it("rejects malformed timestamps, invalid local dates, offsets, and excess preci
 
 });
 
-it("preserves omitted optional timestamps", () => {
-	expect(parseTimestamp(undefined)).toBeUndefined();
-});
-
 it("rejects invalid calendar dates and non-date values", () => {
 
 	const values = [

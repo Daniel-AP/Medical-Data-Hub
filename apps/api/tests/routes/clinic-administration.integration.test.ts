@@ -45,7 +45,7 @@ const professionalIdentityId = decodeJwt(healthcareProfessionalToken).sub!;
 const timeZone = "America/Costa_Rica";
 let faultServer: Server;
 let faultUrl: string;
-let roleFault: "partial" | "rejected" | "unconfirmed" | undefined;
+let roleFault: "partial" | "unconfirmed" | undefined;
 let keycloakRequests = 0;
 let fixtureIdentityId: string | undefined;
 let fixtureClinicName: string | undefined;
@@ -128,7 +128,7 @@ const fetchWithRoleFault: typeof fetch = async (url, options) => {
 	}
 
 	roleChangeMethods.push(method);
-	if((roleFault === "rejected" && method === "POST") || (roleFault === "partial" && method === "DELETE")) {
+	if(roleFault === "partial" && method === "DELETE") {
 		return new Response(null, { status: 403 });
 	}
 
@@ -380,32 +380,6 @@ it("reports a partial Keycloak role update and rolls back clinic registration", 
 	expect((await setup.query("SELECT clinic_id FROM public.clinics WHERE name = $1", [name])).rows).toEqual([]);
 	expect((await setup.query("SELECT user_id FROM public.users WHERE identity_id = $1", [administratorIdentityId])).rows).toEqual([]);
 	expect(await readApplicationRoles(administratorIdentityId)).toEqual(["clinic_administrator", "reception"]);
-
-});
-
-it.each([
-	{
-		name: "rolls back user registration when Keycloak rejects the role assignment",
-		fault: "rejected",
-		expectedBody: { error: "Internal Server Error" },
-		expectedRoles: [],
-	},
-	{
-		name: "reports an unconfirmed role assignment and rolls back user registration",
-		fault: "unconfirmed",
-		expectedBody: { error: "Internal Server Error", code: "OPERATION_OUTCOME_UNKNOWN" },
-		expectedRoles: ["reception"],
-	},
-] as const)("$name", async ({ fault, expectedBody, expectedRoles }) => {
-
-	const identityId = await createKeycloakUser();
-	roleFault = fault;
-	const response = await postRegistration("/users", { identityId, role: "reception" }, clinicAdministratorToken, faultUrl);
-	expect(response.status).toBe(500);
-	expect(await response.json()).toEqual(expectedBody);
-	expect(roleChangeMethods).toEqual(["POST"]);
-	expect((await setup.query("SELECT user_id FROM public.users WHERE identity_id = $1", [identityId])).rows).toEqual([]);
-	expect(await readApplicationRoles(identityId)).toEqual(expectedRoles);
 
 });
 

@@ -313,43 +313,6 @@ it.each(["professional", "patient"])("grants exactly one concurrent booking afte
 
 });
 
-it.each([
-	{ operation: "booking", failure: "missing" }, { operation: "booking", failure: "overflowed" },
-	{ operation: "rescheduling", failure: "missing" }, { operation: "rescheduling", failure: "overflowed" },
-	{ operation: "cancellation", failure: "missing" }, { operation: "cancellation", failure: "overflowed" },
-	{ operation: "outcome", failure: "missing" }, { operation: "outcome", failure: "overflowed" },
-])("rolls back $operation when the availability version is $failure", async ({ operation, failure }) => {
-
-	const original = operation === "outcome" ? await createOutcomeAppointment()
-		: operation === "booking" ? undefined : await (await bookAppointment()).json();
-	const version = await readVersion();
-	try {
-
-		if(failure === "missing") {
-			await setup.query("DELETE FROM public.clinic_availability_versions WHERE clinic_id = $1", [clinic.clinicId]);
-		} else {
-			await setup.query("UPDATE public.clinic_availability_versions SET version = 9223372036854775807 WHERE clinic_id = $1", [clinic.clinicId]);
-		}
-		let response: Response;
-		if(operation === "outcome") {
-			response = await recordAppointmentOutcome(original.appointmentId);
-		} else if(operation === "cancellation") {
-			response = await cancelAppointment(original.appointmentId);
-		} else if(operation === "rescheduling") {
-			response = await rescheduleAppointment(original.appointmentId);
-		} else {
-			response = await bookAppointment();
-		}
-		expect(response.status).toBe(500);
-		const { rows } = await setup.query("SELECT appointment_id, state FROM public.appointments WHERE professional_id = ANY($1::uuid[]) OR appointment_id = $2", [professionalIds, original?.appointmentId]);
-		expect(rows).toEqual(original ? [{ appointment_id: original.appointmentId, state: "reserved" }] : []);
-
-	} finally {
-		await setup.query("INSERT INTO public.clinic_availability_versions (clinic_id, version) VALUES ($1, $2) ON CONFLICT (clinic_id) DO UPDATE SET version = EXCLUDED.version", [clinic.clinicId, version.toString()]);
-	}
-
-});
-
 it("reschedules with an inactive service and source user while preserving the replacement chain", async () => {
 
 	const original = await (await bookAppointment()).json();

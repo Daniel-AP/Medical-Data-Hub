@@ -319,25 +319,33 @@ it("subtracts cross-date blocks and reservations for another service", async () 
 
 });
 
-it("revalidates cached availability after rescheduling and cancellation", async () => {
+it("revalidates cached professional and service availability after booking, rescheduling, and cancellation", async () => {
 
 	const path = servicePath(serviceId);
-	const available = await getAvailability(path, serviceQuery, receptionToken);
-	expect(available.status).toBe(200);
-	expect(await available.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts));
+	const professionalAvailabilityPath = professionalPath(firstProfessionalId);
+	const professionalAvailability = await getAvailability(professionalAvailabilityPath, professionalQuery, receptionToken);
+	expect(professionalAvailability.status).toBe(200);
+	expect(await professionalAvailability.json()).toEqual({ professionalId: firstProfessionalId, serviceId, date: monday, starts: firstStarts });
 	const oldKey = await readCacheKey(firstProfessionalId, monday);
 	const oldValue = await cache.get(oldKey);
 	expect(oldValue).not.toBeNull();
+
+	const available = await getAvailability(path, serviceQuery, receptionToken);
+	expect(available.status).toBe(200);
+	expect(await available.json()).toEqual(expectedRange(firstStarts, secondTuesdayStarts));
 
 	const booked = await post("/appointments", administratorToken, {
 		professionalId: firstProfessionalId, serviceId, patientId, startAt: firstStarts[2],
 	});
 	expect(booked.status).toBe(201);
 	const { appointmentId } = await booked.json();
+	const remainingStarts = [firstStarts[0], firstStarts[1], firstStarts[4]];
+	const reservedProfessional = await getAvailability(professionalAvailabilityPath, professionalQuery, receptionToken);
+	expect(reservedProfessional.status).toBe(200);
+	expect(await reservedProfessional.json()).toEqual({ professionalId: firstProfessionalId, serviceId, date: monday, starts: remainingStarts });
 	const reserved = await getAvailability(path, serviceQuery, receptionToken);
 	expect(reserved.status).toBe(200);
-	const before = expectedRange([firstStarts[0], firstStarts[1], firstStarts[4]], secondTuesdayStarts);
-	expect(await reserved.json()).toEqual(before);
+	expect(await reserved.json()).toEqual(expectedRange(remainingStarts, secondTuesdayStarts));
 
 	const gate = await setup.connect();
 	let reading: Promise<Response> | undefined;
