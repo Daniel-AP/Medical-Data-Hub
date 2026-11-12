@@ -1,7 +1,8 @@
+import type { AddressInfo } from "node:net";
 import { app, router } from "./app.js";
 import { createAccessTokenVerifier, createLogoutIdTokenVerifier } from "./clients/keycloak-tokens.js";
+import { redis } from "./clients/redis.js";
 import "./config/database-timeouts.js";
-import "./config/redis-timeouts.js";
 import { UserRole } from "./generated/prisma/enums.js";
 import { createAuthentication, requireRoles } from "./middleware/authentication.js";
 import { readAppointmentCountsHandler, readClinicAgendaHandler, readOwnAgendaHandler, readPatientAppointmentsHandler, readProfessionalAgendaHandler } from "./routes/appointment-queries.js";
@@ -88,7 +89,7 @@ router.patch(
 	updateProfessionalServiceHandler,
 );
 
-app.listen({ port, host }, (error) => {
+const server = app.listen({ port, host }, (error) => {
 
 	if(error) {
 		console.error(error.message);
@@ -97,6 +98,24 @@ app.listen({ port, host }, (error) => {
 		return;
 	}
 
-	console.info(`API listening on ${host}:${port}`);
+	void redis.connect().catch(() => console.error("Redis connection stopped"));
+	const { port: listeningPort } = server.address() as AddressInfo;
+	console.info(`API listening on ${host}:${listeningPort}`);
 
 });
+
+const shutdown = () => {
+
+	server.close(() => {
+
+		if(redis.isOpen) {
+			redis.destroy();
+		}
+		process.exit(0);
+
+	});
+
+};
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);

@@ -1,4 +1,23 @@
+import { createClient } from "redis";
 import { redisTimeouts } from "../config/redis-timeouts.js";
+
+const createRedisClient = () => {
+
+	const url = process.env.REDIS_URL;
+	if(!url) {
+		throw new Error("REDIS_URL is required");
+	}
+
+	try {
+		return createClient({ url, disableOfflineQueue: true });
+	} catch {
+		throw new Error("REDIS_URL must be a valid Redis URL");
+	}
+
+};
+
+export const redis = createRedisClient();
+redis.on("error", () => console.error("Redis connection failed"));
 
 export class RedisBatchTimeoutError extends Error {
 	constructor() {

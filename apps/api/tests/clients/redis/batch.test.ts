@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 
 vi.stubEnv("REDIS_BATCH_TIMEOUT_MS", "500");
+vi.stubEnv("REDIS_URL", "redis://127.0.0.1:6379");
 const { RedisBatchTimeoutError, runRedisBatch } = await import("../../../src/clients/redis.js");
 vi.unstubAllEnvs();
 
