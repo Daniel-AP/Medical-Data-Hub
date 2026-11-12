@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import { cancelAppointment, createAppointment, rescheduleAppointment } from "../database/appointments.js";
+import { cancelAppointment, createAppointment, recordAppointmentOutcome, rescheduleAppointment } from "../database/appointments.js";
 import { isRequiredText, isUuid, parseTimestamp } from "../validation.js";
 
 export const createAppointmentHandler: RequestHandler = async (request, response) => {
@@ -44,6 +44,22 @@ export const cancelAppointmentHandler: RequestHandler = async (request, response
 	}
 
 	const appointment = await cancelAppointment(request.authentication!, appointmentId, cancellationReason);
+	response.status(200).json(appointment);
+
+};
+
+export const recordAppointmentOutcomeHandler: RequestHandler = async (request, response) => {
+
+	const { appointmentId } = request.params;
+	const body = request.body;
+	const state: unknown = body?.state;
+	const validState = state === "attended" || state === "absent";
+	const hasOtherFields = Object.keys(body ?? {}).some((field) => field !== "state");
+	if(!isUuid(appointmentId) || !validState || hasOtherFields) {
+		throw Object.assign(new Error("Invalid appointment outcome"), { status: 400 });
+	}
+
+	const appointment = await recordAppointmentOutcome(request.authentication!, appointmentId, state);
 	response.status(200).json(appointment);
 
 };

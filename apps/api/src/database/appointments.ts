@@ -8,6 +8,7 @@ import type { ScheduleInterval, TransactionClient } from "./types.js";
 
 type AppointmentRegistration = Pick<Appointment, "patientId" | "professionalId" | "serviceId" | "startAt">;
 type AppointmentDestination = Pick<AppointmentRegistration, "professionalId" | "startAt">;
+type AppointmentOutcome = Extract<Appointment["state"], "attended" | "absent">;
 type AppointmentService = Pick<Service, "durationMinutes" | "specialtyId" | "isActive">;
 type AppointmentProfessional = Pick<Professional, "professionalId" | "specialtyId">;
 type AppointmentEligibility = {
@@ -212,6 +213,42 @@ export const cancelAppointment = (authentication: Authentication, appointmentId:
 		await incrementAvailabilityVersion(transaction, actor.clinicId!);
 
 		return { appointmentId: appointment.appointmentId };
+
+	});
+
+};
+
+export const recordAppointmentOutcome = (authentication: Authentication, appointmentId: string, state: AppointmentOutcome) => {
+
+	return runAuthorizedTransaction(authentication, { name: "recordAppointmentOutcome" }, async (transaction, actor) => {
+
+		const isProfessional = actor.role === UserRole.healthcareProfessional;
+		const { rows: [appointment] } = await transaction.query<Pick<Appointment, "appointmentId" | "state">>(
+			`SELECT appointment_id AS "appointmentId", state FROM public.appointments
+			 WHERE appointment_id = $1::uuid AND clinic_id = $2::uuid
+			   AND (NOT $3::boolean OR professional_id = (SELECT professional_id FROM public.professionals WHERE user_id = $4::uuid))
+			 FOR NO KEY UPDATE`,
+			[appointmentId, actor.clinicId, isProfessional, actor.userId],
+		);
+		if(!appointment) {
+			throw Object.assign(new Error("Appointment not found"), { status: 404 });
+		}
+		if(appointment.state !== "reserved") {
+			throw Object.assign(new Error("Appointment is no longer reserved"), { status: 409 });
+		}
+
+		const { rows: [updated] } = await transaction.query<Pick<Appointment, "appointmentId">>(
+			`UPDATE public.appointments SET state = $2::public.appointment_state
+			 WHERE appointment_id = $1::uuid AND start_at < clock_timestamp()
+			 RETURNING appointment_id AS "appointmentId"`,
+			[appointment.appointmentId, state],
+		);
+		if(!updated) {
+			throw Object.assign(new Error("Appointment has not started"), { status: 409 });
+		}
+		await incrementAvailabilityVersion(transaction, actor.clinicId!);
+
+		return updated;
 
 	});
 

@@ -557,6 +557,8 @@ Cancellation, rescheduling, and outcome registration can race. A later transitio
 2. For cancellation, write the state, nonempty reason, and authenticated cancelling user together (`RF11`)
 3. For an outcome, require the current clock to be strictly past the start after lock waits. Set `attended` or `absent`, with both cancellation fields left null (`RF12`)
 
+Clinic administrators and reception may register outcomes for any appointment in their clinic. Healthcare professionals may register outcomes only for their own appointments.
+
 Cancellation and outcomes remove occupation, so they only need the appointment lock. Rescheduling adds occupation and follows [its agenda lock order](#atomic-rescheduling).
 
 ## Concurrent Weekly Schedule Changes

@@ -23,6 +23,7 @@ const otherUserId = randomUUID();
 let otherPatientId: string;
 let otherServiceId: string;
 const professionalIds = [professionalId, otherProfessionalId];
+const outcomeAppointmentIds: string[] = [];
 const startAt = "2035-01-08T14:00:00.000Z";
 let clinic: { clinicId: string; actorUserId: string; specialtyId: string; durationMinutes: number };
 
@@ -53,6 +54,33 @@ const cancelAppointment = (appointmentId: string, body: unknown = { cancellation
 		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
 		body: JSON.stringify(body),
 	});
+
+};
+
+const recordAppointmentOutcome = (appointmentId: string, body: unknown = { state: "attended" }, token = professionalToken) => {
+
+	return fetch(new URL(`/appointments/${appointmentId}/outcome`, apiUrl), {
+		method: "POST",
+		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+		body: JSON.stringify(body),
+	});
+
+};
+
+const createOutcomeAppointment = async (appointmentStart = "2000-01-03T14:00:00Z") => {
+
+	const { rows: [appointment] } = await setup.query<{ appointmentId: string; professionalId: string }>(
+		`INSERT INTO public.appointments (clinic_id, professional_id, patient_id, service_id, start_at, end_at)
+		 SELECT users.clinic_id, professional_id, $2::uuid, service_id, $4::timestamptz,
+		        $4::timestamptz+duration_minutes*interval '1 minute'
+		 FROM public.users JOIN public.professionals USING (clinic_id, user_id)
+		 JOIN public.services USING (clinic_id) WHERE identity_id = $1 AND service_id = $3::uuid
+		 RETURNING appointment_id AS "appointmentId", professional_id AS "professionalId"`,
+		[decodeJwt(professionalToken).sub, patientId, otherServiceId, appointmentStart],
+	);
+	outcomeAppointmentIds.push(appointment.appointmentId);
+
+	return appointment;
 
 };
 
@@ -116,6 +144,8 @@ beforeAll(async () => {
 afterEach(async () => {
 
 	await setup.query("DELETE FROM public.appointments WHERE professional_id = ANY($1::uuid[])", [professionalIds]);
+	await setup.query("DELETE FROM public.appointments WHERE appointment_id = ANY($1::uuid[])", [outcomeAppointmentIds]);
+	outcomeAppointmentIds.length = 0;
 	await setup.query("DELETE FROM public.professional_blocks WHERE professional_id = ANY($1::uuid[])", [professionalIds]);
 	await setup.query("DELETE FROM public.professional_schedules WHERE professional_id = ANY($1::uuid[])", [professionalIds]);
 	await setup.query("INSERT INTO public.professional_schedules (clinic_id, professional_id, weekday, start_minute, end_minute) SELECT $1, professional_id, weekday, 0, 1440 FROM unnest($2::uuid[]) AS professional_id CROSS JOIN generate_series(1, 7) AS weekday", [clinic.clinicId, professionalIds]);
@@ -287,9 +317,11 @@ it.each([
 	{ operation: "booking", failure: "missing" }, { operation: "booking", failure: "overflowed" },
 	{ operation: "rescheduling", failure: "missing" }, { operation: "rescheduling", failure: "overflowed" },
 	{ operation: "cancellation", failure: "missing" }, { operation: "cancellation", failure: "overflowed" },
+	{ operation: "outcome", failure: "missing" }, { operation: "outcome", failure: "overflowed" },
 ])("rolls back $operation when the availability version is $failure", async ({ operation, failure }) => {
 
-	const original = operation === "booking" ? undefined : await (await bookAppointment()).json();
+	const original = operation === "outcome" ? await createOutcomeAppointment()
+		: operation === "booking" ? undefined : await (await bookAppointment()).json();
 	const version = await readVersion();
 	try {
 
@@ -299,7 +331,9 @@ it.each([
 			await setup.query("UPDATE public.clinic_availability_versions SET version = 9223372036854775807 WHERE clinic_id = $1", [clinic.clinicId]);
 		}
 		let response: Response;
-		if(operation === "cancellation") {
+		if(operation === "outcome") {
+			response = await recordAppointmentOutcome(original.appointmentId);
+		} else if(operation === "cancellation") {
 			response = await cancelAppointment(original.appointmentId);
 		} else if(operation === "rescheduling") {
 			response = await rescheduleAppointment(original.appointmentId);
@@ -307,7 +341,7 @@ it.each([
 			response = await bookAppointment();
 		}
 		expect(response.status).toBe(500);
-		const { rows } = await setup.query("SELECT appointment_id, state FROM public.appointments WHERE professional_id = ANY($1::uuid[])", [professionalIds]);
+		const { rows } = await setup.query("SELECT appointment_id, state FROM public.appointments WHERE professional_id = ANY($1::uuid[]) OR appointment_id = $2", [professionalIds, original?.appointmentId]);
 		expect(rows).toEqual(original ? [{ appointment_id: original.appointmentId, state: "reserved" }] : []);
 
 	} finally {
@@ -421,36 +455,6 @@ it.each(["booking", "rescheduling"])("grants one destination when rescheduling r
 
 });
 
-it.each(["attended", "absent"])("rejects appointment changes after a controlled SQL outcome of %s commits", async (state) => {
-
-	const original = await (await bookAppointment()).json();
-	await setup.query("UPDATE public.appointments SET start_at = '2000-01-03 14:00Z', end_at = '2000-01-03 14:00Z'::timestamptz+$2::int*interval '1 minute' WHERE appointment_id = $1", [original.appointmentId, clinic.durationMinutes]);
-	const gate = await setup.connect();
-	const version = await readVersion();
-	const requests: Promise<Response>[] = [];
-	try {
-
-		await gate.query("BEGIN");
-		await gate.query("SELECT * FROM public.lock_user_for_share($1::uuid, $1::uuid)", [clinic.actorUserId]);
-		await gate.query("SELECT set_config('app.user_id', $1, true), set_config('app.clinic_id', $2, true)", [clinic.actorUserId, clinic.clinicId]);
-		await gate.query("SET LOCAL ROLE reception");
-		await gate.query("UPDATE public.appointments SET state = $2::public.appointment_state WHERE appointment_id = $1", [original.appointmentId, state]);
-		requests.push(rescheduleAppointment(original.appointmentId), cancelAppointment(original.appointmentId));
-		await waitForWriters(2);
-		await gate.query("UPDATE public.clinic_availability_versions SET version = version+1 WHERE clinic_id = $1", [clinic.clinicId]);
-		await gate.query("COMMIT");
-		expect((await Promise.all(requests)).map((response) => response.status)).toEqual([409, 409]);
-		expect((await setup.query("SELECT state FROM public.appointments WHERE professional_id = ANY($1::uuid[])", [professionalIds])).rows).toEqual([{ state }]);
-		expect(await readVersion()).toBe(version+1n);
-
-	} finally {
-		await gate.query("ROLLBACK");
-		await Promise.allSettled(requests);
-		gate.release();
-	}
-
-});
-
 it("cancels a historical replacement without agenda locks and commits its reason and actor", async () => {
 
 	const original = await (await bookAppointment()).json();
@@ -509,9 +513,16 @@ it.each([
 	{ first: "cancellation", second: "cancellation" },
 	{ first: "cancellation", second: "rescheduling" },
 	{ first: "rescheduling", second: "cancellation" },
-])("commits only $first when it wins a race against $second", async ({ first, second }) => {
+	{ first: "outcome", second: "cancellation" },
+	{ first: "cancellation", second: "outcome" },
+	{ first: "outcome", second: "rescheduling" },
+	{ first: "rescheduling", second: "outcome" },
+	{ first: "outcome", second: "outcome" },
+] as const)("commits only $first when it wins a race against $second", async ({ first, second }) => {
 
-	const original = await (await bookAppointment()).json();
+	const transitions = { cancellation: cancelAppointment, rescheduling: rescheduleAppointment, outcome: recordAppointmentOutcome };
+	const hasOutcome = first === "outcome" || second === "outcome";
+	const original = hasOutcome ? await createOutcomeAppointment() : await (await bookAppointment()).json();
 	const gate = await setup.connect();
 	const version = await readVersion();
 	const requests: Promise<Response>[] = [];
@@ -519,25 +530,127 @@ it.each([
 
 		await gate.query("BEGIN");
 		await gate.query("SELECT 1 FROM public.clinic_availability_versions WHERE clinic_id = $1 FOR NO KEY UPDATE", [clinic.clinicId]);
-		const winner = first === "cancellation" ? cancelAppointment(original.appointmentId) : rescheduleAppointment(original.appointmentId);
+		const winner = transitions[first](original.appointmentId);
 		requests.push(winner);
 		await waitForWriters(1);
-		const loser = second === "cancellation" ? cancelAppointment(original.appointmentId) : rescheduleAppointment(original.appointmentId);
+		const loser = second === "outcome" ? recordAppointmentOutcome(original.appointmentId, { state: "absent" })
+			: transitions[second](original.appointmentId);
 		requests.push(loser);
 		await waitForWriters(2);
 		expect((await setup.query("SELECT state FROM public.appointments WHERE appointment_id = $1", [original.appointmentId])).rows).toEqual([{ state: "reserved" }]);
 		await gate.query("COMMIT");
-		expect((await winner).status).toBe(first === "cancellation" ? 200 : 201);
+		expect((await winner).status).toBe(first === "rescheduling" ? 201 : 200);
 		expect((await loser).status).toBe(409);
+		const state = first === "outcome" ? "attended" : first === "cancellation" ? "cancelled" : "rescheduled";
+		expect((await setup.query("SELECT state FROM public.appointments WHERE appointment_id = $1", [original.appointmentId])).rows).toEqual([{ state }]);
 		expect(await readVersion()).toBe(version+1n);
-		const releasedPatientId = first === "cancellation" ? patientId : otherPatientId;
-		expect((await bookAppointment({ professionalId, patientId: releasedPatientId, serviceId, startAt })).status).toBe(201);
+		if(!hasOutcome) {
+			const releasedPatientId = first === "cancellation" ? patientId : otherPatientId;
+			expect((await bookAppointment({ professionalId, patientId: releasedPatientId, serviceId, startAt })).status).toBe(201);
+		}
 
 	} finally {
 		await gate.query("ROLLBACK");
 		await Promise.allSettled(requests);
 		gate.release();
 	}
+
+});
+
+it.each(["attended", "absent"])("records %s without agenda locks and commits one availability increment", async (state) => {
+
+	const appointment = await createOutcomeAppointment();
+	const gate = await setup.connect();
+	const version = await readVersion();
+	try {
+
+		await gate.query("BEGIN");
+		await gate.query("SELECT 1 FROM public.services WHERE service_id = $1 FOR NO KEY UPDATE", [otherServiceId]);
+		await gate.query("SELECT 1 FROM public.professionals WHERE professional_id = $1 FOR NO KEY UPDATE", [appointment.professionalId]);
+		await gate.query("SELECT 1 FROM public.patients WHERE patient_id = $1 FOR NO KEY UPDATE", [patientId]);
+		const response = await recordAppointmentOutcome(appointment.appointmentId, { state });
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ appointmentId: appointment.appointmentId });
+		const { rows } = await setup.query("SELECT state, cancellation_reason, cancelled_by_user_id, xmin::text AS transaction_id FROM public.appointments WHERE appointment_id = $1", [appointment.appointmentId]);
+		const availability = (await setup.query("SELECT xmin::text AS transaction_id FROM public.clinic_availability_versions WHERE clinic_id = $1", [clinic.clinicId])).rows[0];
+		expect(rows).toEqual([{ state, cancellation_reason: null, cancelled_by_user_id: null, ...availability }]);
+		expect(await readVersion()).toBe(version+1n);
+		expect((await recordAppointmentOutcome(appointment.appointmentId, { state: state === "attended" ? "absent" : "attended" })).status).toBe(409);
+		expect((await cancelAppointment(appointment.appointmentId)).status).toBe(409);
+		expect(await readVersion()).toBe(version+1n);
+
+	} finally {
+		await gate.query("ROLLBACK");
+		gate.release();
+	}
+
+	expect((await rescheduleAppointment(appointment.appointmentId)).status).toBe(409);
+	expect(await readVersion()).toBe(version+1n);
+
+});
+
+it("authorizes and validates outcomes without exposing other professionals or accepting future appointments", async () => {
+
+	const appointment = await createOutcomeAppointment(startAt);
+	const version = await readVersion();
+	for(const [token, status] of [["", 401], [platformToken, 403]] as const) {
+		expect((await recordAppointmentOutcome(appointment.appointmentId, undefined, token)).status).toBe(status);
+	}
+	for(const body of [{}, { state: "reserved" }, { state: null }, { state: "attended", professionalId }]) {
+		expect((await recordAppointmentOutcome(appointment.appointmentId, body)).status).toBe(400);
+	}
+	expect((await recordAppointmentOutcome("invalid")).status).toBe(400);
+	const foreign = (await setup.query("SELECT appointment_id FROM public.appointments WHERE clinic_id <> $1 LIMIT 1", [clinic.clinicId])).rows[0];
+	const otherResponse = await bookAppointment({ patientId: otherPatientId, professionalId, serviceId, startAt });
+	expect(otherResponse.status).toBe(201);
+	const other = await otherResponse.json();
+	for(const id of [randomUUID(), foreign.appointment_id, other.appointmentId]) {
+		expect((await recordAppointmentOutcome(id)).status).toBe(404);
+	}
+	for(const token of [administratorToken, receptionToken]) {
+		expect((await recordAppointmentOutcome(foreign.appointment_id, undefined, token)).status).toBe(404);
+		expect((await recordAppointmentOutcome(appointment.appointmentId, undefined, token)).status).toBe(409);
+	}
+	expect((await recordAppointmentOutcome(appointment.appointmentId)).status).toBe(409);
+	expect(await readVersion()).toBe(version+1n);
+	expect((await setup.query("SELECT state FROM public.appointments WHERE appointment_id = $1", [appointment.appointmentId])).rows).toEqual([{ state: "reserved" }]);
+
+	const gate = await setup.connect();
+	let outcome: Promise<Response> | undefined;
+	try {
+
+		await gate.query("BEGIN");
+		await gate.query("UPDATE public.appointments SET start_at = '2000-01-03 14:00Z', end_at = '2000-01-03 14:00Z'::timestamptz+$2::int*interval '1 minute' WHERE appointment_id = $1", [appointment.appointmentId, clinic.durationMinutes]);
+		outcome = recordAppointmentOutcome(appointment.appointmentId, { state: "absent" });
+		await waitForWriters(1);
+		await gate.query("COMMIT");
+		expect((await outcome).status).toBe(200);
+		expect(await readVersion()).toBe(version+2n);
+
+	} finally {
+		await gate.query("ROLLBACK");
+		await outcome;
+		gate.release();
+	}
+
+});
+
+it("allows administrators and reception to record outcomes for other professionals", async () => {
+
+	const version = await readVersion();
+	for(const [token, state] of [[administratorToken, "attended"], [receptionToken, "absent"]] as const) {
+
+		const booked = await bookAppointment();
+		expect(booked.status).toBe(201);
+		const appointment = await booked.json();
+		await setup.query("UPDATE public.appointments SET start_at = '2000-01-03 14:00Z', end_at = '2000-01-03 14:00Z'::timestamptz+$2::int*interval '1 minute' WHERE appointment_id = $1", [appointment.appointmentId, clinic.durationMinutes]);
+		const response = await recordAppointmentOutcome(appointment.appointmentId, { state }, token);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual(appointment);
+		expect((await setup.query("SELECT state FROM public.appointments WHERE appointment_id = $1", [appointment.appointmentId])).rows).toEqual([{ state }]);
+
+	}
+	expect(await readVersion()).toBe(version+4n);
 
 });
 

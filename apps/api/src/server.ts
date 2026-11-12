@@ -5,7 +5,7 @@ import "./config/redis-timeouts.js";
 import { UserRole } from "./generated/prisma/enums.js";
 import { createAuthentication, requireRoles } from "./middleware/authentication.js";
 import { readAppointmentCountsHandler, readClinicAgendaHandler, readOwnAgendaHandler, readPatientAppointmentsHandler, readProfessionalAgendaHandler } from "./routes/appointment-queries.js";
-import { cancelAppointmentHandler, createAppointmentHandler, rescheduleAppointmentHandler } from "./routes/appointments.js";
+import { cancelAppointmentHandler, createAppointmentHandler, recordAppointmentOutcomeHandler, rescheduleAppointmentHandler } from "./routes/appointments.js";
 import { readAuditRecordsHandler } from "./routes/audit-records.js";
 import { readBlocksHandler, createBlockHandler } from "./routes/blocks.js";
 import { readClinicalNoteHandler, createClinicalNoteHandler } from "./routes/clinical-notes.js";
@@ -64,6 +64,7 @@ router.get("/appointments/agenda", authenticate, requireRoles(UserRole.reception
 router.post("/appointments", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), createAppointmentHandler);
 router.post("/appointments/:appointmentId/reschedule", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), rescheduleAppointmentHandler);
 router.post("/appointments/:appointmentId/cancel", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), cancelAppointmentHandler);
+router.post("/appointments/:appointmentId/outcome", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), recordAppointmentOutcomeHandler);
 router.get("/appointments/counts", authenticate, requireRoles(UserRole.clinicAdministrator), readAppointmentCountsHandler);
 router.get("/professionals/me/agenda", authenticate, requireRoles(UserRole.healthcareProfessional), readOwnAgendaHandler);
 router.get("/professionals/:professionalId/agenda", authenticate, requireRoles(UserRole.reception), readProfessionalAgendaHandler);
