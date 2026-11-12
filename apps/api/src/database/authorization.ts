@@ -1,8 +1,8 @@
 import type { Pool } from "pg";
-import type { Appointment, Professional, User } from "../../generated/prisma/client.js";
-import { UserRole } from "../../generated/prisma/enums.js";
-import type { Authentication } from "../../middleware/types.js";
-import { runTransaction } from "./run-transaction.js";
+import type { Appointment, Professional, User } from "../generated/prisma/client.js";
+import { UserRole } from "../generated/prisma/enums.js";
+import type { Authentication } from "../middleware/types.js";
+import { runTransaction } from "./transactions.js";
 import type { TransactionClient } from "./types.js";
 
 const databaseProfiles = {
@@ -233,7 +233,7 @@ const resolveRescheduleReferences = async (
 export const runAuthorizedTransaction = async <T>(
 	authentication: Authentication,
 	operation: AuthorizedOperation,
-	callback: (client: TransactionClient, actor: ActorContext, markKeycloakRoleUpdateStarted: () => void) => Promise<T>,
+	callback: (client: TransactionClient, actor: ActorContext, markRoleUpdateStarted: () => void) => Promise<T>,
 	pool?: Pool,
 ) => {
 
@@ -243,7 +243,7 @@ export const runAuthorizedTransaction = async <T>(
 
 	return runTransaction(
 		policy.isolation,
-		async (client, markKeycloakRoleUpdateStarted) => {
+		async (client, markRoleUpdateStarted) => {
 
 			const {
 				rows: [actorIdentity],
@@ -341,7 +341,7 @@ export const runAuthorizedTransaction = async <T>(
 			);
 			await client.query(databaseProfiles[actorRole].selectRole);
 
-			return callback(client, actor, markKeycloakRoleUpdateStarted);
+			return callback(client, actor, markRoleUpdateStarted);
 
 		},
 		pool,

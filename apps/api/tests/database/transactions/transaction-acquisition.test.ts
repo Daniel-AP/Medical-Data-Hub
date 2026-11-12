@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { expect, it, vi } from "vitest";
-import { runTransaction } from "../../../src/database/transactions/run-transaction.js";
+import { runTransaction } from "../../../src/database/transactions.js";
 
 it("does not run the operation when the pool rejects acquisition", async () => {
 

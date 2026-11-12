@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Client, Pool } from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { readAuditRecords } from "../../../src/database/audit/read-records.js";
+import { readAuditRecords } from "../../../src/database/audit-records.js";
 import type { AuditRecord, User } from "../../../src/generated/prisma/client.js";
 import { UserRole } from "../../../src/generated/prisma/enums.js";
 

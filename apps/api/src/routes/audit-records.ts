@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import { readAuditRecords } from "../database/audit/read-records.js";
+import { readAuditRecords } from "../database/audit-records.js";
 import { isUuid, parseTimestamp } from "../validation.js";
 
 const auditFilterNames = new Set(["userId", "patientId", "from", "to"]);
@@ -21,7 +21,7 @@ const parseUuid = (value: unknown) => {
 
 };
 
-export const listAuditRecords: RequestHandler = async (request, response) => {
+export const readAuditRecordsHandler: RequestHandler = async (request, response) => {
 
 	const query = request.query;
 	if(Object.keys(query).some((name) => !auditFilterNames.has(name))) {
@@ -36,7 +36,6 @@ export const listAuditRecords: RequestHandler = async (request, response) => {
 		throw invalidFilters();
 	}
 
-	// Authentication and role middleware run before this handler
 	const records = await readAuditRecords(request.authentication!, { userId, patientId, from, to });
 	response.json({ records });
 

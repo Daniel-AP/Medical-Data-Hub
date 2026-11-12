@@ -4,9 +4,9 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { app, router } from "../../src/app.js";
-import type { createAccessTokenVerifier, createLogoutIdTokenVerifier } from "../../src/clients/keycloak/token-verification.js";
-import { createAuthenticationMiddleware } from "../../src/middleware/authentication.js";
-import { createLogoutRequestHandler } from "../../src/routes/logout.js";
+import type { createAccessTokenVerifier, createLogoutIdTokenVerifier } from "../../src/clients/keycloak-tokens.js";
+import { createAuthentication } from "../../src/middleware/authentication.js";
+import { createLogoutHandler } from "../../src/routes/logout.js";
 
 const issuer = "http://localhost:8080/realms/medical-data-hub";
 const verifyAccessToken = vi.fn<ReturnType<typeof createAccessTokenVerifier>>();
@@ -23,8 +23,8 @@ beforeAll(async () => {
 
 	router.post(
 		"/auth/logout-request",
-		createAuthenticationMiddleware(verifyAccessToken),
-		createLogoutRequestHandler(verifyIdToken, issuer),
+		createAuthentication(verifyAccessToken),
+		createLogoutHandler(verifyIdToken, issuer),
 	);
 
 	server = app.listen(0, "127.0.0.1");

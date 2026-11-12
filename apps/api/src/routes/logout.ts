@@ -1,9 +1,9 @@
 import type { RequestHandler } from "express";
-import type { createLogoutIdTokenVerifier } from "../clients/keycloak/token-verification.js";
+import type { createLogoutIdTokenVerifier } from "../clients/keycloak-tokens.js";
 
 type LogoutIdTokenVerifier = ReturnType<typeof createLogoutIdTokenVerifier>;
 
-export const createLogoutRequestHandler = (verifyIdToken: LogoutIdTokenVerifier, issuer: string): RequestHandler => {
+export const createLogoutHandler = (verifyIdToken: LogoutIdTokenVerifier, issuer: string): RequestHandler => {
 
 	return async (request, response) => {
 

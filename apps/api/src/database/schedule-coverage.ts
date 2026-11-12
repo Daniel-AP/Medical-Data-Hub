@@ -34,7 +34,7 @@ export const isScheduleCovered = (week: ScheduleInterval[], startAt: Date, endAt
 		const intervalEnd = midnight+endMinute*60_000-local.offset;
 		const next = Math.min(end, intervalEnd, cursor+60_000);
 		const offsetChanged = readLocalTime(next-1).offset !== local.offset;
-		// IANA transitions have second precision. Inspect that boundary without skipping a local-time gap.
+		// Offset changes can fall between UTC minutes
 		cursor = offsetChanged ? Math.min(next, Math.floor(cursor/1000)*1000+1000) : next;
 
 	}

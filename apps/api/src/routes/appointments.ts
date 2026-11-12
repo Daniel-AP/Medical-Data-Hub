@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { cancelAppointment, createAppointment, rescheduleAppointment } from "../database/appointments.js";
 import { isRequiredText, isUuid, parseTimestamp } from "../validation.js";
 
-export const registerAppointment: RequestHandler = async (request, response) => {
+export const createAppointmentHandler: RequestHandler = async (request, response) => {
 
 	const body = request.body;
 	const startAt = parseTimestamp(body?.startAt);
@@ -18,7 +18,7 @@ export const registerAppointment: RequestHandler = async (request, response) => 
 
 };
 
-export const moveAppointment: RequestHandler = async (request, response) => {
+export const rescheduleAppointmentHandler: RequestHandler = async (request, response) => {
 
 	const { appointmentId } = request.params;
 	const body = request.body;

@@ -2,9 +2,9 @@ import { randomInt } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
-import { databaseTimeouts } from "../../config/database-timeouts.js";
-import { OperationOutcomeUnknownError } from "../../errors/operation-outcome-unknown.js";
-import { classifyTransactionFailure, TransactionFailure } from "./transaction-failure.js";
+import { databaseTimeouts } from "../config/database-timeouts.js";
+import { OperationOutcomeUnknownError } from "../errors/operation-outcome-unknown.js";
+import { classifyTransactionFailure, TransactionFailure } from "./transaction-errors.js";
 import type { TransactionClient, TransactionStage } from "./types.js";
 
 const runtimePool = new Pool({
@@ -19,9 +19,8 @@ const beginStatements = {
 };
 
 type TransactionIsolation = keyof typeof beginStatements;
-type TransactionCallback<T> = (client: TransactionClient, markKeycloakRoleUpdateStarted: () => void) => Promise<T>;
-type TransactionAttempt<T> =
-	| { status: "committed"; result: T }
+type TransactionCallback<T> = (client: TransactionClient, markRoleUpdateStarted: () => void) => Promise<T>;
+type TransactionAttempt<T> = { status: "committed"; result: T }
 	| { status: "retry"; failure: TransactionFailure }
 	| { status: "failed"; failure: unknown };
 
@@ -56,7 +55,7 @@ const rollbackTransaction = async (client: PoolClient) => {
 
 		return command === "ROLLBACK";
 	} catch {
-		// Keep the original failure and discard the connection
+		// Preserve the operation failure
 		return false;
 	}
 
@@ -78,7 +77,7 @@ const runTransactionAttempt = async <T>(
 	let stage: Exclude<TransactionStage, "acquire"> | "closed" = "begin";
 	let transactionEndConfirmed = false;
 	let connectionError: Error | undefined;
-	let keycloakRoleUpdateStarted = false;
+	let roleUpdateStarted = false;
 
 	const onConnectionError = (error: Error) => {
 		connectionError = error;
@@ -98,9 +97,9 @@ const runTransactionAttempt = async <T>(
 		},
 	};
 
-	const markKeycloakRoleUpdateStarted = () => {
+	const markRoleUpdateStarted = () => {
 		assertOperationActive();
-		keycloakRoleUpdateStarted = true;
+		roleUpdateStarted = true;
 	};
 
 	try {
@@ -119,7 +118,7 @@ const runTransactionAttempt = async <T>(
 				        pg_catalog.set_config('app.clinic_id', '', true)`,
 				[`${databaseTimeouts.lockMs}ms`, `${databaseTimeouts.statementMs}ms`],
 			);
-			const result = await callback(operationClient, markKeycloakRoleUpdateStarted);
+			const result = await callback(operationClient, markRoleUpdateStarted);
 
 			stage = "commit";
 			const { command } = await client.query("COMMIT");
@@ -162,11 +161,11 @@ const runTransactionAttempt = async <T>(
 			transactionEndConfirmed = await rollbackTransaction(client);
 		}
 
-		if(retryableFailure && transactionEndConfirmed && !connectionError && !keycloakRoleUpdateStarted) {
+		if(retryableFailure && transactionEndConfirmed && !connectionError && !roleUpdateStarted) {
 			return { status: "retry", failure: retryableFailure };
 		}
 
-		if(keycloakRoleUpdateStarted && failure instanceof TransactionFailure) {
+		if(roleUpdateStarted && failure instanceof TransactionFailure) {
 			return { status: "failed", failure: new OperationOutcomeUnknownError(failure) };
 		}
 

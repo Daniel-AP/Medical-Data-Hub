@@ -1,18 +1,17 @@
-import { keycloakHttpTimeoutMs } from "../../config/keycloak-timeout.js";
-import { KeycloakRoleUpdatePartialError } from "../../errors/keycloak-role-update-partial.js";
-import { OperationOutcomeUnknownError } from "../../errors/operation-outcome-unknown.js";
-import { isRequiredText } from "../../validation.js";
-import { keycloakRoles } from "./roles.js";
-
-export type KeycloakAdminSettings = { issuer: URL; internalUrl: URL; applicationId: string; applicationSecret: string };
+import { keycloakTimeouts } from "../config/keycloak-timeouts.js";
+import { KeycloakRoleUpdatePartialError } from "../errors/keycloak-role-update-partial.js";
+import { OperationOutcomeUnknownError } from "../errors/operation-outcome-unknown.js";
+import { isRequiredText } from "../validation.js";
+import { keycloakRoles } from "./keycloak-roles.js";
+import type { KeycloakAdminSettings } from "./types.js";
 
 type KeycloakAdminAccess = {
 	adminUrl: URL;
-	applicationId: string;
+	clientId: string;
 	headers: { Authorization: string };
 	fetchKeycloak: typeof fetch;
 };
-type ApplicationDetails = { id: string; clientId: string };
+type KeycloakClient = { id: string; clientId: string };
 type RoleMapping = { id: string; name: string };
 
 const keycloakUnavailable = (cause?: unknown) => {
@@ -26,7 +25,7 @@ const fetchFromKeycloak = async (url: URL, options: RequestInit, fetchKeycloak: 
 		return await fetchKeycloak(url, {
 			...options,
 			redirect: "error",
-			signal: AbortSignal.timeout(keycloakHttpTimeoutMs),
+			signal: AbortSignal.timeout(keycloakTimeouts.requestMs),
 		});
 
 	} catch (error) {
@@ -50,7 +49,7 @@ const parseKeycloakJson = async <T>(response: Response): Promise<T> => {
 };
 
 export const getKeycloakAdminAccess = async (
-	{ issuer, internalUrl, applicationId, applicationSecret }: KeycloakAdminSettings,
+	{ issuer, internalUrl, clientId, clientSecret }: KeycloakAdminSettings,
 	fetchKeycloak: typeof fetch = fetch,
 ): Promise<KeycloakAdminAccess> => {
 
@@ -58,7 +57,7 @@ export const getKeycloakAdminAccess = async (
 	const baseUrl = `${internalUrl.href.replace(/\/$/, "")}/`;
 	const tokenUrl = new URL(`realms/${realm}/protocol/openid-connect/token`, baseUrl);
 	const adminUrl = new URL(`admin/realms/${realm}/`, baseUrl);
-	const credentials = Buffer.from(`${applicationId}:${applicationSecret}`).toString("base64");
+	const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 	const token = await fetchFromKeycloak(tokenUrl, {
 		method: "POST",
 		headers: { Authorization: `Basic ${credentials}` },
@@ -69,7 +68,7 @@ export const getKeycloakAdminAccess = async (
 		throw keycloakUnavailable();
 	}
 
-	return { adminUrl, applicationId, headers: { Authorization: `Bearer ${accessToken}` }, fetchKeycloak };
+	return { adminUrl, clientId, headers: { Authorization: `Bearer ${accessToken}` }, fetchKeycloak };
 
 };
 
@@ -101,7 +100,7 @@ const changeKeycloakRoles = async (
 	mappingUrl: URL,
 	method: "POST" | "DELETE",
 	roles: RoleMapping[],
-	markKeycloakRoleUpdateStarted: () => void,
+	markRoleUpdateStarted: () => void,
 ) => {
 
 	const options: RequestInit = {
@@ -109,10 +108,10 @@ const changeKeycloakRoles = async (
 		headers: { ...headers, "Content-Type": "application/json" },
 		body: JSON.stringify(roles),
 		redirect: "error",
-		signal: AbortSignal.timeout(keycloakHttpTimeoutMs),
+		signal: AbortSignal.timeout(keycloakTimeouts.requestMs),
 	};
 	let response: Response;
-	markKeycloakRoleUpdateStarted();
+	markRoleUpdateStarted();
 	try {
 		response = await fetchKeycloak(mappingUrl, options);
 	} catch (error) {
@@ -136,18 +135,18 @@ export const replaceKeycloakUserRole = async (
 	access: KeycloakAdminAccess,
 	identityId: string,
 	roleName: keyof typeof keycloakRoles,
-	markKeycloakRoleUpdateStarted: () => void,
+	markRoleUpdateStarted: () => void,
 ) => {
 
-	const query = new URLSearchParams({ clientId: access.applicationId });
-	const applications = await getKeycloakAdminJson<ApplicationDetails[]>(access, `clients?${query}`);
-	const application = applications.find((application) => application.clientId === access.applicationId);
-	if(!application) {
+	const query = new URLSearchParams({ clientId: access.clientId });
+	const clients = await getKeycloakAdminJson<KeycloakClient[]>(access, `clients?${query}`);
+	const client = clients.find((client) => client.clientId === access.clientId);
+	if(!client) {
 		throw keycloakUnavailable();
 	}
 
-	const applicationUuid = encodeURIComponent(application.id);
-	const mappingPath = `users/${encodeURIComponent(identityId)}/role-mappings/clients/${applicationUuid}`;
+	const clientUuid = encodeURIComponent(client.id);
+	const mappingPath = `users/${encodeURIComponent(identityId)}/role-mappings/clients/${clientUuid}`;
 	const mappings = await getKeycloakAdminJson<RoleMapping[]>(access, mappingPath);
 	const rolesToRemove = mappings.filter(({ name }) => name !== roleName && Object.hasOwn(keycloakRoles, name));
 	const mappingUrl = new URL(mappingPath, access.adminUrl);
@@ -155,12 +154,12 @@ export const replaceKeycloakUserRole = async (
 
 	if(!mappings.some(({ name }) => name === roleName)) {
 
-		const roles = await getKeycloakAdminJson<RoleMapping[]>(access, `clients/${applicationUuid}/roles`);
+		const roles = await getKeycloakAdminJson<RoleMapping[]>(access, `clients/${clientUuid}/roles`);
 		const roleToAdd = roles.find(({ name }) => name === roleName);
 		if(!roleToAdd) {
 			throw keycloakUnavailable();
 		}
-		await changeKeycloakRoles(access, mappingUrl, "POST", [roleToAdd], markKeycloakRoleUpdateStarted);
+		await changeKeycloakRoles(access, mappingUrl, "POST", [roleToAdd], markRoleUpdateStarted);
 		roleAdded = true;
 
 	}
@@ -169,7 +168,7 @@ export const replaceKeycloakUserRole = async (
 	}
 
 	try {
-		await changeKeycloakRoles(access, mappingUrl, "DELETE", rolesToRemove, markKeycloakRoleUpdateStarted);
+		await changeKeycloakRoles(access, mappingUrl, "DELETE", rolesToRemove, markRoleUpdateStarted);
 	} catch (error) {
 
 		if(roleAdded && !(error instanceof OperationOutcomeUnknownError)) {

@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { Client, Pool } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { createAuditReadRecorder, insertAuditEvent } from "../../../src/database/audit/record-events.js";
-import { runTransaction } from "../../../src/database/transactions/run-transaction.js";
-import type { TransactionClient } from "../../../src/database/transactions/types.js";
+import { createAuditReadRecorder, insertAuditEvent } from "../../../src/database/audit-events.js";
+import { runTransaction } from "../../../src/database/transactions.js";
+import type { TransactionClient } from "../../../src/database/types.js";
 import type { AuditRecord, ClinicalNote, Patient } from "../../../src/generated/prisma/client.js";
 
 type AuditFixture = Pick<AuditRecord, "clinicId" | "userId" | "patientId" | "appointmentId">;

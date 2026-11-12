@@ -1,19 +1,18 @@
 import type { Appointment, Clinic, Professional, Service, User } from "../generated/prisma/client.js";
 import { UserRole } from "../generated/prisma/enums.js";
 import type { Authentication } from "../middleware/types.js";
-import { isScheduleCovered } from "../schedules/coverage.js";
-import type { ScheduleInterval } from "../schedules/types.js";
+import { isScheduleCovered } from "./schedule-coverage.js";
 import { incrementAvailabilityVersion } from "./availability-versions.js";
-import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
-import type { TransactionClient } from "./transactions/types.js";
+import { runAuthorizedTransaction } from "./authorization.js";
+import type { ScheduleInterval, TransactionClient } from "./types.js";
 
 type AppointmentRegistration = Pick<Appointment, "patientId" | "professionalId" | "serviceId" | "startAt">;
 type AppointmentDestination = Pick<AppointmentRegistration, "professionalId" | "startAt">;
-type BookingService = Pick<Service, "durationMinutes" | "specialtyId" | "isActive">;
-type BookingProfessional = Pick<Professional, "professionalId" | "specialtyId">;
+type AppointmentService = Pick<Service, "durationMinutes" | "specialtyId" | "isActive">;
+type AppointmentProfessional = Pick<Professional, "professionalId" | "specialtyId">;
 type AppointmentEligibility = {
-	service: BookingService;
-	professional: BookingProfessional;
+	service: AppointmentService;
+	professional: AppointmentProfessional;
 	user: Pick<User, "isActive"> & { role: string };
 };
 
@@ -22,7 +21,7 @@ const lockService = async (transaction: TransactionClient, serviceId: string, is
 	const query = isReception
 		? `SELECT duration_minutes AS "durationMinutes", specialty_id AS "specialtyId", is_active AS "isActive" FROM public.lock_service_for_share($1::uuid)`
 		: `SELECT duration_minutes AS "durationMinutes", specialty_id AS "specialtyId", is_active AS "isActive" FROM public.services WHERE service_id = $1::uuid FOR SHARE`;
-	const { rows: [service] } = await transaction.query<BookingService>(query, [serviceId]);
+	const { rows: [service] } = await transaction.query<AppointmentService>(query, [serviceId]);
 	if(!service) {
 		throw Object.assign(new Error("Service not found"), { status: 404 });
 	}
@@ -36,7 +35,7 @@ const lockProfessional = async (transaction: TransactionClient, professionalId: 
 	const query = isReception
 		? `SELECT professional_id AS "professionalId", specialty_id AS "specialtyId" FROM public.lock_professional_for_no_key_update($1::uuid)`
 		: `SELECT professional_id AS "professionalId", specialty_id AS "specialtyId" FROM public.professionals WHERE professional_id = $1::uuid FOR NO KEY UPDATE`;
-	const { rows: [professional] } = await transaction.query<BookingProfessional>(query, [professionalId]);
+	const { rows: [professional] } = await transaction.query<AppointmentProfessional>(query, [professionalId]);
 	if(!professional) {
 		throw Object.assign(new Error("Professional not found"), { status: 404 });
 	}
@@ -157,7 +156,7 @@ export const rescheduleAppointment = (authentication: Authentication, appointmen
 		const references = actor.originalAppointment!;
 		const isReception = actor.role === UserRole.reception;
 		const service = await lockService(transaction, references.serviceId, isReception);
-		const professionals = new Map<string, BookingProfessional>();
+		const professionals = new Map<string, AppointmentProfessional>();
 		const professionalIds = new Set([references.professionalId, destination.professionalId.toLowerCase()]);
 		for(const professionalId of [...professionalIds].sort()) {
 			professionals.set(professionalId, await lockProfessional(transaction, professionalId, isReception));

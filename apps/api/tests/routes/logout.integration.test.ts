@@ -3,9 +3,9 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { app, router } from "../../src/app.js";
-import { createAccessTokenVerifier, createLogoutIdTokenVerifier } from "../../src/clients/keycloak/token-verification.js";
-import { createAuthenticationMiddleware } from "../../src/middleware/authentication.js";
-import { createLogoutRequestHandler } from "../../src/routes/logout.js";
+import { createAccessTokenVerifier, createLogoutIdTokenVerifier } from "../../src/clients/keycloak-tokens.js";
+import { createAuthentication } from "../../src/middleware/authentication.js";
+import { createLogoutHandler } from "../../src/routes/logout.js";
 
 type TokenResponse = { access_token: string; id_token: string; refresh_token: string };
 
@@ -35,8 +35,8 @@ beforeAll(async () => {
 
 	router.post(
 		"/auth/logout-request",
-		createAuthenticationMiddleware(verifyAccessToken),
-		createLogoutRequestHandler(createLogoutIdTokenVerifier(configuration), issuer),
+		createAuthentication(verifyAccessToken),
+		createLogoutHandler(createLogoutIdTokenVerifier(configuration), issuer),
 	);
 
 	server = app.listen(0, "127.0.0.1");

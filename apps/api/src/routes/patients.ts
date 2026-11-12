@@ -4,7 +4,7 @@ import { isCalendarDate, isEmail, isPhone, isRequiredText, isUuid } from "../val
 
 const patientFields = ["identification", "name", "dateOfBirth", "email", "phone"];
 
-export const registerPatient: RequestHandler = async (request, response) => {
+export const createPatientHandler: RequestHandler = async (request, response) => {
 
 	const body = request.body;
 	const identification: unknown = body?.identification;
@@ -26,7 +26,7 @@ export const registerPatient: RequestHandler = async (request, response) => {
 
 };
 
-export const editPatient: RequestHandler = async (request, response) => {
+export const updatePatientHandler: RequestHandler = async (request, response) => {
 
 	const { patientId } = request.params;
 	const body = request.body;
@@ -52,7 +52,7 @@ export const editPatient: RequestHandler = async (request, response) => {
 
 };
 
-export const getPatient: RequestHandler = async (request, response) => {
+export const readPatientHandler: RequestHandler = async (request, response) => {
 
 	const { patientId } = request.params;
 	if(!isUuid(patientId)) {

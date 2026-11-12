@@ -1,4 +1,4 @@
-import { redisTimeouts } from "../../config/redis-timeouts.js";
+import { redisTimeouts } from "../config/redis-timeouts.js";
 
 export class RedisBatchTimeoutError extends Error {
 	constructor() {

@@ -3,8 +3,8 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { app, router } from "../../src/app.js";
-import type { createAccessTokenVerifier } from "../../src/clients/keycloak/token-verification.js";
-import { createAuthenticationMiddleware } from "../../src/middleware/authentication.js";
+import type { createAccessTokenVerifier } from "../../src/clients/keycloak-tokens.js";
+import { createAuthentication } from "../../src/middleware/authentication.js";
 
 const verifyAccessToken = vi.fn<ReturnType<typeof createAccessTokenVerifier>>();
 let server: Server;
@@ -12,7 +12,7 @@ let url: string;
 
 beforeAll(async () => {
 
-	router.get("/session-check", createAuthenticationMiddleware(verifyAccessToken), (request, response) => {
+	router.get("/session-check", createAuthentication(verifyAccessToken), (request, response) => {
 		response.json(request.authentication);
 	});
 

@@ -1,8 +1,8 @@
 import type { Service } from "../generated/prisma/client.js";
 import type { Authentication } from "../middleware/types.js";
 import { incrementAvailabilityVersion } from "./availability-versions.js";
-import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
-import { TransactionFailure } from "./transactions/transaction-failure.js";
+import { runAuthorizedTransaction } from "./authorization.js";
+import { TransactionFailure } from "./transaction-errors.js";
 
 type ServiceRegistration = Pick<Service, "name" | "durationMinutes" | "specialtyId">;
 type ServiceDetails = Pick<Service, "serviceId" | "name" | "durationMinutes" | "specialtyId" | "isActive">;

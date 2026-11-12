@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { createProfessionalBlock, readProfessionalBlocks } from "../database/blocks.js";
 import { isUuid, parseTimestamp } from "../validation.js";
 
-export const listBlocks: RequestHandler = async (request, response) => {
+export const readBlocksHandler: RequestHandler = async (request, response) => {
 
 	const { professionalId } = request.params;
 	if(!isUuid(professionalId) || Object.keys(request.query).length !== 0) {
@@ -14,7 +14,7 @@ export const listBlocks: RequestHandler = async (request, response) => {
 
 };
 
-export const registerBlock: RequestHandler = async (request, response) => {
+export const createBlockHandler: RequestHandler = async (request, response) => {
 
 	const { professionalId } = request.params;
 	const body = request.body;

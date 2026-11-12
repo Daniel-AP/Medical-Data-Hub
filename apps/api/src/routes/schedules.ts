@@ -1,6 +1,6 @@
 import type { RequestHandler } from "express";
 import { readWeeklySchedule, replaceWeeklySchedule } from "../database/schedules.js";
-import type { ScheduleInterval } from "../schedules/types.js";
+import type { ScheduleInterval } from "../database/types.js";
 import { isUuid } from "../validation.js";
 
 const isScheduleInterval = (value: unknown): value is ScheduleInterval => {
@@ -17,7 +17,7 @@ const isScheduleInterval = (value: unknown): value is ScheduleInterval => {
 
 };
 
-export const listSchedules: RequestHandler = async (request, response) => {
+export const readWeeklyScheduleHandler: RequestHandler = async (request, response) => {
 
 	const { professionalId } = request.params;
 	if(!isUuid(professionalId) || Object.keys(request.query).length !== 0) {
@@ -29,7 +29,7 @@ export const listSchedules: RequestHandler = async (request, response) => {
 
 };
 
-export const replaceSchedules: RequestHandler = async (request, response) => {
+export const replaceWeeklyScheduleHandler: RequestHandler = async (request, response) => {
 
 	const { professionalId } = request.params;
 	const intervals: unknown = request.body?.intervals;

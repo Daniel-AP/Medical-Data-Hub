@@ -1,6 +1,6 @@
 import type { RequestHandler } from "express";
-import { getKeycloakAdminAccess, isKeycloakIdentityId, keycloakUserExists, replaceKeycloakUserRole } from "../clients/keycloak/admin-api.js";
-import type { KeycloakAdminSettings } from "../clients/keycloak/admin-api.js";
+import { getKeycloakAdminAccess, isKeycloakIdentityId, keycloakUserExists, replaceKeycloakUserRole } from "../clients/keycloak-admin.js";
+import type { KeycloakAdminSettings } from "../clients/types.js";
 import { checkClinicCreationPermission, createClinic } from "../database/clinics.js";
 import { isRequiredText } from "../validation.js";
 
@@ -20,7 +20,7 @@ const isNamedTimeZone = (timeZone: string) => {
 
 };
 
-export const createClinicRequestHandler = (settings: KeycloakAdminSettings, fetchKeycloak: typeof fetch = fetch): RequestHandler => {
+export const createClinicHandler = (settings: KeycloakAdminSettings, fetchKeycloak: typeof fetch = fetch): RequestHandler => {
 
 	return async (request, response) => {
 
@@ -34,7 +34,6 @@ export const createClinicRequestHandler = (settings: KeycloakAdminSettings, fetc
 			throw Object.assign(new Error("Invalid clinic registration"), { status: 400 });
 		}
 
-		// Authentication and role middleware run before this handler
 		const authentication = request.authentication!;
 		await checkClinicCreationPermission(authentication);
 
@@ -47,8 +46,8 @@ export const createClinicRequestHandler = (settings: KeycloakAdminSettings, fetc
 		const clinic = await createClinic(
 			authentication,
 			{ name, timeZone, administratorIdentityId },
-			(markKeycloakRoleUpdateStarted) =>
-				replaceKeycloakUserRole(access, administratorIdentityId, "clinic_administrator", markKeycloakRoleUpdateStarted),
+			(markRoleUpdateStarted) =>
+				replaceKeycloakUserRole(access, administratorIdentityId, "clinic_administrator", markRoleUpdateStarted),
 		);
 		response.status(201).json(clinic);
 

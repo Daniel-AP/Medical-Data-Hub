@@ -22,7 +22,7 @@ const parseAgendaDate = (query: Request["query"]) => {
 
 };
 
-export const getAppointmentCounts: RequestHandler = async (request, response) => {
+export const readAppointmentCountsHandler: RequestHandler = async (request, response) => {
 
 	const from = parseDate(request.query.from);
 	const to = parseDate(request.query.to);
@@ -36,7 +36,7 @@ export const getAppointmentCounts: RequestHandler = async (request, response) =>
 
 };
 
-export const listPatientAppointments: RequestHandler = async (request, response) => {
+export const readPatientAppointmentsHandler: RequestHandler = async (request, response) => {
 
 	const { patientId } = request.params;
 	if(!isUuid(patientId) || Object.keys(request.query).length !== 0) {
@@ -48,13 +48,13 @@ export const listPatientAppointments: RequestHandler = async (request, response)
 
 };
 
-export const listClinicAgenda: RequestHandler = async (request, response) => {
+export const readClinicAgendaHandler: RequestHandler = async (request, response) => {
 	const date = parseAgendaDate(request.query);
 	const appointments = await readClinicAgenda(request.authentication!, date);
 	response.set("Cache-Control", "no-store").type("json").end(JSON.stringify({ appointments }));
 };
 
-export const listProfessionalAgenda: RequestHandler = async (request, response) => {
+export const readProfessionalAgendaHandler: RequestHandler = async (request, response) => {
 
 	const { professionalId } = request.params;
 	if(!isUuid(professionalId)) {
@@ -67,7 +67,7 @@ export const listProfessionalAgenda: RequestHandler = async (request, response) 
 
 };
 
-export const listOwnAgenda: RequestHandler = async (request, response) => {
+export const readOwnAgendaHandler: RequestHandler = async (request, response) => {
 	const date = parseAgendaDate(request.query);
 	const appointments = await readProfessionalAgenda(request.authentication!, date);
 	response.set("Cache-Control", "no-store").type("json").end(JSON.stringify({ appointments }));

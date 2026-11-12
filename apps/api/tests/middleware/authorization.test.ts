@@ -5,9 +5,9 @@ import type { AddressInfo } from "node:net";
 import type { JWTPayload } from "jose";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { app, router } from "../../src/app.js";
-import type { createAccessTokenVerifier } from "../../src/clients/keycloak/token-verification.js";
+import type { createAccessTokenVerifier } from "../../src/clients/keycloak-tokens.js";
 import { UserRole } from "../../src/generated/prisma/enums.js";
-import { createAuthenticationMiddleware, requireRoles } from "../../src/middleware/authentication.js";
+import { createAuthentication, requireRoles } from "../../src/middleware/authentication.js";
 
 const verifyAccessToken = vi.fn<ReturnType<typeof createAccessTokenVerifier>>();
 const requestOptions = { headers: { Authorization: "Bearer demo-token" } };
@@ -20,7 +20,7 @@ const payloadWithRoles = (roles: string[]): JWTPayload => {
 
 beforeAll(async () => {
 
-	const authenticate = createAuthenticationMiddleware(verifyAccessToken);
+	const authenticate = createAuthentication(verifyAccessToken);
 	router.get("/role-mapping-check", authenticate, (request, response) => {
 		response.json(request.authentication);
 	});

@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { createProfessionalService, updateProfessionalServiceActivity } from "../database/professional-services.js";
 import { isUuid } from "../validation.js";
 
-export const registerProfessionalService: RequestHandler = async (request, response) => {
+export const createProfessionalServiceHandler: RequestHandler = async (request, response) => {
 
 	const { professionalId } = request.params;
 	const body = request.body;
@@ -17,7 +17,7 @@ export const registerProfessionalService: RequestHandler = async (request, respo
 
 };
 
-export const editProfessionalServiceActivity: RequestHandler = async (request, response) => {
+export const updateProfessionalServiceHandler: RequestHandler = async (request, response) => {
 
 	const { professionalId, serviceId } = request.params;
 	const body = request.body;

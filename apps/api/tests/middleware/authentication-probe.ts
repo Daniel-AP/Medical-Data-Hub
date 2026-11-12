@@ -1,7 +1,7 @@
 import { app, router } from "../../src/app.js";
-import { createAccessTokenVerifier } from "../../src/clients/keycloak/token-verification.js";
+import { createAccessTokenVerifier } from "../../src/clients/keycloak-tokens.js";
 import { UserRole } from "../../src/generated/prisma/enums.js";
-import { createAuthenticationMiddleware, requireRoles } from "../../src/middleware/authentication.js";
+import { createAuthentication, requireRoles } from "../../src/middleware/authentication.js";
 
 const issuer = "http://localhost:8080/realms/medical-data-hub";
 const verifyAccessToken = createAccessTokenVerifier({
@@ -9,7 +9,7 @@ const verifyAccessToken = createAccessTokenVerifier({
 	audience: "medical-data-hub-api",
 	jwksUrl: `${issuer}/protocol/openid-connect/certs`,
 });
-const authenticate = createAuthenticationMiddleware(verifyAccessToken);
+const authenticate = createAuthentication(verifyAccessToken);
 
 router.get("/authentication-check", authenticate, (request, response) => {
 	response.json(request.authentication);
@@ -43,10 +43,10 @@ const verifyWrongAudience = createAccessTokenVerifier({
 	jwksUrl: `${issuer}/protocol/openid-connect/certs`,
 });
 
-router.get("/wrong-issuer-check", createAuthenticationMiddleware(verifyWrongIssuer), (_request, response) => {
+router.get("/wrong-issuer-check", createAuthentication(verifyWrongIssuer), (_request, response) => {
 	response.sendStatus(204);
 });
-router.get("/wrong-audience-check", createAuthenticationMiddleware(verifyWrongAudience), (_request, response) => {
+router.get("/wrong-audience-check", createAuthentication(verifyWrongAudience), (_request, response) => {
 	response.sendStatus(204);
 });
 
@@ -56,7 +56,7 @@ const verifyColdStart = createAccessTokenVerifier({
 	jwksUrl: `${issuer}/protocol/openid-connect/certs`,
 });
 
-router.get("/cold-start-check", createAuthenticationMiddleware(verifyColdStart), (_request, response) => {
+router.get("/cold-start-check", createAuthentication(verifyColdStart), (_request, response) => {
 	response.sendStatus(204);
 });
 

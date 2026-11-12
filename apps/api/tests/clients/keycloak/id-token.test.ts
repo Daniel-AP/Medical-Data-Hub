@@ -1,7 +1,7 @@
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import type { JWK, JWTPayload } from "jose";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createLogoutIdTokenVerifier } from "../../../src/clients/keycloak/token-verification.js";
+import { createLogoutIdTokenVerifier } from "../../../src/clients/keycloak-tokens.js";
 
 const issuer = "http://localhost:8080/realms/medical-data-hub";
 const context = { identityId: "demo-user", sessionId: "demo-session", clientId: "medical-data-hub-postman" };

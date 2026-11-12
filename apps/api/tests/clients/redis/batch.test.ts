@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 
 vi.stubEnv("REDIS_BATCH_TIMEOUT_MS", "500");
-const { RedisBatchTimeoutError, runRedisBatch } = await import("../../../src/clients/redis/batch.js");
+const { RedisBatchTimeoutError, runRedisBatch } = await import("../../../src/clients/redis.js");
 vi.unstubAllEnvs();
 
 afterEach(() => {

@@ -1,23 +1,23 @@
 import { app, router } from "./app.js";
-import { createAccessTokenVerifier, createLogoutIdTokenVerifier } from "./clients/keycloak/token-verification.js";
+import { createAccessTokenVerifier, createLogoutIdTokenVerifier } from "./clients/keycloak-tokens.js";
 import "./config/database-timeouts.js";
 import "./config/redis-timeouts.js";
 import { UserRole } from "./generated/prisma/enums.js";
-import { createAuthenticationMiddleware, requireRoles } from "./middleware/authentication.js";
-import { getAppointmentCounts, listClinicAgenda, listOwnAgenda, listPatientAppointments, listProfessionalAgenda } from "./routes/appointment-queries.js";
-import { cancelAppointmentHandler, moveAppointment, registerAppointment } from "./routes/appointments.js";
-import { listAuditRecords } from "./routes/audit-records.js";
-import { listBlocks, registerBlock } from "./routes/blocks.js";
-import { getClinicalNote, registerClinicalNote } from "./routes/clinical-notes.js";
-import { createClinicRequestHandler } from "./routes/clinics.js";
-import { createLogoutRequestHandler } from "./routes/logout.js";
-import { editPatient, getPatient, registerPatient } from "./routes/patients.js";
-import { editProfessionalSpecialty, registerProfessional } from "./routes/professionals.js";
-import { editProfessionalServiceActivity, registerProfessionalService } from "./routes/professional-services.js";
-import { editService, registerService } from "./routes/services.js";
-import { listSchedules, replaceSchedules } from "./routes/schedules.js";
-import { registerSpecialty } from "./routes/specialties.js";
-import { createUserRequestHandler, updateUserPermissionsRequestHandler } from "./routes/users.js";
+import { createAuthentication, requireRoles } from "./middleware/authentication.js";
+import { readAppointmentCountsHandler, readClinicAgendaHandler, readOwnAgendaHandler, readPatientAppointmentsHandler, readProfessionalAgendaHandler } from "./routes/appointment-queries.js";
+import { cancelAppointmentHandler, createAppointmentHandler, rescheduleAppointmentHandler } from "./routes/appointments.js";
+import { readAuditRecordsHandler } from "./routes/audit-records.js";
+import { readBlocksHandler, createBlockHandler } from "./routes/blocks.js";
+import { readClinicalNoteHandler, createClinicalNoteHandler } from "./routes/clinical-notes.js";
+import { createClinicHandler } from "./routes/clinics.js";
+import { createLogoutHandler } from "./routes/logout.js";
+import { updatePatientHandler, readPatientHandler, createPatientHandler } from "./routes/patients.js";
+import { updateProfessionalHandler, createProfessionalHandler } from "./routes/professionals.js";
+import { updateProfessionalServiceHandler, createProfessionalServiceHandler } from "./routes/professional-services.js";
+import { updateServiceHandler, createServiceHandler } from "./routes/services.js";
+import { readWeeklyScheduleHandler, replaceWeeklyScheduleHandler } from "./routes/schedules.js";
+import { createSpecialtyHandler } from "./routes/specialties.js";
+import { createUserHandler, updateUserHandler } from "./routes/users.js";
 
 const host = process.env.HOST;
 const port = Number(process.env.PORT);
@@ -25,62 +25,62 @@ const issuer = process.env.KEYCLOAK_ISSUER;
 const jwksUrl = process.env.KEYCLOAK_JWKS_URL;
 const audience = process.env.KEYCLOAK_AUDIENCE;
 const internalUrl = process.env.KEYCLOAK_INTERNAL_URL;
-const applicationId = process.env.KEYCLOAK_CLIENT_ID;
-const applicationSecret = process.env.KEYCLOAK_CLIENT_SECRET;
+const clientId = process.env.KEYCLOAK_CLIENT_ID;
+const clientSecret = process.env.KEYCLOAK_CLIENT_SECRET;
 
 if(!issuer || !jwksUrl || !audience) {
 	throw new Error("KEYCLOAK_ISSUER, KEYCLOAK_JWKS_URL, and KEYCLOAK_AUDIENCE are required");
 }
-if(!internalUrl || !applicationId || !applicationSecret) {
+if(!internalUrl || !clientId || !clientSecret) {
 	throw new Error("KEYCLOAK_INTERNAL_URL, KEYCLOAK_CLIENT_ID, and KEYCLOAK_CLIENT_SECRET are required");
 }
 
-const configuration = { issuer, jwksUrl, audience };
-const authenticate = createAuthenticationMiddleware(createAccessTokenVerifier(configuration));
-const prepareLogout = createLogoutRequestHandler(createLogoutIdTokenVerifier(configuration), issuer);
+const tokenSettings = { issuer, jwksUrl, audience };
+const authenticate = createAuthentication(createAccessTokenVerifier(tokenSettings));
+const prepareLogout = createLogoutHandler(createLogoutIdTokenVerifier(tokenSettings), issuer);
 const keycloakAdminSettings = {
 	issuer: new URL(issuer),
 	internalUrl: new URL(internalUrl),
-	applicationId,
-	applicationSecret,
+	clientId,
+	clientSecret,
 };
-const registerClinic = createClinicRequestHandler(keycloakAdminSettings);
-const registerUser = createUserRequestHandler(keycloakAdminSettings);
-const editUserPermissions = updateUserPermissionsRequestHandler(keycloakAdminSettings);
+const createClinic = createClinicHandler(keycloakAdminSettings);
+const createUser = createUserHandler(keycloakAdminSettings);
+const updateUser = updateUserHandler(keycloakAdminSettings);
 
 router.post("/auth/logout-request", authenticate, prepareLogout);
-router.get("/audit-records", authenticate, requireRoles(UserRole.clinicAdministrator), listAuditRecords);
-router.post("/clinics", authenticate, requireRoles(UserRole.platformAdministrator), registerClinic);
-router.post("/users", authenticate, requireRoles(UserRole.clinicAdministrator), registerUser);
-router.patch("/users/:userId", authenticate, requireRoles(UserRole.clinicAdministrator), editUserPermissions);
-router.post("/specialties", authenticate, requireRoles(UserRole.clinicAdministrator), registerSpecialty);
-router.post("/services", authenticate, requireRoles(UserRole.clinicAdministrator), registerService);
-router.patch("/services/:serviceId", authenticate, requireRoles(UserRole.clinicAdministrator), editService);
-router.post("/patients", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), registerPatient);
-router.patch("/patients/:patientId", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), editPatient);
-router.get("/patients/:patientId", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), getPatient);
-router.get("/patients/:patientId/appointments", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), listPatientAppointments); 
-router.get("/appointments/agenda", authenticate, requireRoles(UserRole.reception), listClinicAgenda);
-router.post("/appointments", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), registerAppointment);
-router.post("/appointments/:appointmentId/reschedule", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), moveAppointment);
+router.get("/audit-records", authenticate, requireRoles(UserRole.clinicAdministrator), readAuditRecordsHandler);
+router.post("/clinics", authenticate, requireRoles(UserRole.platformAdministrator), createClinic);
+router.post("/users", authenticate, requireRoles(UserRole.clinicAdministrator), createUser);
+router.patch("/users/:userId", authenticate, requireRoles(UserRole.clinicAdministrator), updateUser);
+router.post("/specialties", authenticate, requireRoles(UserRole.clinicAdministrator), createSpecialtyHandler);
+router.post("/services", authenticate, requireRoles(UserRole.clinicAdministrator), createServiceHandler);
+router.patch("/services/:serviceId", authenticate, requireRoles(UserRole.clinicAdministrator), updateServiceHandler);
+router.post("/patients", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), createPatientHandler);
+router.patch("/patients/:patientId", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), updatePatientHandler);
+router.get("/patients/:patientId", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), readPatientHandler);
+router.get("/patients/:patientId/appointments", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), readPatientAppointmentsHandler);
+router.get("/appointments/agenda", authenticate, requireRoles(UserRole.reception), readClinicAgendaHandler);
+router.post("/appointments", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), createAppointmentHandler);
+router.post("/appointments/:appointmentId/reschedule", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), rescheduleAppointmentHandler);
 router.post("/appointments/:appointmentId/cancel", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), cancelAppointmentHandler);
-router.get("/appointments/counts", authenticate, requireRoles(UserRole.clinicAdministrator), getAppointmentCounts);
-router.get("/professionals/me/agenda", authenticate, requireRoles(UserRole.healthcareProfessional), listOwnAgenda);
-router.get("/professionals/:professionalId/agenda", authenticate, requireRoles(UserRole.reception), listProfessionalAgenda);
-router.post("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), registerClinicalNote);
-router.get("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), getClinicalNote);
-router.post("/professionals", authenticate, requireRoles(UserRole.clinicAdministrator), registerProfessional);
-router.get("/professionals/:professionalId/schedules", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), listSchedules);
-router.get("/professionals/:professionalId/blocks", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), listBlocks);
-router.post("/professionals/:professionalId/blocks", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.healthcareProfessional), registerBlock);
-router.put("/professionals/:professionalId/schedules", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.healthcareProfessional), replaceSchedules);
-router.patch("/professionals/:professionalId", authenticate, requireRoles(UserRole.clinicAdministrator), editProfessionalSpecialty);
-router.post("/professionals/:professionalId/services", authenticate, requireRoles(UserRole.clinicAdministrator), registerProfessionalService);
+router.get("/appointments/counts", authenticate, requireRoles(UserRole.clinicAdministrator), readAppointmentCountsHandler);
+router.get("/professionals/me/agenda", authenticate, requireRoles(UserRole.healthcareProfessional), readOwnAgendaHandler);
+router.get("/professionals/:professionalId/agenda", authenticate, requireRoles(UserRole.reception), readProfessionalAgendaHandler);
+router.post("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), createClinicalNoteHandler);
+router.get("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), readClinicalNoteHandler);
+router.post("/professionals", authenticate, requireRoles(UserRole.clinicAdministrator), createProfessionalHandler);
+router.get("/professionals/:professionalId/schedules", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), readWeeklyScheduleHandler);
+router.get("/professionals/:professionalId/blocks", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), readBlocksHandler);
+router.post("/professionals/:professionalId/blocks", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.healthcareProfessional), createBlockHandler);
+router.put("/professionals/:professionalId/schedules", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.healthcareProfessional), replaceWeeklyScheduleHandler);
+router.patch("/professionals/:professionalId", authenticate, requireRoles(UserRole.clinicAdministrator), updateProfessionalHandler);
+router.post("/professionals/:professionalId/services", authenticate, requireRoles(UserRole.clinicAdministrator), createProfessionalServiceHandler);
 router.patch(
 	"/professionals/:professionalId/services/:serviceId",
 	authenticate,
 	requireRoles(UserRole.clinicAdministrator),
-	editProfessionalServiceActivity,
+	updateProfessionalServiceHandler,
 );
 
 app.listen({ port, host }, (error) => {

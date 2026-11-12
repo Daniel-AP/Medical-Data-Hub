@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Client, Pool } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { runAuthorizedTransaction } from "../../../src/database/transactions/authorized-transaction.js";
-import type { TransactionClient } from "../../../src/database/transactions/types.js";
+import { runAuthorizedTransaction } from "../../../src/database/authorization.js";
+import type { TransactionClient } from "../../../src/database/types.js";
 import type { Professional, User } from "../../../src/generated/prisma/client.js";
 import { UserRole } from "../../../src/generated/prisma/enums.js";
 
@@ -635,7 +635,7 @@ it.each([
 		const operation = runAuthorizedTransaction(
 			authentication,
 			{ name: "readDefinitiveAvailability" },
-			async (client, _actor, markKeycloakRoleUpdateStarted) => {
+			async (client, _actor, markRoleUpdateStarted) => {
 
 				const previous = snapshots.at(-1);
 				if(previous) {
@@ -655,7 +655,7 @@ it.each([
 				const [snapshot] = rows;
 				snapshots.push(snapshot);
 				if(markMutation) {
-					markKeycloakRoleUpdateStarted();
+					markRoleUpdateStarted();
 				}
 				if(snapshots.length <= conflicts) {
 					await setup.query(incrementQuery, clinic);

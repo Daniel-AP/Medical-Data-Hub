@@ -1,8 +1,8 @@
 import type { Appointment, ClinicalNote } from "../generated/prisma/client.js";
 import type { Authentication } from "../middleware/types.js";
-import { createAuditReadRecorder, insertAuditEvent } from "./audit/record-events.js";
-import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
-import { TransactionFailure } from "./transactions/transaction-failure.js";
+import { createAuditReadRecorder, insertAuditEvent } from "./audit-events.js";
+import { runAuthorizedTransaction } from "./authorization.js";
+import { TransactionFailure } from "./transaction-errors.js";
 
 type NoteAppointment = Pick<Appointment, "appointmentId" | "patientId" | "state">;
 type StoredNote = Pick<ClinicalNote, "appointmentId" | "content"> & Pick<Appointment, "patientId">;

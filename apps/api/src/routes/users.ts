@@ -1,11 +1,11 @@
 import type { RequestHandler } from "express";
-import { getKeycloakAdminAccess, isKeycloakIdentityId, keycloakUserExists, replaceKeycloakUserRole } from "../clients/keycloak/admin-api.js";
-import type { KeycloakAdminSettings } from "../clients/keycloak/admin-api.js";
-import { isClinicUserRole } from "../clients/keycloak/roles.js";
+import { getKeycloakAdminAccess, isKeycloakIdentityId, keycloakUserExists, replaceKeycloakUserRole } from "../clients/keycloak-admin.js";
+import type { KeycloakAdminSettings } from "../clients/types.js";
+import { isClinicUserRole } from "../clients/keycloak-roles.js";
 import { checkUserCreationPermission, createUser, updateUserPermissions } from "../database/users.js";
 import { isUuid } from "../validation.js";
 
-export const createUserRequestHandler = (settings: KeycloakAdminSettings, fetchKeycloak: typeof fetch = fetch): RequestHandler => {
+export const createUserHandler = (settings: KeycloakAdminSettings, fetchKeycloak: typeof fetch = fetch): RequestHandler => {
 
 	return async (request, response) => {
 
@@ -18,7 +18,6 @@ export const createUserRequestHandler = (settings: KeycloakAdminSettings, fetchK
 			throw Object.assign(new Error("Invalid user registration"), { status: 400 });
 		}
 
-		// Authentication and role middleware run before this handler
 		const authentication = request.authentication!;
 		await checkUserCreationPermission(authentication);
 
@@ -31,7 +30,7 @@ export const createUserRequestHandler = (settings: KeycloakAdminSettings, fetchK
 		const user = await createUser(
 			authentication,
 			{ identityId, role },
-			(markKeycloakRoleUpdateStarted) => replaceKeycloakUserRole(access, identityId, role, markKeycloakRoleUpdateStarted),
+			(markRoleUpdateStarted) => replaceKeycloakUserRole(access, identityId, role, markRoleUpdateStarted),
 		);
 		response.status(201).json(user);
 
@@ -39,7 +38,7 @@ export const createUserRequestHandler = (settings: KeycloakAdminSettings, fetchK
 
 };
 
-export const updateUserPermissionsRequestHandler = (settings: KeycloakAdminSettings, fetchKeycloak: typeof fetch = fetch): RequestHandler => {
+export const updateUserHandler = (settings: KeycloakAdminSettings, fetchKeycloak: typeof fetch = fetch): RequestHandler => {
 
 	return async (request, response) => {
 
@@ -54,15 +53,13 @@ export const updateUserPermissionsRequestHandler = (settings: KeycloakAdminSetti
 		if(!isUuid(userId) || !validRole || !validActivity || emptyPatch || hasOtherFields) {
 			throw Object.assign(new Error("Invalid user permissions"), { status: 400 });
 		}
-
-		// Authentication and role middleware run before this handler
 		const permissions = await updateUserPermissions(
 			request.authentication!,
 			userId,
 			{ role, isActive },
-			async (identityId, role, markKeycloakRoleUpdateStarted) => {
+			async (identityId, role, markRoleUpdateStarted) => {
 				const access = await getKeycloakAdminAccess(settings, fetchKeycloak);
-				await replaceKeycloakUserRole(access, identityId, role, markKeycloakRoleUpdateStarted);
+				await replaceKeycloakUserRole(access, identityId, role, markRoleUpdateStarted);
 			},
 		);
 		response.status(200).json(permissions);

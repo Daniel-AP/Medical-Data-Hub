@@ -1,10 +1,10 @@
 import type { Clinic, Professional } from "../generated/prisma/client.js";
 import { UserRole } from "../generated/prisma/enums.js";
 import type { Authentication } from "../middleware/types.js";
-import { isScheduleCovered } from "../schedules/coverage.js";
-import type { AppointmentConflict, ScheduleInterval } from "../schedules/types.js";
+import { isScheduleCovered } from "./schedule-coverage.js";
+import type { AppointmentConflict, ScheduleInterval } from "./types.js";
 import { incrementAvailabilityVersion } from "./availability-versions.js";
-import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
+import { runAuthorizedTransaction } from "./authorization.js";
 
 export const readWeeklySchedule = (authentication: Authentication, professionalId: string) => {
 

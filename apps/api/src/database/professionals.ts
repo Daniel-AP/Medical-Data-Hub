@@ -1,7 +1,7 @@
 import type { Professional } from "../generated/prisma/client.js";
 import type { Authentication } from "../middleware/types.js";
-import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
-import { TransactionFailure } from "./transactions/transaction-failure.js";
+import { runAuthorizedTransaction } from "./authorization.js";
+import { TransactionFailure } from "./transaction-errors.js";
 
 type ProfessionalRegistration = Pick<Professional, "userId" | "specialtyId">;
 type ProfessionalSpecialty = Pick<Professional, "professionalId" | "specialtyId">;

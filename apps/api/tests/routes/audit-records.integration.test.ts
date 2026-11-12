@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { readAuditRecords } from "../../src/database/audit/read-records.js";
+import type { readAuditRecords } from "../../src/database/audit-records.js";
 
 type AuditRecord = Omit<Awaited<ReturnType<typeof readAuditRecords>>[number], "occurredAt"> & { occurredAt: string };
 type AuditResponse = { records: AuditRecord[] };

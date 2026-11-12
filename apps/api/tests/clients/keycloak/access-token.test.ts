@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import type { JWK, JWTPayload } from "jose";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { createAccessTokenVerifier } from "../../../src/clients/keycloak/token-verification.js";
+import { createAccessTokenVerifier } from "../../../src/clients/keycloak-tokens.js";
 
 const issuer = "http://localhost:8080/realms/medical-data-hub";
 const audience = "medical-data-hub-api";

@@ -1,11 +1,11 @@
 import type { RequestHandler } from "express";
-import { keycloakRoles } from "../clients/keycloak/roles.js";
-import type { createAccessTokenVerifier } from "../clients/keycloak/token-verification.js";
+import { keycloakRoles } from "../clients/keycloak-roles.js";
+import type { createAccessTokenVerifier } from "../clients/keycloak-tokens.js";
 import type { UserRole } from "../generated/prisma/enums.js";
 
 type AccessTokenVerifier = ReturnType<typeof createAccessTokenVerifier>;
 
-export const createAuthenticationMiddleware = (verifyAccessToken: AccessTokenVerifier): RequestHandler => {
+export const createAuthentication = (verifyAccessToken: AccessTokenVerifier): RequestHandler => {
 
 	return async (request, _response, next) => {
 

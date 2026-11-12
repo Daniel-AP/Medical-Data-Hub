@@ -8,9 +8,9 @@ import type { RequestHandler } from "express";
 import { decodeJwt } from "jose";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { app, router } from "../../src/app.js";
-import { createAccessTokenVerifier } from "../../src/clients/keycloak/token-verification.js";
+import { createAccessTokenVerifier } from "../../src/clients/keycloak-tokens.js";
 import { UserRole } from "../../src/generated/prisma/enums.js";
-import { createAuthenticationMiddleware, requireRoles } from "../../src/middleware/authentication.js";
+import { createAuthentication, requireRoles } from "../../src/middleware/authentication.js";
 
 const accessToken = process.env.KEYCLOAK_TEST_ACCESS_TOKEN;
 if(!accessToken) {
@@ -30,7 +30,7 @@ let url: string;
 
 beforeAll(async () => {
 
-	const authenticate = createAuthenticationMiddleware(createAccessTokenVerifier(configuration));
+	const authenticate = createAuthentication(createAccessTokenVerifier(configuration));
 	router.get("/authentication-check", authenticate, (request, response) => {
 		response.json(request.authentication);
 	});
@@ -43,19 +43,19 @@ beforeAll(async () => {
 	router.get("/clinic-administrator-check", authenticate, requireRoles(UserRole.clinicAdministrator), sendNoContent);
 	router.get(
 		"/wrong-issuer-check",
-		createAuthenticationMiddleware(
+		createAuthentication(
 			createAccessTokenVerifier({ ...configuration, issuer: "http://localhost:8080/realms/another-realm" }),
 		),
 		sendNoContent,
 	);
 	router.get(
 		"/wrong-audience-check",
-		createAuthenticationMiddleware(createAccessTokenVerifier({ ...configuration, audience: "another-api" })),
+		createAuthentication(createAccessTokenVerifier({ ...configuration, audience: "another-api" })),
 		sendNoContent,
 	);
 	router.get(
 		"/cold-start-check",
-		createAuthenticationMiddleware(createAccessTokenVerifier(configuration)),
+		createAuthentication(createAccessTokenVerifier(configuration)),
 		sendNoContent,
 	);
 

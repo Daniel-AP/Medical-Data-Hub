@@ -1,6 +1,6 @@
 import type { Specialty } from "../generated/prisma/client.js";
 import type { Authentication } from "../middleware/types.js";
-import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
+import { runAuthorizedTransaction } from "./authorization.js";
 
 export const createSpecialty = (authentication: Authentication, name: Specialty["name"]) => {
 

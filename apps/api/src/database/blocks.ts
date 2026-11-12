@@ -1,9 +1,9 @@
 import type { Professional, ProfessionalBlock } from "../generated/prisma/client.js";
 import { UserRole } from "../generated/prisma/enums.js";
 import type { Authentication } from "../middleware/types.js";
-import type { AppointmentConflict } from "../schedules/types.js";
+import type { AppointmentConflict } from "./types.js";
 import { incrementAvailabilityVersion } from "./availability-versions.js";
-import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
+import { runAuthorizedTransaction } from "./authorization.js";
 
 type BlockMetadata = Pick<ProfessionalBlock, "professionalBlockId" | "startAt" | "endAt">;
 type BlockRegistration = Pick<ProfessionalBlock, "startAt" | "endAt">;

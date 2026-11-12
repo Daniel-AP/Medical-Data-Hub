@@ -1,8 +1,8 @@
 import { Client, Pool } from "pg";
 import { afterAll, expect, it, vi } from "vitest";
 import { databaseTimeouts } from "../../../src/config/database-timeouts.js";
-import { runTransaction } from "../../../src/database/transactions/run-transaction.js";
-import type { TransactionClient } from "../../../src/database/transactions/types.js";
+import { runTransaction } from "../../../src/database/transactions.js";
+import type { TransactionClient } from "../../../src/database/types.js";
 
 const connectionString = process.env.DATABASE_URL;
 if(!connectionString) {

@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { createClinicalNote, readClinicalNote } from "../database/clinical-notes.js";
 import { isUuid } from "../validation.js";
 
-export const registerClinicalNote: RequestHandler = async (request, response) => {
+export const createClinicalNoteHandler: RequestHandler = async (request, response) => {
 
 	const { appointmentId } = request.params;
 	const body = request.body;
@@ -17,7 +17,7 @@ export const registerClinicalNote: RequestHandler = async (request, response) =>
 
 };
 
-export const getClinicalNote: RequestHandler = async (request, response) => {
+export const readClinicalNoteHandler: RequestHandler = async (request, response) => {
 
 	const { appointmentId } = request.params;
 	if(!isUuid(appointmentId)) {
@@ -26,7 +26,7 @@ export const getClinicalNote: RequestHandler = async (request, response) => {
 
 	response.set("Cache-Control", "no-store");
 	const note = await readClinicalNote(request.authentication!, appointmentId);
-	// Send the audited content without an ETag or a conditional cache response.
+	// Avoid cache validators for audited content
 	response.status(200).type("json").end(JSON.stringify(note));
 
 };

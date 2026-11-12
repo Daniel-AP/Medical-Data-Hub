@@ -1,7 +1,7 @@
 import type { Clinic, User } from "../generated/prisma/client.js";
 import type { Authentication } from "../middleware/types.js";
-import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
-import { TransactionFailure } from "./transactions/transaction-failure.js";
+import { runAuthorizedTransaction } from "./authorization.js";
+import { TransactionFailure } from "./transaction-errors.js";
 
 type ClinicRegistration = Pick<Clinic, "name" | "timeZone"> & { administratorIdentityId: User["identityId"] };
 type ClinicRegistrationResult = { clinicId: Clinic["clinicId"]; administratorUserId: User["userId"] };
@@ -13,7 +13,7 @@ export const checkClinicCreationPermission = async (authentication: Authenticati
 export const createClinic = async (
 	authentication: Authentication,
 	registration: ClinicRegistration,
-	assignAdministratorRole: (markKeycloakRoleUpdateStarted: () => void) => Promise<void>,
+	assignAdministratorRole: (markRoleUpdateStarted: () => void) => Promise<void>,
 ) => {
 
 	try {
@@ -21,14 +21,14 @@ export const createClinic = async (
 		return await runAuthorizedTransaction(
 			authentication,
 			{ name: "createClinic" },
-			async (client, _actor, markKeycloakRoleUpdateStarted) => {
+			async (transaction, _actor, markRoleUpdateStarted) => {
 
-				const { rows: [clinic] } = await client.query<ClinicRegistrationResult>(
+				const { rows: [clinic] } = await transaction.query<ClinicRegistrationResult>(
 					`SELECT clinic_id AS "clinicId", user_id AS "administratorUserId"
 					 FROM public.create_clinic($1::text, $2::text, $3::text)`,
 					[registration.name, registration.timeZone, registration.administratorIdentityId],
 				);
-				await assignAdministratorRole(markKeycloakRoleUpdateStarted);
+				await assignAdministratorRole(markRoleUpdateStarted);
 
 				return clinic;
 

@@ -1,6 +1,6 @@
 import { Client, Pool } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { runAuthorizedTransaction } from "../../../src/database/transactions/authorized-transaction.js";
+import { runAuthorizedTransaction } from "../../../src/database/authorization.js";
 import type { Appointment, Professional, User } from "../../../src/generated/prisma/client.js";
 import { UserRole } from "../../../src/generated/prisma/enums.js";
 

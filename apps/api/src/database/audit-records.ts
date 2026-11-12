@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
-import type { AuditRecord } from "../../generated/prisma/client.js";
-import type { Authentication } from "../../middleware/types.js";
-import { runAuthorizedTransaction } from "../transactions/authorized-transaction.js";
+import type { AuditRecord } from "../generated/prisma/client.js";
+import type { Authentication } from "../middleware/types.js";
+import { runAuthorizedTransaction } from "./authorization.js";
 
 type AuditRecordFilters = { userId?: string; patientId?: string; from?: Date; to?: Date };
 type AuditRecordMetadata = Omit<AuditRecord, "resource"> & { resource: "patient_contact" | "clinical_note" };
@@ -11,9 +11,9 @@ export const readAuditRecords = (authentication: Authentication, filters: AuditR
 	return runAuthorizedTransaction(
 		authentication,
 		{ name: "readAuditRecords" },
-		async (client, actor) => {
+		async (transaction, actor) => {
 
-			const { rows } = await client.query<AuditRecordMetadata>(
+			const { rows } = await transaction.query<AuditRecordMetadata>(
 				`SELECT audit_record_id AS "auditRecordId", clinic_id AS "clinicId", user_id AS "userId",
 				        patient_id AS "patientId", resource, appointment_id AS "appointmentId", action, occurred_at AS "occurredAt"
 				 FROM public.audit_records

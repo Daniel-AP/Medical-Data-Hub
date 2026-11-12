@@ -1,4 +1,4 @@
-import type { TransactionClient } from "./transactions/types.js";
+import type { TransactionClient } from "./types.js";
 
 export const incrementAvailabilityVersion = async (transaction: TransactionClient, clinicId: string) => {
 

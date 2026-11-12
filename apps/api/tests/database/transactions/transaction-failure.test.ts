@@ -1,6 +1,6 @@
 import { DatabaseError } from "pg";
 import { expect, it } from "vitest";
-import { classifyTransactionFailure, TransactionFailure } from "../../../src/database/transactions/transaction-failure.js";
+import { classifyTransactionFailure, TransactionFailure } from "../../../src/database/transaction-errors.js";
 
 it.each(["40001", "40P01"])("identifies SQLSTATE %s as a retryable abort candidate", (code) => {
 

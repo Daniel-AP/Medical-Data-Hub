@@ -9,7 +9,7 @@ const isServiceDuration = (value: unknown): value is number => {
 	return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
 };
 
-export const registerService: RequestHandler = async (request, response) => {
+export const createServiceHandler: RequestHandler = async (request, response) => {
 
 	const body = request.body;
 	const name: unknown = body?.name;
@@ -20,13 +20,12 @@ export const registerService: RequestHandler = async (request, response) => {
 		throw Object.assign(new Error("Invalid service registration"), { status: 400 });
 	}
 
-	// Authentication and role middleware run before this handler
 	const service = await createService(request.authentication!, { name, durationMinutes, specialtyId });
 	response.status(201).json(service);
 
 };
 
-export const editService: RequestHandler = async (request, response) => {
+export const updateServiceHandler: RequestHandler = async (request, response) => {
 
 	const { serviceId } = request.params;
 	const body = request.body;

@@ -1,5 +1,5 @@
 import { STATUS_CODES } from "node:http";
-import { TransactionFailure } from "../database/transactions/transaction-failure.js";
+import { TransactionFailure } from "../database/transaction-errors.js";
 import { OperationOutcomeUnknownError } from "../errors/operation-outcome-unknown.js";
 
 export const getTransactionErrorResponse = (error: unknown) => {

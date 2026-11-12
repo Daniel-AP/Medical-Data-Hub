@@ -6,11 +6,11 @@ import { decodeJwt } from "jose";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { app, router } from "../../src/app.js";
-import { createAccessTokenVerifier } from "../../src/clients/keycloak/token-verification.js";
+import { createAccessTokenVerifier } from "../../src/clients/keycloak-tokens.js";
 import { UserRole } from "../../src/generated/prisma/enums.js";
-import { createAuthenticationMiddleware, requireRoles } from "../../src/middleware/authentication.js";
-import { createClinicRequestHandler } from "../../src/routes/clinics.js";
-import { createUserRequestHandler, updateUserPermissionsRequestHandler } from "../../src/routes/users.js";
+import { createAuthentication, requireRoles } from "../../src/middleware/authentication.js";
+import { createClinicHandler } from "../../src/routes/clinics.js";
+import { createUserHandler, updateUserHandler } from "../../src/routes/users.js";
 
 type UserState = {
 	userId: string;
@@ -30,11 +30,11 @@ const healthcareProfessionalToken = process.env.USER_TEST_PROFESSIONAL_TOKEN;
 const keycloakUrl = process.env.CLINIC_TEST_KEYCLOAK_URL;
 const keycloakAdministratorToken = process.env.CLINIC_TEST_KEYCLOAK_ADMIN_TOKEN;
 const setupUrl = process.env.CLINIC_TEST_DATABASE_SETUP_URL;
-const applicationId = process.env.KEYCLOAK_CLIENT_ID;
-const applicationSecret = process.env.KEYCLOAK_CLIENT_SECRET;
+const clientId = process.env.KEYCLOAK_CLIENT_ID;
+const clientSecret = process.env.KEYCLOAK_CLIENT_SECRET;
 const hasTokens = platformAdministratorToken && clinicAdministratorToken && receptionToken &&
 	healthcareProfessionalToken && keycloakAdministratorToken;
-if(!apiUrl || !hasTokens || !keycloakUrl || !setupUrl || !applicationId || !applicationSecret || !process.env.DATABASE_URL) {
+if(!apiUrl || !hasTokens || !keycloakUrl || !setupUrl || !clientId || !clientSecret || !process.env.DATABASE_URL) {
 	throw new Error("Set CLINIC_TEST_*, USER_TEST_* role tokens, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET, and DATABASE_URL");
 }
 
@@ -96,7 +96,7 @@ const readApplicationRoles = async (identityId: string) => {
 	const response = await callKeycloakAsAdmin(`users/${identityId}/role-mappings`);
 	expect(response.status).toBe(200);
 	const { clientMappings } = await response.json();
-	const mappings: { name: string }[] = clientMappings?.[applicationId!]?.mappings ?? [];
+	const mappings: { name: string }[] = clientMappings?.[clientId!]?.mappings ?? [];
 
 	return mappings.map(({ name }) => name).sort();
 
@@ -104,7 +104,7 @@ const readApplicationRoles = async (identityId: string) => {
 
 const changeApplicationRole = async (identityId: string, roleName: string, method = "POST") => {
 
-	const applications = await callKeycloakAsAdmin(`clients?${new URLSearchParams({ clientId: applicationId! })}`);
+	const applications = await callKeycloakAsAdmin(`clients?${new URLSearchParams({ clientId: clientId! })}`);
 	expect(applications.status).toBe(200);
 	const [{ id: applicationUuid }] = await applications.json();
 	const role = await callKeycloakAsAdmin(`clients/${applicationUuid}/roles/${roleName}`);
@@ -191,17 +191,17 @@ beforeAll(async () => {
 
 	const issuer = new URL("/realms/medical-data-hub", keycloakUrl);
 	const jwksUrl = `${issuer}/protocol/openid-connect/certs`;
-	const authenticate = createAuthenticationMiddleware(
-		createAccessTokenVerifier({ issuer: issuer.href, jwksUrl, audience: applicationId }),
+	const authenticate = createAuthentication(
+		createAccessTokenVerifier({ issuer: issuer.href, jwksUrl, audience: clientId }),
 	);
-	const settings = { issuer, internalUrl: new URL(keycloakUrl), applicationId, applicationSecret };
-	router.post("/clinics", authenticate, requireRoles(UserRole.platformAdministrator), createClinicRequestHandler(settings, fetchWithRoleFault));
-	router.post("/users", authenticate, requireRoles(UserRole.clinicAdministrator), createUserRequestHandler(settings, fetchWithRoleFault));
+	const settings = { issuer, internalUrl: new URL(keycloakUrl), clientId, clientSecret };
+	router.post("/clinics", authenticate, requireRoles(UserRole.platformAdministrator), createClinicHandler(settings, fetchWithRoleFault));
+	router.post("/users", authenticate, requireRoles(UserRole.clinicAdministrator), createUserHandler(settings, fetchWithRoleFault));
 	router.patch(
 		"/users/:userId",
 		authenticate,
 		requireRoles(UserRole.clinicAdministrator),
-		updateUserPermissionsRequestHandler(settings, fetchWithRoleFault),
+		updateUserHandler(settings, fetchWithRoleFault),
 	);
 
 	faultServer = app.listen(0, "127.0.0.1");

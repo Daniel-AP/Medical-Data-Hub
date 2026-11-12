@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { isScheduleCovered } from "../../src/schedules/coverage.js";
+import { isScheduleCovered } from "../../src/database/schedule-coverage.js";
 
 it("covers a reservation through adjacent and overlapping weekly intervals", () => {
 

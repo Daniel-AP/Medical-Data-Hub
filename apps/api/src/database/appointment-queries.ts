@@ -1,6 +1,6 @@
 import type { Appointment } from "../generated/prisma/client.js";
 import type { Authentication } from "../middleware/types.js";
-import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
+import { runAuthorizedTransaction } from "./authorization.js";
 
 type AppointmentMetadata = Pick<Appointment,
 	"appointmentId" | "patientId" | "professionalId" | "serviceId" | "startAt" | "endAt" | "state" | "previousAppointmentId"
@@ -11,16 +11,16 @@ const appointmentColumns = `appointment.appointment_id AS "appointmentId", appoi
 	appointment.start_at AS "startAt", appointment.end_at AS "endAt", appointment.state,
 	appointment.previous_appointment_id AS "previousAppointmentId"`;
 
-// Compare local dates to retain repeated midnights. Appointment timestamps have millisecond precision.
+// Local dates preserve repeated midnights
 const agendaDateFilter = `(appointment.start_at AT TIME ZONE clinic.time_zone)::date <= $2::date
 	AND ((appointment.end_at-interval '1 millisecond') AT TIME ZONE clinic.time_zone)::date >= $2::date
 	AND ($2::date::timestamp AT TIME ZONE clinic.time_zone) < (($2::date+1)::timestamp AT TIME ZONE clinic.time_zone)`;
 
 export const readAppointmentCounts = (authentication: Authentication, from: string, to: string) => {
 
-	return runAuthorizedTransaction(authentication, { name: "readAppointmentCounts" }, async (client, actor) => {
+	return runAuthorizedTransaction(authentication, { name: "readAppointmentCounts" }, async (transaction, actor) => {
 
-		const { rows } = await client.query<{ state: Appointment["state"]; count: string }>(
+		const { rows } = await transaction.query<{ state: Appointment["state"]; count: string }>(
 			`SELECT appointment.state, COUNT(*) AS count
 			 FROM public.clinics AS clinic
 			 JOIN public.appointments AS appointment USING (clinic_id)
@@ -42,9 +42,9 @@ export const readAppointmentCounts = (authentication: Authentication, from: stri
 
 export const readPatientAppointmentHistory = (authentication: Authentication, patientId: string) => {
 
-	return runAuthorizedTransaction(authentication, { name: "readPatientAppointmentHistory" }, async (client, actor) => {
+	return runAuthorizedTransaction(authentication, { name: "readPatientAppointmentHistory" }, async (transaction, actor) => {
 
-		const { rows } = await client.query<AppointmentMetadata | { appointmentId: null }>(
+		const { rows } = await transaction.query<AppointmentMetadata | { appointmentId: null }>(
 			`SELECT ${appointmentColumns}
 			 FROM public.patients AS patient
 			 LEFT JOIN public.appointments AS appointment USING (clinic_id, patient_id)
@@ -64,9 +64,9 @@ export const readPatientAppointmentHistory = (authentication: Authentication, pa
 
 export const readClinicAgenda = (authentication: Authentication, date: string) => {
 
-	return runAuthorizedTransaction(authentication, { name: "readClinicAgenda" }, async (client, actor) => {
+	return runAuthorizedTransaction(authentication, { name: "readClinicAgenda" }, async (transaction, actor) => {
 
-		const { rows } = await client.query<AppointmentMetadata>(
+		const { rows } = await transaction.query<AppointmentMetadata>(
 			`SELECT ${appointmentColumns}
 			 FROM public.clinics AS clinic
 			 JOIN public.appointments AS appointment USING (clinic_id)
@@ -86,9 +86,9 @@ export const readProfessionalAgenda = (authentication: Authentication, date: str
 
 	const name = professionalId === undefined ? "readOwnAgenda" : "readProfessionalAgenda";
 
-	return runAuthorizedTransaction(authentication, { name }, async (client, actor) => {
+	return runAuthorizedTransaction(authentication, { name }, async (transaction, actor) => {
 
-		const { rows } = await client.query<AppointmentMetadata | { appointmentId: null }>(
+		const { rows } = await transaction.query<AppointmentMetadata | { appointmentId: null }>(
 			`SELECT ${appointmentColumns}
 			 FROM public.professionals AS professional
 			 JOIN public.clinics AS clinic USING (clinic_id)

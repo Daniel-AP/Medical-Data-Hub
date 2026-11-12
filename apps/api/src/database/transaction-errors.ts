@@ -1,8 +1,7 @@
 import { DatabaseError } from "pg";
 import type { TransactionStage } from "./types.js";
 
-type FailureKind =
-	| "acquisition"
+type FailureKind = "acquisition"
 	| "connection"
 	| "lockUnavailable"
 	| "queryCanceled"
@@ -62,10 +61,8 @@ export const classifyTransactionFailure = (stage: TransactionStage, cause: unkno
 		return new TransactionFailure(stage, kind, cause);
 	}
 
-	const serverConnectionFailure =
-		sqlState?.startsWith("08") || sqlState === "57P01" || sqlState === "57P02" || sqlState === "57P03";
-	const transportFailure =
-		stage === "begin" &&
+	const serverConnectionFailure = sqlState?.startsWith("08") || sqlState === "57P01" || sqlState === "57P02" || sqlState === "57P03";
+	const transportFailure = stage === "begin" &&
 		cause instanceof Error &&
 		"code" in cause &&
 		typeof cause.code === "string" &&

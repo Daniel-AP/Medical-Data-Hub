@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { createSpecialty } from "../database/specialties.js";
 import { isRequiredText } from "../validation.js";
 
-export const registerSpecialty: RequestHandler = async (request, response) => {
+export const createSpecialtyHandler: RequestHandler = async (request, response) => {
 
 	const body = request.body;
 	const name: unknown = body?.name;
@@ -11,7 +11,6 @@ export const registerSpecialty: RequestHandler = async (request, response) => {
 		throw Object.assign(new Error("Invalid specialty registration"), { status: 400 });
 	}
 
-	// Authentication and role middleware run before this handler
 	const specialty = await createSpecialty(request.authentication!, name);
 	response.status(201).json(specialty);
 

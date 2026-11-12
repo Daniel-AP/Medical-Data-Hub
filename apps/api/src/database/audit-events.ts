@@ -1,5 +1,5 @@
-import type { Appointment, AuditRecord, User } from "../../generated/prisma/client.js";
-import type { TransactionClient } from "../transactions/types.js";
+import type { Appointment, AuditRecord, User } from "../generated/prisma/client.js";
+import type { TransactionClient } from "./types.js";
 
 type AuditActor = Pick<User, "clinicId" | "userId">;
 type PatientContactTarget = Pick<AuditRecord, "patientId"> & { resource: "patient_contact" };
@@ -7,7 +7,7 @@ type ClinicalNoteTarget = Pick<Appointment, "patientId" | "appointmentId"> & { r
 type AuditTarget = PatientContactTarget | ClinicalNoteTarget;
 
 export const insertAuditEvent = async (
-	client: TransactionClient,
+	transaction: TransactionClient,
 	actor: AuditActor,
 	target: AuditTarget,
 	action: AuditRecord["action"],
@@ -15,7 +15,7 @@ export const insertAuditEvent = async (
 
 	const appointmentId = target.resource === "clinical_note" ? target.appointmentId : null;
 
-	await client.query(
+	await transaction.query(
 		`INSERT INTO public.audit_records (clinic_id, user_id, patient_id, resource, appointment_id, action)
 		 VALUES ($1::uuid, $2::uuid, $3::uuid, $4::public.audit_resource, $5::uuid, $6::public.audit_action)`,
 		[actor.clinicId, actor.userId, target.patientId, target.resource, appointmentId, action],
@@ -23,28 +23,26 @@ export const insertAuditEvent = async (
 
 };
 
-export const createAuditReadRecorder = (client: TransactionClient, actor: AuditActor) => {
+export const createAuditReadRecorder = (transaction: TransactionClient, actor: AuditActor) => {
 
-	const recordedReadKeys = new Set<string>();
+	const recordedReads = new Set<string>();
 
-	const recordReads = async (targets: readonly AuditTarget[]) => {
+	return async (targets: readonly AuditTarget[]) => {
 
 		for(const target of targets) {
 
 			const resourceId = target.resource === "clinical_note" ? target.appointmentId : target.patientId;
 			const readKey = `${target.resource}:${resourceId}`;
 
-			if(recordedReadKeys.has(readKey)) {
+			if(recordedReads.has(readKey)) {
 				continue;
 			}
 
-			recordedReadKeys.add(readKey);
-			await insertAuditEvent(client, actor, target, "read");
+			recordedReads.add(readKey);
+			await insertAuditEvent(transaction, actor, target, "read");
 
 		}
 
 	};
-
-	return recordReads;
 
 };

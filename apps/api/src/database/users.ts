@@ -1,9 +1,9 @@
-import type { ClinicUserRole } from "../clients/keycloak/roles.js";
+import type { ClinicUserRole } from "../clients/types.js";
 import type { User } from "../generated/prisma/client.js";
 import type { Authentication } from "../middleware/types.js";
 import { incrementAvailabilityVersion } from "./availability-versions.js";
-import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
-import { TransactionFailure } from "./transactions/transaction-failure.js";
+import { runAuthorizedTransaction } from "./authorization.js";
+import { TransactionFailure } from "./transaction-errors.js";
 
 type UserRegistration = Pick<User, "identityId"> & { role: ClinicUserRole };
 type UserPermissionChanges = { role?: ClinicUserRole; isActive?: boolean };
@@ -16,7 +16,7 @@ export const checkUserCreationPermission = async (authentication: Authentication
 export const createUser = async (
 	authentication: Authentication,
 	registration: UserRegistration,
-	assignUserRole: (markKeycloakRoleUpdateStarted: () => void) => Promise<void>,
+	assignUserRole: (markRoleUpdateStarted: () => void) => Promise<void>,
 ) => {
 
 	try {
@@ -24,15 +24,15 @@ export const createUser = async (
 		return await runAuthorizedTransaction(
 			authentication,
 			{ name: "createUser" },
-			async (client, actor, markKeycloakRoleUpdateStarted) => {
+			async (transaction, actor, markRoleUpdateStarted) => {
 
-				const { rows: [user] } = await client.query<Pick<User, "userId">>(
+				const { rows: [user] } = await transaction.query<Pick<User, "userId">>(
 					`INSERT INTO public.users (identity_id, clinic_id, role)
 					 VALUES ($1::text, $2::uuid, $3::public.user_role)
 					 RETURNING user_id AS "userId"`,
 					[registration.identityId, actor.clinicId, registration.role],
 				);
-				await assignUserRole(markKeycloakRoleUpdateStarted);
+				await assignUserRole(markRoleUpdateStarted);
 
 				return user;
 
@@ -57,13 +57,13 @@ export const updateUserPermissions = (
 	authentication: Authentication,
 	userId: string,
 	changes: UserPermissionChanges,
-	assignUserRole: (identityId: User["identityId"], role: ClinicUserRole, markKeycloakRoleUpdateStarted: () => void) => Promise<void>,
+	assignUserRole: (identityId: User["identityId"], role: ClinicUserRole, markRoleUpdateStarted: () => void) => Promise<void>,
 ) => {
 
 	return runAuthorizedTransaction(
 		authentication,
 		{ name: "updateUserPermissions", targetUserId: userId },
-		async (client, actor, markKeycloakRoleUpdateStarted) => {
+		async (transaction, actor, markRoleUpdateStarted) => {
 
 			const target = actor.targetUser!;
 			const { role, isActive } = changes;
@@ -84,7 +84,7 @@ export const updateUserPermissions = (
 				assignments.push(`is_active = $${values.length}::boolean`);
 			}
 
-			const { rows: [updatedUser] } = await client.query<UserPermissions & Pick<User, "identityId">>(
+			const { rows: [updatedUser] } = await transaction.query<UserPermissions & Pick<User, "identityId">>(
 				`UPDATE public.users
 				 SET ${assignments.join(", ")}
 				 WHERE user_id = $1::uuid
@@ -92,17 +92,17 @@ export const updateUserPermissions = (
 				values,
 			);
 
-			const { rows: [professional] } = await client.query(
+			const { rows: [professional] } = await transaction.query(
 				"SELECT 1 FROM public.professionals WHERE clinic_id = $1::uuid AND user_id = $2::uuid",
 				[actor.clinicId, target.userId],
 			);
 			if(professional) {
-				await incrementAvailabilityVersion(client, actor.clinicId!);
+				await incrementAvailabilityVersion(transaction, actor.clinicId!);
 			}
 
 			const { identityId, ...permissions } = updatedUser;
 			if(roleChanged) {
-				await assignUserRole(identityId, role, markKeycloakRoleUpdateStarted);
+				await assignUserRole(identityId, role, markRoleUpdateStarted);
 			}
 
 			return permissions;

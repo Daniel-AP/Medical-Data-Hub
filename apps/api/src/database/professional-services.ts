@@ -1,8 +1,8 @@
 import type { Professional, ProfessionalService, Service } from "../generated/prisma/client.js";
 import type { Authentication } from "../middleware/types.js";
 import { incrementAvailabilityVersion } from "./availability-versions.js";
-import { runAuthorizedTransaction } from "./transactions/authorized-transaction.js";
-import type { TransactionClient } from "./transactions/types.js";
+import { runAuthorizedTransaction } from "./authorization.js";
+import type { TransactionClient } from "./types.js";
 
 type ProfessionalServicePair = Pick<ProfessionalService, "professionalId" | "serviceId">;
 type ProfessionalServiceActivity = Pick<ProfessionalService, "professionalId" | "serviceId" | "isActive">;
