@@ -7,6 +7,7 @@ import { createAuthentication, requireRoles } from "./middleware/authentication.
 import { readAppointmentCountsHandler, readClinicAgendaHandler, readOwnAgendaHandler, readPatientAppointmentsHandler, readProfessionalAgendaHandler } from "./routes/appointment-queries.js";
 import { cancelAppointmentHandler, createAppointmentHandler, rescheduleAppointmentHandler } from "./routes/appointments.js";
 import { readAuditRecordsHandler } from "./routes/audit-records.js";
+import { readProfessionalAvailabilityHandler, readServiceAvailabilityHandler } from "./routes/availability.js";
 import { readBlocksHandler, createBlockHandler } from "./routes/blocks.js";
 import { readClinicalNoteHandler, createClinicalNoteHandler } from "./routes/clinical-notes.js";
 import { createClinicHandler } from "./routes/clinics.js";
@@ -37,6 +38,7 @@ if(!internalUrl || !clientId || !clientSecret) {
 
 const tokenSettings = { issuer, jwksUrl, audience };
 const authenticate = createAuthentication(createAccessTokenVerifier(tokenSettings));
+const requireAvailabilityRole = requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional);
 const prepareLogout = createLogoutHandler(createLogoutIdTokenVerifier(tokenSettings), issuer);
 const keycloakAdminSettings = {
 	issuer: new URL(issuer),
@@ -56,6 +58,7 @@ router.patch("/users/:userId", authenticate, requireRoles(UserRole.clinicAdminis
 router.post("/specialties", authenticate, requireRoles(UserRole.clinicAdministrator), createSpecialtyHandler);
 router.post("/services", authenticate, requireRoles(UserRole.clinicAdministrator), createServiceHandler);
 router.patch("/services/:serviceId", authenticate, requireRoles(UserRole.clinicAdministrator), updateServiceHandler);
+router.get("/services/:serviceId/availability", authenticate, requireAvailabilityRole, readServiceAvailabilityHandler);
 router.post("/patients", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), createPatientHandler);
 router.patch("/patients/:patientId", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception), updatePatientHandler);
 router.get("/patients/:patientId", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), readPatientHandler);
@@ -70,6 +73,7 @@ router.get("/professionals/:professionalId/agenda", authenticate, requireRoles(U
 router.post("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), createClinicalNoteHandler);
 router.get("/appointments/:appointmentId/clinical-note", authenticate, requireRoles(UserRole.healthcareProfessional), readClinicalNoteHandler);
 router.post("/professionals", authenticate, requireRoles(UserRole.clinicAdministrator), createProfessionalHandler);
+router.get("/professionals/:professionalId/availability", authenticate, requireAvailabilityRole, readProfessionalAvailabilityHandler);
 router.get("/professionals/:professionalId/schedules", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), readWeeklyScheduleHandler);
 router.get("/professionals/:professionalId/blocks", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.reception, UserRole.healthcareProfessional), readBlocksHandler);
 router.post("/professionals/:professionalId/blocks", authenticate, requireRoles(UserRole.clinicAdministrator, UserRole.healthcareProfessional), createBlockHandler);

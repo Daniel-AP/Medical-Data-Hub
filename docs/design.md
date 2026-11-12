@@ -872,6 +872,16 @@ Each `starts` array contains ISO 8601 UTC instants aligned to whole minutes, in 
 | `500` | An internal failure occurs. An unconfirmed commit carries `OPERATION_OUTCOME_UNKNOWN`. |
 | `503` | Authentication or the database is temporarily unavailable under the shared error classification. |
 
+### Compose Integration Tests
+
+Use a disposable Compose project with the seeded Costa Rica clinic. Set `AVAILABILITY_TEST_API_URL` and `AVAILABILITY_TEST_DATABASE_SETUP_URL` to the API and PostgreSQL setup addresses reachable from the test runner. The setup connection creates and removes synthetic fixtures and observes the authorization lock wait.
+
+Supply fresh Keycloak access tokens in `AVAILABILITY_TEST_ADMIN_TOKEN`, `AVAILABILITY_TEST_RECEPTION_TOKEN`, and `AVAILABILITY_TEST_PROFESSIONAL_TOKEN` for users of that clinic. Set `AVAILABILITY_TEST_PLATFORM_TOKEN` for a platform administrator.
+
+```sh
+npm exec -- vitest run --config vitest-http.config.ts apps/api/tests/routes/availability.integration.test.ts
+```
+
 ## Time Zones and Interval Boundaries
 
 ### Design Problem

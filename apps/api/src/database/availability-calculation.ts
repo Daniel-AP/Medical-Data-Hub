@@ -10,6 +10,7 @@ type AvailabilityCalendar = {
 	readLocalTime: LocalTimeReader;
 };
 type DailyAvailability = { localDate: string; starts: string[] };
+type AvailabilityTimeReference = { today: string; instant: number };
 
 const minuteMs = 60_000;
 const dayMs = 1440*minuteMs;
@@ -82,6 +83,26 @@ const mergeIntervals = (intervals: Interval[]) => {
 	}
 
 	return merged;
+
+};
+
+export const getOccupationWindows = (calendar: AvailabilityCalendar, durationMinutes: number) => {
+
+	const windows: Interval[] = [];
+	for(const span of calendar.spans) {
+
+		if(!calendar.dates.has(span.midnight)) {
+			continue;
+		}
+		const first = Math.ceil(span.start/minuteMs)*minuteMs;
+		const last = (Math.ceil(span.end/minuteMs)-1)*minuteMs;
+		if(first <= last) {
+			windows.push({ start: first, end: last+durationMinutes*minuteMs });
+		}
+
+	}
+
+	return mergeIntervals(windows);
 
 };
 
@@ -215,13 +236,15 @@ export const calculateDailyAvailability = (
 
 };
 
-export const filterFutureStarts = (units: readonly DailyAvailability[], timeZone: string, now: Date) => {
+export const getAvailabilityTimeReference = (timeZone: string, now: Date): AvailabilityTimeReference => {
+	const instant = now.getTime();
+	const today = createLocalTimeReader(timeZone)(instant).date.toISOString().slice(0, 10);
 
-	const reference = now.getTime();
-	const today = createLocalTimeReader(timeZone)(reference).date.toISOString().slice(0, 10);
+	return { today, instant };
+};
 
+export const filterFutureStarts = (units: readonly DailyAvailability[], { today, instant }: AvailabilityTimeReference) => {
 	return units.map((unit) => unit.localDate === today
-		? { ...unit, starts: unit.starts.filter((start) => Date.parse(start) > reference) }
+		? { ...unit, starts: unit.starts.filter((start) => Date.parse(start) > instant) }
 		: unit);
-
 };

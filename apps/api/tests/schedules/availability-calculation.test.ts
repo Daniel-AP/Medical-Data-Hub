@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { calculateDailyAvailability, filterFutureStarts, prepareAvailabilityCalendar } from "../../src/database/availability-calculation.js";
+import { calculateDailyAvailability, filterFutureStarts, getAvailabilityTimeReference, prepareAvailabilityCalendar } from "../../src/database/availability-calculation.js";
 
 it("joins overlapping and adjacent coverage while preserving gaps", () => {
 
@@ -120,7 +120,7 @@ it("filters starts for clinic-local today strictly after the fixed reference", (
 	];
 	const now = new Date("2030-01-08T02:00:00.000Z");
 
-	expect(filterFutureStarts(units, "America/Costa_Rica", now)).toEqual([
+	expect(filterFutureStarts(units, getAvailabilityTimeReference("America/Costa_Rica", now))).toEqual([
 		{ localDate: "2030-01-07", starts: ["2030-01-08T02:01:00.000Z"] },
 		{ localDate: "2030-01-08", starts: ["2030-01-08T06:00:00.000Z"] },
 	]);
