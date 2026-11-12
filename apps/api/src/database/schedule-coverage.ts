@@ -1,12 +1,13 @@
 import type { ScheduleInterval } from "./types.js";
 
-export const isScheduleCovered = (week: ScheduleInterval[], startAt: Date, endAt: Date, timeZone: string) => {
+export const createLocalTimeReader = (timeZone: string) => {
 
 	const formatter = new Intl.DateTimeFormat("en", {
 		timeZone, year: "numeric", month: "2-digit", day: "2-digit",
 		hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
 	});
-	const readLocalTime = (instant: number) => {
+
+	return (instant: number) => {
 
 		const parts = Object.fromEntries(formatter.formatToParts(instant).map(({ type, value }) => [type, value]));
 		const date = new Date(0);
@@ -17,6 +18,11 @@ export const isScheduleCovered = (week: ScheduleInterval[], startAt: Date, endAt
 
 	};
 
+};
+
+export const isScheduleCovered = (week: ScheduleInterval[], startAt: Date, endAt: Date, timeZone: string) => {
+
+	const readLocalTime = createLocalTimeReader(timeZone);
 	let cursor = startAt.getTime();
 	const end = endAt.getTime();
 	while(cursor < end) {
