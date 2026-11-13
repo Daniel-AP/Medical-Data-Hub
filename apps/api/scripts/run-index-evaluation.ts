@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 
@@ -26,6 +26,7 @@ const runCompose = (args: string[]) => {
 
 try {
 
+	rmSync(output, { recursive: true, force: true });
 	mkdirSync(output, { recursive: true });
 	runCompose(["up", "--detach", "--wait", "postgres"]);
 	runCompose(["run", "--rm", "--build", "--no-deps", "database-init"]);
@@ -46,8 +47,5 @@ try {
 	runCompose(["down", "--volumes"]);
 }
 
-mkdirSync(results, { recursive: true });
-for(const file of ["plans.json", "samples.csv"]) {
-	renameSync(new URL(file, output), new URL(file, results));
-}
+cpSync(output, results, { recursive: true });
 console.log("Results saved");
