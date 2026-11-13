@@ -76,6 +76,7 @@ const readAvailabilitySnapshot = async (
 
 	}
 
+	const spansByDay = cached && Map.groupBy(calendar.spans, (span) => span.midnight);
 	let acceptedUnits = 0;
 	const professionals = eligibility.filter(({ eligible }) => eligible).map(({ professionalId }) => {
 
@@ -87,7 +88,7 @@ const readAvailabilitySnapshot = async (
 		for(const [day, localDate] of calendar.dates) {
 
 			const unitScope = { ...scope, professionalId, localDate };
-			const unit = parseAvailabilityUnit(cached.get(getAvailabilityKey(unitScope)) ?? null, unitScope);
+			const unit = parseAvailabilityUnit(cached.get(getAvailabilityKey(unitScope)) ?? null, unitScope, spansByDay?.get(day) ?? []);
 			if(unit) {
 				units.push(unit);
 				acceptedUnits++;
