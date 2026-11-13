@@ -1,0 +1,149 @@
+{
+  "indexes": [
+    {
+      "name": "professional_schedules_idx",
+      "bytes": 32768
+    }
+  ],
+  "statements": [
+    {
+      "sql": "SELECT professional_id AS \"professionalId\", weekday, start_minute AS \"startMinute\", end_minute AS \"endMinute\"\n\t FROM public.professional_schedules WHERE clinic_id = $1::uuid AND professional_id = ANY($2::uuid[])",
+      "parameters": [
+        "f4cd2465-4c07-4044-8710-d87aaec1cfac",
+        [
+          "002f339c-7532-4c63-bc70-fcab922fc910",
+          "05f06a47-9961-43d4-ae7b-90680845923c",
+          "061d0c50-b6ab-4684-a9a1-1b5c908bb324",
+          "0aaae528-5792-437a-be55-dd88871fd68e",
+          "0ae05d39-8efa-466f-80b0-fbf23ce0d8db",
+          "1108ecfa-0f92-4a28-a8fd-b9c9d8408a7f",
+          "1ee1c335-5d6f-4863-ac98-e3245a557805",
+          "2d03d49e-6444-4c8e-bd08-21c9ddbfae98",
+          "511558aa-f196-4339-98bf-a46466bbe8c9",
+          "52c8a9ad-0f87-421a-a86c-b4b7e75a5473",
+          "57310a09-d2a7-449d-b4f7-6bae031720a2",
+          "59fc7820-ba35-41a5-ab88-15a9575e6ad2",
+          "62ceab2c-03d5-4583-85f9-fc8b7a10e3f8",
+          "6536bd92-4efd-4f55-bb87-030be794599f",
+          "706b0e19-3965-48d4-b973-0f6bd8d9f595",
+          "73e18689-89af-40cc-8d25-0300c4f5ea03",
+          "7aaad21e-8808-46a4-a9eb-246a1fd016be",
+          "7b1a8b6c-bee0-4921-96ff-c78393f6263b",
+          "8fae55c2-0664-47b7-8325-168b1560b6fd",
+          "97641930-4d08-4b57-88b4-f597f94f0553",
+          "a2a944a2-5f74-4a86-bfe3-f5b2c28760f2",
+          "a9bbc5f1-9bd6-4055-a6d5-ba8949cb0ed8",
+          "bf27c801-3df3-495b-8119-f083e8be11f6",
+          "c0379ddc-b92e-43bc-9c48-3a876f4e21a6",
+          "d10b21b8-83c5-4339-9abd-6df746d59c7f",
+          "db4d4fc1-9579-4400-979d-13ab140631d4",
+          "e95cbbb8-68e9-44d5-be25-96ea4fa54a54",
+          "fb30e011-f3d5-4d63-9b2a-8daf014e28a4",
+          "fb77118b-3931-4ec4-a6af-879d478c9c47"
+        ]
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "Result",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 9.62,
+          "Total Cost": 23.29,
+          "Plan Rows": 96,
+          "Plan Width": 22,
+          "Actual Rows": 290,
+          "Actual Loops": 1,
+          "Disabled": false,
+          "One-Time Filter": "((NULLIF(current_setting('app.clinic_id'::text, true), ''::text))::uuid = 'f4cd2465-4c07-4044-8710-d87aaec1cfac'::uuid)",
+          "Shared Hit Blocks": 8,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "Bitmap Heap Scan",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Relation Name": "professional_schedules",
+              "Alias": "professional_schedules",
+              "Startup Cost": 9.62,
+              "Total Cost": 23.29,
+              "Plan Rows": 96,
+              "Plan Width": 22,
+              "Actual Rows": 290,
+              "Actual Loops": 1,
+              "Disabled": false,
+              "Recheck Cond": "((clinic_id = 'f4cd2465-4c07-4044-8710-d87aaec1cfac'::uuid) AND (professional_id = ANY ('{002f339c-7532-4c63-bc70-fcab922fc910,05f06a47-9961-43d4-ae7b-90680845923c,061d0c50-b6ab-4684-a9a1-1b5c908bb324,0aaae528-5792-437a-be55-dd88871fd68e,0ae05d39-8efa-466f-80b0-fbf23ce0d8db,1108ecfa-0f92-4a28-a8fd-b9c9d8408a7f,1ee1c335-5d6f-4863-ac98-e3245a557805,2d03d49e-6444-4c8e-bd08-21c9ddbfae98,511558aa-f196-4339-98bf-a46466bbe8c9,52c8a9ad-0f87-421a-a86c-b4b7e75a5473,57310a09-d2a7-449d-b4f7-6bae031720a2,59fc7820-ba35-41a5-ab88-15a9575e6ad2,62ceab2c-03d5-4583-85f9-fc8b7a10e3f8,6536bd92-4efd-4f55-bb87-030be794599f,706b0e19-3965-48d4-b973-0f6bd8d9f595,73e18689-89af-40cc-8d25-0300c4f5ea03,7aaad21e-8808-46a4-a9eb-246a1fd016be,7b1a8b6c-bee0-4921-96ff-c78393f6263b,8fae55c2-0664-47b7-8325-168b1560b6fd,97641930-4d08-4b57-88b4-f597f94f0553,a2a944a2-5f74-4a86-bfe3-f5b2c28760f2,a9bbc5f1-9bd6-4055-a6d5-ba8949cb0ed8,bf27c801-3df3-495b-8119-f083e8be11f6,c0379ddc-b92e-43bc-9c48-3a876f4e21a6,d10b21b8-83c5-4339-9abd-6df746d59c7f,db4d4fc1-9579-4400-979d-13ab140631d4,e95cbbb8-68e9-44d5-be25-96ea4fa54a54,fb30e011-f3d5-4d63-9b2a-8daf014e28a4,fb77118b-3931-4ec4-a6af-879d478c9c47}'::uuid[])))",
+              "Rows Removed by Index Recheck": 0,
+              "Filter": "((NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid IS NOT NULL)",
+              "Rows Removed by Filter": 0,
+              "Exact Heap Blocks": 4,
+              "Lossy Heap Blocks": 0,
+              "Shared Hit Blocks": 8,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0,
+              "Plans": [
+                {
+                  "Node Type": "Bitmap Index Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Index Name": "professional_schedules_idx",
+                  "Startup Cost": 0,
+                  "Total Cost": 9.51,
+                  "Plan Rows": 97,
+                  "Plan Width": 0,
+                  "Actual Rows": 290,
+                  "Actual Loops": 1,
+                  "Disabled": false,
+                  "Index Cond": "((clinic_id = 'f4cd2465-4c07-4044-8710-d87aaec1cfac'::uuid) AND (professional_id = ANY ('{002f339c-7532-4c63-bc70-fcab922fc910,05f06a47-9961-43d4-ae7b-90680845923c,061d0c50-b6ab-4684-a9a1-1b5c908bb324,0aaae528-5792-437a-be55-dd88871fd68e,0ae05d39-8efa-466f-80b0-fbf23ce0d8db,1108ecfa-0f92-4a28-a8fd-b9c9d8408a7f,1ee1c335-5d6f-4863-ac98-e3245a557805,2d03d49e-6444-4c8e-bd08-21c9ddbfae98,511558aa-f196-4339-98bf-a46466bbe8c9,52c8a9ad-0f87-421a-a86c-b4b7e75a5473,57310a09-d2a7-449d-b4f7-6bae031720a2,59fc7820-ba35-41a5-ab88-15a9575e6ad2,62ceab2c-03d5-4583-85f9-fc8b7a10e3f8,6536bd92-4efd-4f55-bb87-030be794599f,706b0e19-3965-48d4-b973-0f6bd8d9f595,73e18689-89af-40cc-8d25-0300c4f5ea03,7aaad21e-8808-46a4-a9eb-246a1fd016be,7b1a8b6c-bee0-4921-96ff-c78393f6263b,8fae55c2-0664-47b7-8325-168b1560b6fd,97641930-4d08-4b57-88b4-f597f94f0553,a2a944a2-5f74-4a86-bfe3-f5b2c28760f2,a9bbc5f1-9bd6-4055-a6d5-ba8949cb0ed8,bf27c801-3df3-495b-8119-f083e8be11f6,c0379ddc-b92e-43bc-9c48-3a876f4e21a6,d10b21b8-83c5-4339-9abd-6df746d59c7f,db4d4fc1-9579-4400-979d-13ab140631d4,e95cbbb8-68e9-44d5-be25-96ea4fa54a54,fb30e011-f3d5-4d63-9b2a-8daf014e28a4,fb77118b-3931-4ec4-a6af-879d478c9c47}'::uuid[])))",
+                  "Index Searches": 2,
+                  "Shared Hit Blocks": 4,
+                  "Shared Read Blocks": 0,
+                  "Shared Dirtied Blocks": 0,
+                  "Shared Written Blocks": 0,
+                  "Local Hit Blocks": 0,
+                  "Local Read Blocks": 0,
+                  "Local Dirtied Blocks": 0,
+                  "Local Written Blocks": 0,
+                  "Temp Read Blocks": 0,
+                  "Temp Written Blocks": 0
+                }
+              ]
+            }
+          ]
+        },
+        "Settings": {},
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.062,
+        "Triggers": [],
+        "Execution Time": 0.169
+      }
+    }
+  ]
+}
