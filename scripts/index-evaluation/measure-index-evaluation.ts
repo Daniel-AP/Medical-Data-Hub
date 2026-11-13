@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Client, Pool } from "pg";
-import { getOccupationWindows, prepareAvailabilityCalendar } from "../src/database/availability-calculation.js";
+import { getOccupationWindows, prepareAvailabilityCalendar } from "../../apps/api/src/database/availability-calculation.js";
 import {
 	availabilityMetadataQuery, availabilityProfessionalsQuery, availabilitySchedulesQuery, availabilityOccupationQuery,
-} from "../src/database/availability-queries.js";
-import { runAuthorizedTransaction } from "../src/database/authorization.js";
-import type { ScheduleInterval } from "../src/database/types.js";
-import type { Appointment, Clinic, Professional, Service } from "../src/generated/prisma/client.js";
-import { UserRole } from "../src/generated/prisma/enums.js";
-import type { Authentication } from "../src/middleware/types.js";
+} from "../../apps/api/src/database/availability-queries.js";
+import { runAuthorizedTransaction } from "../../apps/api/src/database/authorization.js";
+import type { ScheduleInterval } from "../../apps/api/src/database/types.js";
+import type { Appointment, Clinic, Professional, Service } from "../../apps/api/src/generated/prisma/client.js";
+import { UserRole } from "../../apps/api/src/generated/prisma/enums.js";
+import type { Authentication } from "../../apps/api/src/middleware/types.js";
 
 type ExecutionPlan = { "Execution Time": number; [key: string]: unknown };
 type Statement = { sql: string; parameters: unknown[] };
@@ -24,7 +24,7 @@ type EvaluationQuery = {
 };
 type IndexSize = { name: string; bytes: number };
 
-const realm = JSON.parse(readFileSync(new URL("../../../infra/keycloak/development/medical-data-hub-realm.json", import.meta.url), "utf8")) as {
+const realm = JSON.parse(readFileSync(new URL("../../infra/keycloak/development/medical-data-hub-realm.json", import.meta.url), "utf8")) as {
 	users: { id: string; username: string }[];
 };
 const receptionAccount = realm.users.find(({ username }) => username === "reception");
@@ -36,7 +36,7 @@ const reception = { identityId: receptionAccount.id, roles: [UserRole.reception]
 const administrator = { identityId: administratorAccount.id, roles: [UserRole.clinicAdministrator] };
 const pool = new Pool({ connectionString: process.env.API_DATABASE_URL });
 const setup = new Client({ connectionString: process.env.DATABASE_URL });
-const output = new URL("../../../performance/indexes/", import.meta.url);
+const output = new URL("../../performance/indexes/", import.meta.url);
 const warmupRuns = 3;
 const measuredRuns = 10;
 const references = new Map<string, string[]>();

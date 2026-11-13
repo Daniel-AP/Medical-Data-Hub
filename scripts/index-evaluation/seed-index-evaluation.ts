@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { AppointmentState, UserRole } from "../src/generated/prisma/client.js";
-import { prisma } from "../src/database/prisma-client.js";
+import { AppointmentState, UserRole } from "../../apps/api/src/generated/prisma/client.js";
+import { prisma } from "../../apps/api/src/database/prisma-client.js";
 
 const localDate = new Intl.DateTimeFormat("en-CA", {
 	timeZone: "America/Costa_Rica", year: "numeric", month: "2-digit", day: "2-digit",

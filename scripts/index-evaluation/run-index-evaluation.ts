@@ -3,11 +3,12 @@ import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 
-const root = fileURLToPath(new URL("../../../", import.meta.url));
-const output = new URL("../../../.vitest/index-evaluation/output/", import.meta.url);
-const results = new URL("../../../performance/indexes/", import.meta.url);
-const settings = parseEnv(readFileSync(new URL("../../../.env.example", import.meta.url), "utf8"));
+const root = new URL("../../", import.meta.url);
+const output = new URL(".vitest/index-evaluation/output/", root);
+const results = new URL("performance/indexes/", root);
+const settings = parseEnv(readFileSync(new URL(".env.example", root), "utf8"));
 const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !(name.toUpperCase() in settings)));
+const scriptsVolume = `${import.meta.dirname}:/app/scripts/index-evaluation:ro`;
 
 const runCompose = (args: string[]) => {
 
@@ -32,15 +33,13 @@ try {
 	runCompose(["run", "--rm", "--build", "--no-deps", "database-init"]);
 	console.log("Database ready");
 	runCompose([
-		"run", "--rm", "--no-deps", "--volume",
-		`${fileURLToPath(new URL("./", import.meta.url))}:/app/apps/api/scripts:ro`,
-		"database-init", "node", "--import", "tsx", "scripts/seed-index-evaluation.ts",
+		"run", "--rm", "--no-deps", "--volume", scriptsVolume,
+		"database-init", "node", "--import", "tsx", "/app/scripts/index-evaluation/seed-index-evaluation.ts",
 	]);
 	runCompose([
-		"run", "--rm", "--no-deps", "--volume",
-		`${fileURLToPath(new URL("./", import.meta.url))}:/app/apps/api/scripts:ro`,
+		"run", "--rm", "--no-deps", "--volume", scriptsVolume,
 		"--volume", `${fileURLToPath(output)}:/app/performance/indexes`,
-		"database-init", "node", "--import", "tsx", "scripts/measure-index-evaluation.ts",
+		"database-init", "node", "--import", "tsx", "/app/scripts/index-evaluation/measure-index-evaluation.ts",
 	]);
 
 } finally {
