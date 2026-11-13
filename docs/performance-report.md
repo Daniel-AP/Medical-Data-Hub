@@ -12,10 +12,10 @@ npm run measure:cache
 
 The command prints the Markdown report and removes the containers, volumes, network, and local images for its Compose project.
 
-- Run started at 2026-11-13T02:04:24.586Z (UTC)
-- Git HEAD `49ee0fd435b65ae15d782b4012a9866eb3d80e8c`
-- Source changes relative to HEAD (`package.json`, `scripts/test-all.ts`, `scripts/test-compose.ts`, `scripts/cache-measurement/fixtures.ts`, `scripts/cache-measurement/report.ts`, `scripts/cache-measurement/run.ts`, `scripts/cache-measurement/samples.ts`)
-- Source fingerprint (SHA-256) `26881b4ce987ee918ae136070a2212f5bc904751150ec80fd9288a9811a319f6`
+- Run started at 2026-11-13T02:22:43.875Z (UTC)
+- Git HEAD `fe10e0858363338e087228ff1b6c5b163a9ba635`
+- Source changes relative to HEAD (none)
+- Source fingerprint (SHA-256) `91d9e770477ce7f2a9525def933417d2fbed30706e006de3b437dc3f9f226650`
 - Runner host darwin 27.2.0 arm64
 - Runner Node.js v26.0.0
 - Docker Engine 29.9.3
@@ -29,12 +29,12 @@ The command prints the Markdown report and removes the containers, volumes, netw
 
 The fresh Compose project uses the application migrations, synthetic seed, and development Keycloak realm. Both modes use the same reception account, SQL role `reception`, and clinic RLS policies. The setup connection reads fixture and index metadata outside the requests.
 
-- Clinic Clínica Central (`7b91beef-380c-448f-bb3e-8dad4f872569`), time zone `America/Costa_Rica`, availability version `0` before and after the run
-- Service Consulta general (`42a86833-e636-4fbd-a504-a4ac8afc4943`), duration 30 minutes
-- 2 eligible professionals (`cf1d7ad3-2d3f-4ac6-ac29-bff9b414c3da`, `80b3e1f5-10ad-4813-8f38-708e64ca91bd`)
+- Clinic Clínica Central (`3a2c79d0-aafb-4ab3-bbbf-2e6387ec0323`), time zone `America/Costa_Rica`, availability version `0` before and after the run
+- Service Consulta general (`e25bc0da-a8f9-406b-b829-1b466e3bc456`), duration 30 minutes
+- 2 eligible professionals (`3f4c8230-b108-4406-867a-4e905c131b73`, `318a55e3-780f-45f6-bee5-ceffb30183ae`)
 - Date anchor 2026-11-16, the Monday of the selected professional's first future reserved appointment week for this service
-- CW1 uses `GET /professionals/cf1d7ad3-2d3f-4ac6-ac29-bff9b414c3da/availability?serviceId=42a86833-e636-4fbd-a504-a4ac8afc4943&date=2026-11-16` with 1 expected daily unit. The cache verification accepted 1 and calculated 0.
-- CW2 uses `GET /services/42a86833-e636-4fbd-a504-a4ac8afc4943/availability?from=2026-11-16&to=2026-11-22` with 14 expected daily units. The cache verification accepted 14 and calculated 0.
+- CW1 uses `GET /professionals/3f4c8230-b108-4406-867a-4e905c131b73/availability?serviceId=e25bc0da-a8f9-406b-b829-1b466e3bc456&date=2026-11-16` with 1 expected daily unit. The cache verification accepted 1 and calculated 0.
+- CW2 uses `GET /services/e25bc0da-a8f9-406b-b829-1b466e3bc456/availability?from=2026-11-16&to=2026-11-22` with 14 expected daily units. The cache verification accepted 14 and calculated 0.
 
 | Clinic | Professionals | Appointments | First appointment date | Last appointment date |
 | --- | ---: | ---: | --- | --- |
@@ -91,56 +91,54 @@ CREATE UNIQUE INDEX users_pkey ON public.users USING btree (user_id);
 
 | Workload | Pair | Order | Requested mode | Duration (ms) | HTTP | Observed mode | Accepted | Calculated | Equivalent JSON | Included | Issue |
 | --- | ---: | ---: | --- | ---: | ---: | --- | ---: | ---: | --- | --- | --- |
-| CW1 | 1 | 1 | direct | 2.937 | 200 | direct | 0 | 1 | Yes | Yes | - |
-| CW1 | 1 | 2 | cached | 5.250 | 200 | cached | 1 | 0 | Yes | Yes | - |
-| CW1 | 2 | 1 | cached | 4.976 | 200 | cached | 1 | 0 | Yes | Yes | - |
-| CW1 | 2 | 2 | direct | 3.273 | 200 | direct | 0 | 1 | Yes | Yes | - |
-| CW1 | 3 | 1 | direct | 3.070 | 200 | direct | 0 | 1 | Yes | Yes | - |
-| CW1 | 3 | 2 | cached | 5.268 | 200 | cached | 1 | 0 | Yes | Yes | - |
-| CW1 | 4 | 1 | cached | 4.690 | 200 | cached | 1 | 0 | Yes | Yes | - |
-| CW1 | 4 | 2 | direct | 3.373 | 200 | direct | 0 | 1 | Yes | Yes | - |
-| CW1 | 5 | 1 | direct | 2.985 | 200 | direct | 0 | 1 | Yes | Yes | - |
-| CW1 | 5 | 2 | cached | 4.749 | 200 | cached | 1 | 0 | Yes | Yes | - |
-| CW1 | 6 | 1 | cached | 5.221 | 200 | cached | 1 | 0 | Yes | Yes | - |
-| CW1 | 6 | 2 | direct | 3.173 | 200 | direct | 0 | 1 | Yes | Yes | - |
-| CW1 | 7 | 1 | direct | 3.032 | 200 | direct | 0 | 1 | Yes | Yes | - |
-| CW1 | 7 | 2 | cached | 4.690 | 200 | cached | 1 | 0 | Yes | Yes | - |
-| CW1 | 8 | 1 | cached | 5.607 | 200 | cached | 1 | 0 | Yes | Yes | - |
-| CW1 | 8 | 2 | direct | 3.418 | 200 | direct | 0 | 1 | Yes | Yes | - |
-| CW1 | 9 | 1 | direct | 2.683 | 200 | direct | 0 | 1 | Yes | Yes | - |
-| CW1 | 9 | 2 | cached | 4.990 | 200 | cached | 1 | 0 | Yes | Yes | - |
-| CW1 | 10 | 1 | cached | 5.121 | 200 | cached | 1 | 0 | Yes | Yes | - |
-| CW1 | 10 | 2 | direct | 2.592 | 200 | direct | 0 | 1 | Yes | Yes | - |
-| CW2 | 1 | 1 | direct | 5.780 | 200 | direct | 0 | 14 | Yes | Yes | - |
-| CW2 | 1 | 2 | cached | 18.583 | 200 | cached | 14 | 0 | Yes | Yes | - |
-| CW2 | 2 | 1 | cached | 18.901 | 200 | cached | 14 | 0 | Yes | Yes | - |
-| CW2 | 2 | 2 | direct | 5.036 | 200 | direct | 0 | 14 | Yes | Yes | - |
-| CW2 | 3 | 1 | direct | 4.318 | 200 | direct | 0 | 14 | Yes | Yes | - |
-| CW2 | 3 | 2 | cached | 18.627 | 200 | cached | 14 | 0 | Yes | Yes | - |
-| CW2 | 4 | 1 | cached | 18.500 | 200 | cached | 14 | 0 | Yes | Yes | - |
-| CW2 | 4 | 2 | direct | 5.721 | 200 | direct | 0 | 14 | Yes | Yes | - |
-| CW2 | 5 | 1 | direct | 7.512 | 200 | direct | 0 | 14 | Yes | Yes | - |
-| CW2 | 5 | 2 | cached | 18.807 | 200 | cached | 14 | 0 | Yes | Yes | - |
-| CW2 | 6 | 1 | cached | 19.227 | 200 | cached | 14 | 0 | Yes | Yes | - |
-| CW2 | 6 | 2 | direct | 4.683 | 200 | direct | 0 | 14 | Yes | Yes | - |
-| CW2 | 7 | 1 | direct | 4.346 | 200 | direct | 0 | 14 | Yes | Yes | - |
-| CW2 | 7 | 2 | cached | 18.924 | 200 | cached | 14 | 0 | Yes | Yes | - |
-| CW2 | 8 | 1 | cached | 18.375 | 200 | cached | 14 | 0 | Yes | Yes | - |
-| CW2 | 8 | 2 | direct | 5.231 | 200 | direct | 0 | 14 | Yes | Yes | - |
-| CW2 | 9 | 1 | direct | 5.014 | 200 | direct | 0 | 14 | Yes | Yes | - |
-| CW2 | 9 | 2 | cached | 18.998 | 200 | cached | 14 | 0 | Yes | Yes | - |
-| CW2 | 10 | 1 | cached | 18.567 | 200 | cached | 14 | 0 | Yes | Yes | - |
-| CW2 | 10 | 2 | direct | 5.209 | 200 | direct | 0 | 14 | Yes | Yes | - |
+| CW1 | 1 | 1 | direct | 3.579 | 200 | direct | 0 | 1 | Yes | Yes | - |
+| CW1 | 1 | 2 | cached | 5.652 | 200 | cached | 1 | 0 | Yes | Yes | - |
+| CW1 | 2 | 1 | cached | 5.067 | 200 | cached | 1 | 0 | Yes | Yes | - |
+| CW1 | 2 | 2 | direct | 3.007 | 200 | direct | 0 | 1 | Yes | Yes | - |
+| CW1 | 3 | 1 | direct | 2.564 | 200 | direct | 0 | 1 | Yes | Yes | - |
+| CW1 | 3 | 2 | cached | 4.939 | 200 | cached | 1 | 0 | Yes | Yes | - |
+| CW1 | 4 | 1 | cached | 4.689 | 200 | cached | 1 | 0 | Yes | Yes | - |
+| CW1 | 4 | 2 | direct | 3.164 | 200 | direct | 0 | 1 | Yes | Yes | - |
+| CW1 | 5 | 1 | direct | 2.880 | 200 | direct | 0 | 1 | Yes | Yes | - |
+| CW1 | 5 | 2 | cached | 4.973 | 200 | cached | 1 | 0 | Yes | Yes | - |
+| CW1 | 6 | 1 | cached | 4.567 | 200 | cached | 1 | 0 | Yes | Yes | - |
+| CW1 | 6 | 2 | direct | 2.955 | 200 | direct | 0 | 1 | Yes | Yes | - |
+| CW1 | 7 | 1 | direct | 2.643 | 200 | direct | 0 | 1 | Yes | Yes | - |
+| CW1 | 7 | 2 | cached | 4.255 | 200 | cached | 1 | 0 | Yes | Yes | - |
+| CW1 | 8 | 1 | cached | 4.584 | 200 | cached | 1 | 0 | Yes | Yes | - |
+| CW1 | 8 | 2 | direct | 2.337 | 200 | direct | 0 | 1 | Yes | Yes | - |
+| CW1 | 9 | 1 | direct | 2.608 | 200 | direct | 0 | 1 | Yes | Yes | - |
+| CW1 | 9 | 2 | cached | 4.826 | 200 | cached | 1 | 0 | Yes | Yes | - |
+| CW1 | 10 | 1 | cached | 4.737 | 200 | cached | 1 | 0 | Yes | Yes | - |
+| CW1 | 10 | 2 | direct | 2.796 | 200 | direct | 0 | 1 | Yes | Yes | - |
+| CW2 | 1 | 1 | direct | 5.553 | 200 | direct | 0 | 14 | Yes | Yes | - |
+| CW2 | 1 | 2 | cached | 18.160 | 200 | cached | 14 | 0 | Yes | Yes | - |
+| CW2 | 2 | 1 | cached | 18.940 | 200 | cached | 14 | 0 | Yes | Yes | - |
+| CW2 | 2 | 2 | direct | 4.836 | 200 | direct | 0 | 14 | Yes | Yes | - |
+| CW2 | 3 | 1 | direct | 4.410 | 200 | direct | 0 | 14 | Yes | Yes | - |
+| CW2 | 3 | 2 | cached | 19.207 | 200 | cached | 14 | 0 | Yes | Yes | - |
+| CW2 | 4 | 1 | cached | 18.383 | 200 | cached | 14 | 0 | Yes | Yes | - |
+| CW2 | 4 | 2 | direct | 4.980 | 200 | direct | 0 | 14 | Yes | Yes | - |
+| CW2 | 5 | 1 | direct | 4.684 | 200 | direct | 0 | 14 | Yes | Yes | - |
+| CW2 | 5 | 2 | cached | 21.331 | 200 | cached | 14 | 0 | Yes | Yes | - |
+| CW2 | 6 | 1 | cached | 19.662 | 200 | cached | 14 | 0 | Yes | Yes | - |
+| CW2 | 6 | 2 | direct | 5.061 | 200 | direct | 0 | 14 | Yes | Yes | - |
+| CW2 | 7 | 1 | direct | 4.775 | 200 | direct | 0 | 14 | Yes | Yes | - |
+| CW2 | 7 | 2 | cached | 19.662 | 200 | cached | 14 | 0 | Yes | Yes | - |
+| CW2 | 8 | 1 | cached | 18.466 | 200 | cached | 14 | 0 | Yes | Yes | - |
+| CW2 | 8 | 2 | direct | 5.035 | 200 | direct | 0 | 14 | Yes | Yes | - |
+| CW2 | 9 | 1 | direct | 5.034 | 200 | direct | 0 | 14 | Yes | Yes | - |
+| CW2 | 9 | 2 | cached | 19.076 | 200 | cached | 14 | 0 | Yes | Yes | - |
+| CW2 | 10 | 1 | cached | 19.575 | 200 | cached | 14 | 0 | Yes | Yes | - |
+| CW2 | 10 | 2 | direct | 5.506 | 200 | direct | 0 | 14 | Yes | Yes | - |
 
 ### Aggregates
 
 | Workload | Mode | Included samples | Mean (ms) | Median (ms) |
 | --- | --- | ---: | ---: | ---: |
-| CW1 | direct | 10 | 3.054 | 3.051 |
-| CW1 | cached | 10 | 5.056 | 5.056 |
-| CW2 | direct | 10 | 5.285 | 5.122 |
-| CW2 | cached | 10 | 18.751 | 18.717 |
+| CW1 | direct | 10 | 2.853 | 2.838 |
+| CW1 | cached | 10 | 4.829 | 4.782 |
+| CW2 | direct | 10 | 4.988 | 5.007 |
+| CW2 | cached | 10 | 19.246 | 19.141 |
 
 The direct mode had a lower mean and median in both workloads. The cached requests reused every expected unit and still ran the two PostgreSQL phases. These timings describe the measured revision, synthetic seed, and local Compose environment.
-
-## Index evaluation
