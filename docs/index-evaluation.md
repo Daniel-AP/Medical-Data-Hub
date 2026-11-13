@@ -22,6 +22,8 @@ The comparisons use the same data, SQL, parameters and clinic access rules in Po
 
 Plans use EXPLAIN (ANALYZE, BUFFERS, SETTINGS, TIMING OFF, FORMAT JSON). Each result links to its first measured plan and ten samples. Every read returns the same rows with every applicable index configuration
 
+The text below shows selected branches from those JSON plans, with each case identified above its plan. IDs and omitted branches use `...` Actual rows are output rows per loop, before any parent filter. Node times are absent because TIMING OFF is used
+
 Sizes use pg_relation_size after index creation and cover all three clinics. One KiB is 1,024 bytes
 
 Write measurements cover the SQL operations listed below. Each operation is rolled back after measurement. Replacing a week measures the combined execution time of its delete and insert
@@ -177,6 +179,19 @@ These measurements use only the indexes created by the migrations
 
 Median time: **0.041 ms** [Plan](../performance/indexes/existing-indexes/metadata-clinic-service-plan.json) [Samples](../performance/indexes/existing-indexes/metadata-clinic-service-samples.csv)
 
+[Plan](../performance/indexes/existing-indexes/metadata-clinic-service-plan.json)
+
+```text
+Seq Scan on clinics (actual rows=1 loops=1)
+  Rows Removed by Filter: 2
+
+Seq Scan on services (actual rows=1 loops=1)
+  Rows Removed by Filter: 8
+
+Seq Scan on clinic_availability_versions (actual rows=1 loops=1)
+  Rows Removed by Filter: 0
+```
+
 Plan: scans all 3 clinic rows and all 9 service rows. The availability version scan stops after its first match. The query returns one row, and these tables are small
 
 ### Check professionals for a service
@@ -186,6 +201,19 @@ Plan: scans all 3 clinic rows and all 9 service rows. The availability version s
 | A specific ID | **0.073 ms** [Plan](../performance/indexes/existing-indexes/professionals-professional-plan.json) [Samples](../performance/indexes/existing-indexes/professionals-professional-samples.csv) |
 | NULL | **0.135 ms** [Plan](../performance/indexes/existing-indexes/professionals-service-plan.json) [Samples](../performance/indexes/existing-indexes/professionals-service-samples.csv) |
 
+[Plan, one professional](../performance/indexes/existing-indexes/professionals-professional-plan.json)
+
+```text
+Seq Scan on users (actual rows=32 loops=1)
+  Rows Removed by Filter: 65
+
+Seq Scan on professionals (actual rows=1 loops=1)
+  Rows Removed by Filter: 89
+
+Seq Scan on professional_services (actual rows=1 loops=1)
+  Rows Removed by Filter: 38
+```
+
 Plan: both cases scan all 90 professional rows and all 97 user rows. The association scan reads 39 rows before finding the specific professional's match and all 177 rows without an ID. Requesting one professional still requires scanning every professional and user row
 
 ### Read weekly professional schedules
@@ -194,6 +222,13 @@ Plan: both cases scan all 90 professional rows and all 97 user rows. The associa
 | --- | ---: |
 | List with one ID | **0.082 ms** [Plan](../performance/indexes/existing-indexes/schedules-professional-plan.json) [Samples](../performance/indexes/existing-indexes/schedules-professional-samples.csv) |
 | List with multiple IDs | **0.248 ms** [Plan](../performance/indexes/existing-indexes/schedules-service-plan.json) [Samples](../performance/indexes/existing-indexes/schedules-service-samples.csv) |
+
+[Plan, one professional](../performance/indexes/existing-indexes/schedules-professional-plan.json)
+
+```text
+Seq Scan on professional_schedules (actual rows=10 loops=1)
+  Rows Removed by Filter: 890
+```
 
 Plan: scans all 900 schedule rows. One ID keeps 10 rows and discards 890. Multiple IDs keep 290 and discard 610. The table scan stays the same size in both cases
 
@@ -205,6 +240,16 @@ Plan: scans all 900 schedule rows. One ID keeps 10 rows and discards 890. Multip
 | List with one ID | Seven consecutive dates | **25.259 ms** [Plan](../performance/indexes/existing-indexes/occupation-professional-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-professional-week-samples.csv) |
 | List with multiple IDs | One date | **62.618 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-day-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-day-samples.csv) |
 | List with multiple IDs | Seven consecutive dates | **64.576 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-week-samples.csv) |
+
+[Plan, one professional and one date](../performance/indexes/existing-indexes/occupation-professional-day-plan.json)
+
+```text
+Bitmap Index Scan using appointments_previous_key (actual rows=100000 loops=1)
+  Index Cond: (clinic_id = '...'::uuid)
+
+Seq Scan on professional_blocks (actual rows=134 loops=1)
+  Rows Removed by Filter: 11935
+```
 
 Plan: appointments_previous_key narrows 300,000 appointments to 100,000 clinic candidates. PostgreSQL then checks professional, state and time overlap. Blocks still require scanning all 12,069 rows. The four cases return 11, 54, 345 and 1,592 occupied intervals, respectively, so most rows examined are discarded
 
@@ -226,6 +271,18 @@ WHERE state = 'reserved'
 | List with one ID | Seven consecutive dates | **25.259 ms** [Plan](../performance/indexes/existing-indexes/occupation-professional-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-professional-week-samples.csv) | **1.528 ms** [Plan](../performance/indexes/appointments-end/occupation-professional-week-plan.json) [Samples](../performance/indexes/appointments-end/occupation-professional-week-samples.csv) |
 | List with multiple IDs | One date | **62.618 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-day-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-day-samples.csv) | **25.700 ms** [Plan](../performance/indexes/appointments-end/occupation-service-day-plan.json) [Samples](../performance/indexes/appointments-end/occupation-service-day-samples.csv) |
 | List with multiple IDs | Seven consecutive dates | **64.576 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-week-samples.csv) | **28.745 ms** [Plan](../performance/indexes/appointments-end/occupation-service-week-plan.json) [Samples](../performance/indexes/appointments-end/occupation-service-week-samples.csv) |
+
+[Plan, one professional and one date](../performance/indexes/appointments-end/occupation-professional-day-plan.json)
+
+```text
+Hash Semi Join (actual rows=10 loops=1)
+  Join Filter: ((appointment.start_at < search_window.end_at) AND (appointment.end_at > search_window.start_at))
+  Rows Removed by Join Filter: 1070
+  ->  Index Scan using appointments_reserved_end_idx on appointments (actual rows=1080 loops=1)
+        Index Cond: ((clinic_id = '...'::uuid) AND (professional_id = ANY ('{...}'::uuid[])))
+        Rows Removed by Filter: 0
+  ...
+```
 
 Plan: reads 1,080 reserved appointments for one professional and 31,325 for multiple IDs, instead of checking about 100,000 clinic appointments. It uses an index scan for one ID and a bitmap scan for multiple IDs. The index conditions do not use end_at, so time overlap is checked afterward. All four cases still scan all 12,069 block rows
 
@@ -250,6 +307,18 @@ WHERE state = 'reserved'
 | List with multiple IDs | One date | **62.618 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-day-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-day-samples.csv) | **26.897 ms** [Plan](../performance/indexes/appointments-start/occupation-service-day-plan.json) [Samples](../performance/indexes/appointments-start/occupation-service-day-samples.csv) |
 | List with multiple IDs | Seven consecutive dates | **64.576 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-week-samples.csv) | **26.574 ms** [Plan](../performance/indexes/appointments-start/occupation-service-week-plan.json) [Samples](../performance/indexes/appointments-start/occupation-service-week-samples.csv) |
 
+[Plan, one professional and one date](../performance/indexes/appointments-start/occupation-professional-day-plan.json)
+
+```text
+Hash Semi Join (actual rows=10 loops=1)
+  Join Filter: ((appointment.start_at < search_window.end_at) AND (appointment.end_at > search_window.start_at))
+  Rows Removed by Join Filter: 1070
+  ->  Index Scan using appointments_reserved_start_idx on appointments (actual rows=1080 loops=1)
+        Index Cond: ((clinic_id = '...'::uuid) AND (professional_id = ANY ('{...}'::uuid[])))
+        Rows Removed by Filter: 0
+  ...
+```
+
 Plan: reads 1,080 reserved appointments for one professional and 31,325 for multiple IDs, instead of checking about 100,000 clinic appointments. It uses an index scan for one ID and a bitmap scan for multiple IDs. The index conditions do not use start_at, so time overlap is checked afterward. All four cases still scan all 12,069 block rows
 
 #### Index size
@@ -272,6 +341,18 @@ WHERE state = 'reserved'
 | List with one ID | Seven consecutive dates | **25.259 ms** [Plan](../performance/indexes/existing-indexes/occupation-professional-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-professional-week-samples.csv) | **1.766 ms** [Plan](../performance/indexes/appointments-professional/occupation-professional-week-plan.json) [Samples](../performance/indexes/appointments-professional/occupation-professional-week-samples.csv) |
 | List with multiple IDs | One date | **62.618 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-day-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-day-samples.csv) | **25.388 ms** [Plan](../performance/indexes/appointments-professional/occupation-service-day-plan.json) [Samples](../performance/indexes/appointments-professional/occupation-service-day-samples.csv) |
 | List with multiple IDs | Seven consecutive dates | **64.576 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-week-samples.csv) | **34.753 ms** [Plan](../performance/indexes/appointments-professional/occupation-service-week-plan.json) [Samples](../performance/indexes/appointments-professional/occupation-service-week-samples.csv) |
+
+[Plan, one professional and one date](../performance/indexes/appointments-professional/occupation-professional-day-plan.json)
+
+```text
+Hash Semi Join (actual rows=10 loops=1)
+  Join Filter: ((appointment.start_at < search_window.end_at) AND (appointment.end_at > search_window.start_at))
+  Rows Removed by Join Filter: 1070
+  ->  Index Scan using appointments_reserved_idx on appointments (actual rows=1080 loops=1)
+        Index Cond: ((clinic_id = '...'::uuid) AND (professional_id = ANY ('{...}'::uuid[])))
+        Rows Removed by Filter: 0
+  ...
+```
 
 Plan: reads 1,080 reserved appointments for one professional and 31,325 for multiple IDs, instead of checking about 100,000 clinic appointments. It uses an index scan for one ID and a bitmap scan for multiple IDs. The index filters by clinic and professional, then time overlap is checked afterward. All four cases still scan all 12,069 block rows
 
@@ -301,6 +382,19 @@ ON public.professional_blocks (clinic_id, professional_id, end_at)
 | List with multiple IDs | One date | **62.618 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-day-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-day-samples.csv) | **59.088 ms** [Plan](../performance/indexes/blocks-end/occupation-service-day-plan.json) [Samples](../performance/indexes/blocks-end/occupation-service-day-samples.csv) |
 | List with multiple IDs | Seven consecutive dates | **64.576 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-week-samples.csv) | **61.899 ms** [Plan](../performance/indexes/blocks-end/occupation-service-week-plan.json) [Samples](../performance/indexes/blocks-end/occupation-service-week-samples.csv) |
 
+[Plan, one professional and one date](../performance/indexes/blocks-end/occupation-professional-day-plan.json)
+
+```text
+Hash Semi Join (actual rows=1 loops=1)
+  Join Filter: ((block.start_at < search_window_1.end_at) AND (block.end_at > search_window_1.start_at))
+  Rows Removed by Join Filter: 133
+  ->  Bitmap Heap Scan on professional_blocks (actual rows=134 loops=1)
+        Rows Removed by Filter: 0
+        ->  Bitmap Index Scan using professional_blocks_end_idx (actual rows=134 loops=1)
+              Index Cond: ((clinic_id = '...'::uuid) AND (professional_id = ANY ('{...}'::uuid[])))
+  ...
+```
+
 Plan: uses bitmap scans to read 134 blocks for one professional and 3,888 for multiple IDs, instead of scanning all 12,069 block rows. The index conditions do not use end_at, so time overlap is checked afterward. The appointment branch still uses the existing clinic index, so this change only reduces the block scan
 
 #### Index size
@@ -323,6 +417,19 @@ ON public.professional_blocks (clinic_id, professional_id, start_at)
 | List with multiple IDs | One date | **62.618 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-day-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-day-samples.csv) | **73.043 ms** [Plan](../performance/indexes/blocks-start/occupation-service-day-plan.json) [Samples](../performance/indexes/blocks-start/occupation-service-day-samples.csv) |
 | List with multiple IDs | Seven consecutive dates | **64.576 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-week-samples.csv) | **65.629 ms** [Plan](../performance/indexes/blocks-start/occupation-service-week-plan.json) [Samples](../performance/indexes/blocks-start/occupation-service-week-samples.csv) |
 
+[Plan, one professional and one date](../performance/indexes/blocks-start/occupation-professional-day-plan.json)
+
+```text
+Hash Semi Join (actual rows=1 loops=1)
+  Join Filter: ((block.start_at < search_window_1.end_at) AND (block.end_at > search_window_1.start_at))
+  Rows Removed by Join Filter: 133
+  ->  Bitmap Heap Scan on professional_blocks (actual rows=134 loops=1)
+        Rows Removed by Filter: 0
+        ->  Bitmap Index Scan using professional_blocks_start_idx (actual rows=134 loops=1)
+              Index Cond: ((clinic_id = '...'::uuid) AND (professional_id = ANY ('{...}'::uuid[])))
+  ...
+```
+
 Plan: uses bitmap scans to read 134 blocks for one professional and 3,888 for multiple IDs, instead of scanning all 12,069 block rows. The index conditions do not use start_at, so time overlap is checked afterward. The appointment branch still uses the existing clinic index, so this change only reduces the block scan
 
 #### Index size
@@ -344,6 +451,19 @@ ON public.professional_blocks (clinic_id, professional_id)
 | List with one ID | Seven consecutive dates | **25.259 ms** [Plan](../performance/indexes/existing-indexes/occupation-professional-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-professional-week-samples.csv) | **14.122 ms** [Plan](../performance/indexes/blocks-professional/occupation-professional-week-plan.json) [Samples](../performance/indexes/blocks-professional/occupation-professional-week-samples.csv) |
 | List with multiple IDs | One date | **62.618 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-day-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-day-samples.csv) | **63.666 ms** [Plan](../performance/indexes/blocks-professional/occupation-service-day-plan.json) [Samples](../performance/indexes/blocks-professional/occupation-service-day-samples.csv) |
 | List with multiple IDs | Seven consecutive dates | **64.576 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-week-samples.csv) | **66.567 ms** [Plan](../performance/indexes/blocks-professional/occupation-service-week-plan.json) [Samples](../performance/indexes/blocks-professional/occupation-service-week-samples.csv) |
+
+[Plan, one professional and one date](../performance/indexes/blocks-professional/occupation-professional-day-plan.json)
+
+```text
+Hash Semi Join (actual rows=1 loops=1)
+  Join Filter: ((block.start_at < search_window_1.end_at) AND (block.end_at > search_window_1.start_at))
+  Rows Removed by Join Filter: 133
+  ->  Bitmap Heap Scan on professional_blocks (actual rows=134 loops=1)
+        Rows Removed by Filter: 0
+        ->  Bitmap Index Scan using professional_blocks_idx (actual rows=134 loops=1)
+              Index Cond: ((clinic_id = '...'::uuid) AND (professional_id = ANY ('{...}'::uuid[])))
+  ...
+```
 
 Plan: uses bitmap scans to read 134 blocks for one professional and 3,888 for multiple IDs, instead of scanning all 12,069 block rows. The index filters by clinic and professional, then time overlap is checked afterward. The appointment branch still uses the existing clinic index, so this change only reduces the block scan
 
@@ -371,6 +491,15 @@ ON public.professional_schedules (clinic_id, professional_id)
 | List with one ID | **0.082 ms** [Plan](../performance/indexes/existing-indexes/schedules-professional-plan.json) [Samples](../performance/indexes/existing-indexes/schedules-professional-samples.csv) | **0.037 ms** [Plan](../performance/indexes/schedules/schedules-professional-plan.json) [Samples](../performance/indexes/schedules/schedules-professional-samples.csv) |
 | List with multiple IDs | **0.248 ms** [Plan](../performance/indexes/existing-indexes/schedules-service-plan.json) [Samples](../performance/indexes/existing-indexes/schedules-service-samples.csv) | **0.170 ms** [Plan](../performance/indexes/schedules/schedules-service-plan.json) [Samples](../performance/indexes/schedules/schedules-service-samples.csv) |
 
+[Plan, one professional](../performance/indexes/schedules/schedules-professional-plan.json)
+
+```text
+Bitmap Heap Scan on professional_schedules (actual rows=10 loops=1)
+  Rows Removed by Filter: 0
+  ->  Bitmap Index Scan using professional_schedules_idx (actual rows=10 loops=1)
+        Index Cond: ((clinic_id = '...'::uuid) AND (professional_id = ANY ('{...}'::uuid[])))
+```
+
 Plan: bitmap scans read the 10 or 290 matching schedule rows instead of scanning all 900. There are no rows removed by the scan filter. The index avoids reading unrelated schedules, with a small absolute time saving in these individual tests
 
 #### Index size
@@ -394,6 +523,19 @@ WHERE is_active
 | A specific ID | **0.073 ms** [Plan](../performance/indexes/existing-indexes/professionals-professional-plan.json) [Samples](../performance/indexes/existing-indexes/professionals-professional-samples.csv) | **0.155 ms** [Plan](../performance/indexes/associations/professionals-professional-plan.json) [Samples](../performance/indexes/associations/professionals-professional-samples.csv) |
 | NULL | **0.135 ms** [Plan](../performance/indexes/existing-indexes/professionals-service-plan.json) [Samples](../performance/indexes/existing-indexes/professionals-service-samples.csv) | **0.186 ms** [Plan](../performance/indexes/associations/professionals-service-plan.json) [Samples](../performance/indexes/associations/professionals-service-samples.csv) |
 
+[Plan, one professional](../performance/indexes/associations/professionals-professional-plan.json)
+
+```text
+Seq Scan on users (actual rows=32 loops=1)
+  Rows Removed by Filter: 65
+
+Seq Scan on professionals (actual rows=1 loops=1)
+  Rows Removed by Filter: 89
+
+Seq Scan on professional_services (actual rows=1 loops=1)
+  Rows Removed by Filter: 38
+```
+
 Plan: PostgreSQL does not use the new index. It keeps the same professional, user and association scans as with the existing indexes, including the 39-row association scan for one ID and the full 177-row scan without an ID. These plans show no reduction in work from this candidate
 
 #### Index size
@@ -416,6 +558,19 @@ Plan: PostgreSQL does not use the new index. It keeps the same professional, use
 | ---: | ---: | ---: | ---: |
 | **0.041 ms** [Plan](../performance/indexes/existing-indexes/metadata-clinic-service-plan.json) [Samples](../performance/indexes/existing-indexes/metadata-clinic-service-samples.csv) | **0.043 ms** [Plan](../performance/indexes/combined-end/metadata-clinic-service-plan.json) [Samples](../performance/indexes/combined-end/metadata-clinic-service-samples.csv) | **0.048 ms** [Plan](../performance/indexes/combined-start/metadata-clinic-service-plan.json) [Samples](../performance/indexes/combined-start/metadata-clinic-service-samples.csv) | **0.035 ms** [Plan](../performance/indexes/combined-professional/metadata-clinic-service-plan.json) [Samples](../performance/indexes/combined-professional/metadata-clinic-service-samples.csv) |
 
+[Plan, smallest set](../performance/indexes/combined-professional/metadata-clinic-service-plan.json)
+
+```text
+Seq Scan on clinics (actual rows=1 loops=1)
+  Rows Removed by Filter: 2
+
+Seq Scan on services (actual rows=1 loops=1)
+  Rows Removed by Filter: 8
+
+Seq Scan on clinic_availability_versions (actual rows=1 loops=1)
+  Rows Removed by Filter: 0
+```
+
 Plan: all three sets keep the original scans of the small clinic, service and availability-version tables
 
 ### Check professionals for a service
@@ -424,6 +579,19 @@ Plan: all three sets keep the original scans of the small clinic, service and av
 | --- | ---: | ---: | ---: | ---: |
 | A specific ID | **0.073 ms** [Plan](../performance/indexes/existing-indexes/professionals-professional-plan.json) [Samples](../performance/indexes/existing-indexes/professionals-professional-samples.csv) | **0.072 ms** [Plan](../performance/indexes/combined-end/professionals-professional-plan.json) [Samples](../performance/indexes/combined-end/professionals-professional-samples.csv) | **0.071 ms** [Plan](../performance/indexes/combined-start/professionals-professional-plan.json) [Samples](../performance/indexes/combined-start/professionals-professional-samples.csv) | **0.084 ms** [Plan](../performance/indexes/combined-professional/professionals-professional-plan.json) [Samples](../performance/indexes/combined-professional/professionals-professional-samples.csv) |
 | NULL | **0.135 ms** [Plan](../performance/indexes/existing-indexes/professionals-service-plan.json) [Samples](../performance/indexes/existing-indexes/professionals-service-samples.csv) | **0.219 ms** [Plan](../performance/indexes/combined-end/professionals-service-plan.json) [Samples](../performance/indexes/combined-end/professionals-service-samples.csv) | **0.140 ms** [Plan](../performance/indexes/combined-start/professionals-service-plan.json) [Samples](../performance/indexes/combined-start/professionals-service-samples.csv) | **0.125 ms** [Plan](../performance/indexes/combined-professional/professionals-service-plan.json) [Samples](../performance/indexes/combined-professional/professionals-service-samples.csv) |
+
+[Plan, smallest set and one professional](../performance/indexes/combined-professional/professionals-professional-plan.json)
+
+```text
+Seq Scan on users (actual rows=32 loops=1)
+  Rows Removed by Filter: 65
+
+Seq Scan on professionals (actual rows=1 loops=1)
+  Rows Removed by Filter: 89
+
+Seq Scan on professional_services (actual rows=1 loops=1)
+  Rows Removed by Filter: 38
+```
 
 Plan: all three sets keep the original professional, user and association scans. The end-time set includes the active-association index, but PostgreSQL does not use it
 
@@ -436,6 +604,28 @@ Plan: all three sets keep the original professional, user and association scans.
 | List with multiple IDs | One date | **62.618 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-day-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-day-samples.csv) | **26.008 ms** [Plan](../performance/indexes/combined-end/occupation-service-day-plan.json) [Samples](../performance/indexes/combined-end/occupation-service-day-samples.csv) | **28.601 ms** [Plan](../performance/indexes/combined-start/occupation-service-day-plan.json) [Samples](../performance/indexes/combined-start/occupation-service-day-samples.csv) | **24.251 ms** [Plan](../performance/indexes/combined-professional/occupation-service-day-plan.json) [Samples](../performance/indexes/combined-professional/occupation-service-day-samples.csv) |
 | List with multiple IDs | Seven consecutive dates | **64.576 ms** [Plan](../performance/indexes/existing-indexes/occupation-service-week-plan.json) [Samples](../performance/indexes/existing-indexes/occupation-service-week-samples.csv) | **25.441 ms** [Plan](../performance/indexes/combined-end/occupation-service-week-plan.json) [Samples](../performance/indexes/combined-end/occupation-service-week-samples.csv) | **24.949 ms** [Plan](../performance/indexes/combined-start/occupation-service-week-plan.json) [Samples](../performance/indexes/combined-start/occupation-service-week-samples.csv) | **24.018 ms** [Plan](../performance/indexes/combined-professional/occupation-service-week-plan.json) [Samples](../performance/indexes/combined-professional/occupation-service-week-samples.csv) |
 
+[Plan, smallest set with multiple professionals and seven dates](../performance/indexes/combined-professional/occupation-service-week-plan.json)
+
+```text
+Hash Semi Join (actual rows=1505 loops=1)
+  Join Filter: ((appointment.start_at < search_window.end_at) AND (appointment.end_at > search_window.start_at))
+  Rows Removed by Join Filter: 29820
+  ->  Bitmap Heap Scan on appointments (actual rows=31325 loops=1)
+        Rows Removed by Filter: 0
+        ->  Bitmap Index Scan using appointments_reserved_idx (actual rows=31325 loops=1)
+              Index Cond: ((clinic_id = '...'::uuid) AND (professional_id = ANY ('{...}'::uuid[])))
+  ...
+
+Hash Semi Join (actual rows=87 loops=1)
+  Join Filter: ((block.start_at < search_window_1.end_at) AND (block.end_at > search_window_1.start_at))
+  Rows Removed by Join Filter: 3801
+  ->  Bitmap Heap Scan on professional_blocks (actual rows=3888 loops=1)
+        Rows Removed by Filter: 0
+        ->  Bitmap Index Scan using professional_blocks_idx (actual rows=3888 loops=1)
+              Index Cond: ((clinic_id = '...'::uuid) AND (professional_id = ANY ('{...}'::uuid[])))
+  ...
+```
+
 Plan: all three sets use both appointment and block indexes. They read 1,080 appointments and 134 blocks for one ID, or 31,325 appointments and 3,888 blocks for multiple IDs. Time overlap is checked afterward. For multiple IDs over seven dates, the time checks discard 29,820 appointment candidates and 3,801 block candidates. This remaining filtering explains why the larger request still does much more work
 
 ### Read weekly professional schedules
@@ -444,6 +634,15 @@ Plan: all three sets use both appointment and block indexes. They read 1,080 app
 | --- | ---: | ---: | ---: | ---: |
 | List with one ID | **0.082 ms** [Plan](../performance/indexes/existing-indexes/schedules-professional-plan.json) [Samples](../performance/indexes/existing-indexes/schedules-professional-samples.csv) | **0.041 ms** [Plan](../performance/indexes/combined-end/schedules-professional-plan.json) [Samples](../performance/indexes/combined-end/schedules-professional-samples.csv) | **0.033 ms** [Plan](../performance/indexes/combined-start/schedules-professional-plan.json) [Samples](../performance/indexes/combined-start/schedules-professional-samples.csv) | **0.038 ms** [Plan](../performance/indexes/combined-professional/schedules-professional-plan.json) [Samples](../performance/indexes/combined-professional/schedules-professional-samples.csv) |
 | List with multiple IDs | **0.248 ms** [Plan](../performance/indexes/existing-indexes/schedules-service-plan.json) [Samples](../performance/indexes/existing-indexes/schedules-service-samples.csv) | **0.169 ms** [Plan](../performance/indexes/combined-end/schedules-service-plan.json) [Samples](../performance/indexes/combined-end/schedules-service-samples.csv) | **0.175 ms** [Plan](../performance/indexes/combined-start/schedules-service-plan.json) [Samples](../performance/indexes/combined-start/schedules-service-samples.csv) | **0.264 ms** [Plan](../performance/indexes/combined-professional/schedules-service-plan.json) [Samples](../performance/indexes/combined-professional/schedules-service-samples.csv) |
+
+[Plan, smallest set and one professional](../performance/indexes/combined-professional/schedules-professional-plan.json)
+
+```text
+Bitmap Heap Scan on professional_schedules (actual rows=10 loops=1)
+  Rows Removed by Filter: 0
+  ->  Bitmap Index Scan using professional_schedules_idx (actual rows=10 loops=1)
+        Index Cond: ((clinic_id = '...'::uuid) AND (professional_id = ANY ('{...}'::uuid[])))
+```
 
 Plan: all three sets use the schedule index to read 10 or 290 matching rows. The smallest set's multiple-ID time is slightly above the existing-index time in this run, despite reading fewer schedule rows. Service and clinic settings and professional eligibility keep their original scan structures
 
