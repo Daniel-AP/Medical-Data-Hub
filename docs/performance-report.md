@@ -41,9 +41,7 @@ Odd pairs ran direct first. Even pairs ran cached first.
 ### Reproduction
 
 Run `npm ci`, start Docker, and run `npm run measure:cache` from the repository root with Node.js 24 or later.
-
-- Measured revision `15cdea914c2187b313cd2ac924fccfff29e85c88` with a clean source tree
-- macOS arm64, Node.js 26.0.0 on the host, Docker Engine 29.9.3, and Compose 5.7.0. The API used Node.js 24.22.3, PostgreSQL 18.6, Redis 8.10.3, and Keycloak 26.8.1
+    
 - Both modes used the same 31 B-tree indexes, including the three [availability indexes](../apps/api/prisma/migrations/20261112000000_add_availability_indexes/migration.sql)
 - Synthetic seed with 3 clinics, 3 professionals and 18 appointments per clinic, and appointment dates from 2026-11-02 to 2026-11-19. Both modes used the same Clinica Central reception account, SQL role `reception`, and clinic RLS policies
 - Consulta general (30 minutes), 2 eligible professionals, and clinic time zone `America/Costa_Rica`. CW1 queried one professional on 2026-11-16. CW2 queried both eligible professionals from 2026-11-16 to 2026-11-22
