@@ -1,0 +1,134 @@
+{
+  "indexes": [
+    {
+      "name": "appointments_reserved_end_idx",
+      "bytes": 5693440
+    }
+  ],
+  "statements": [
+    {
+      "sql": "INSERT INTO public.appointments (clinic_id, professional_id, patient_id, service_id, start_at, end_at, previous_appointment_id)\n\t\t SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::timestamptz, $6::timestamptz, $7::uuid\n\t\t WHERE $5::timestamptz > clock_timestamp() AND EXTRACT(SECOND FROM $5::timestamptz AT TIME ZONE 'UTC') = 0\n\t\t RETURNING appointment_id AS \"appointmentId\"",
+      "parameters": [
+        "f4cd2465-4c07-4044-8710-d87aaec1cfac",
+        "002f339c-7532-4c63-bc70-fcab922fc910",
+        "f18b7d26-e8d0-4f4e-bfcb-9fef7f193783",
+        "1efec176-0444-4f41-9cdd-4c37fdc98e99",
+        "2028-01-17T14:00:00.000Z",
+        "2028-01-17T14:30:00.000Z",
+        null
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "ModifyTable",
+          "Operation": "Insert",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "appointments",
+          "Alias": "appointments",
+          "Startup Cost": 0.01,
+          "Total Cost": 0.02,
+          "Plan Rows": 1,
+          "Plan Width": 648,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Disabled": false,
+          "Shared Hit Blocks": 14,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "Result",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 0.01,
+              "Total Cost": 0.02,
+              "Plan Rows": 1,
+              "Plan Width": 648,
+              "Actual Rows": 1,
+              "Actual Loops": 1,
+              "Disabled": false,
+              "One-Time Filter": "('2028-01-17 14:00:00+00'::timestamp with time zone > clock_timestamp())",
+              "Shared Hit Blocks": 0,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            }
+          ]
+        },
+        "Settings": {},
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.04,
+        "Triggers": [
+          {
+            "Trigger Name": "RI_ConstraintTrigger_c_16690",
+            "Constraint Name": "appointments_clinic_id_fkey",
+            "Relation": "appointments",
+            "Calls": 1
+          },
+          {
+            "Trigger Name": "RI_ConstraintTrigger_c_16695",
+            "Constraint Name": "appointments_clinic_id_patient_id_fkey",
+            "Relation": "appointments",
+            "Calls": 1
+          },
+          {
+            "Trigger Name": "RI_ConstraintTrigger_c_16700",
+            "Constraint Name": "appointments_clinic_id_professional_id_fkey",
+            "Relation": "appointments",
+            "Calls": 1
+          },
+          {
+            "Trigger Name": "RI_ConstraintTrigger_c_16705",
+            "Constraint Name": "appointments_clinic_id_service_id_fkey",
+            "Relation": "appointments",
+            "Calls": 1
+          },
+          {
+            "Trigger Name": "RI_ConstraintTrigger_c_16710",
+            "Constraint Name": "appointments_clinic_id_professional_id_service_id_fkey",
+            "Relation": "appointments",
+            "Calls": 1
+          },
+          {
+            "Trigger Name": "RI_ConstraintTrigger_c_16715",
+            "Constraint Name": "appointments_clinic_id_previous_appointment_id_patient_id__fkey",
+            "Relation": "appointments",
+            "Calls": 1
+          },
+          {
+            "Trigger Name": "RI_ConstraintTrigger_c_16720",
+            "Constraint Name": "appointments_clinic_id_cancelled_by_user_id_fkey",
+            "Relation": "appointments",
+            "Calls": 1
+          }
+        ],
+        "Execution Time": 0.197
+      }
+    }
+  ]
+}

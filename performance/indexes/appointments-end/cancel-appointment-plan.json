@@ -1,0 +1,102 @@
+{
+  "indexes": [
+    {
+      "name": "appointments_reserved_end_idx",
+      "bytes": 5693440
+    }
+  ],
+  "statements": [
+    {
+      "sql": "UPDATE public.appointments SET state = 'cancelled', cancellation_reason = $2::text, cancelled_by_user_id = $3::uuid WHERE appointment_id = $1::uuid",
+      "parameters": [
+        "5ef87a56-921b-4cf3-b60c-0020b9a60cce",
+        "Evaluation cancellation",
+        "68443bb1-2956-47d2-942e-fc7542a1fea4"
+      ],
+      "plan": {
+        "Plan": {
+          "Node Type": "ModifyTable",
+          "Operation": "Update",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Relation Name": "appointments",
+          "Alias": "appointments",
+          "Startup Cost": 0.42,
+          "Total Cost": 8.46,
+          "Plan Rows": 0,
+          "Plan Width": 0,
+          "Actual Rows": 0,
+          "Actual Loops": 1,
+          "Disabled": false,
+          "Shared Hit Blocks": 26,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "Index Scan",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Scan Direction": "Forward",
+              "Index Name": "appointments_pkey",
+              "Relation Name": "appointments",
+              "Alias": "appointments",
+              "Startup Cost": 0.42,
+              "Total Cost": 8.46,
+              "Plan Rows": 1,
+              "Plan Width": 542,
+              "Actual Rows": 1,
+              "Actual Loops": 1,
+              "Disabled": false,
+              "Index Cond": "(appointment_id = '5ef87a56-921b-4cf3-b60c-0020b9a60cce'::uuid)",
+              "Rows Removed by Index Recheck": 0,
+              "Filter": "(((NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid IS NOT NULL) AND (clinic_id = (NULLIF(current_setting('app.clinic_id'::text, true), ''::text))::uuid))",
+              "Rows Removed by Filter": 0,
+              "Index Searches": 1,
+              "Shared Hit Blocks": 6,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            }
+          ]
+        },
+        "Settings": {},
+        "Planning": {
+          "Shared Hit Blocks": 0,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.069,
+        "Triggers": [
+          {
+            "Trigger Name": "RI_ConstraintTrigger_c_16721",
+            "Constraint Name": "appointments_clinic_id_cancelled_by_user_id_fkey",
+            "Relation": "appointments",
+            "Calls": 1
+          }
+        ],
+        "Execution Time": 0.126
+      }
+    }
+  ]
+}

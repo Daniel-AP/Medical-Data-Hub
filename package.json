@@ -6,6 +6,7 @@
 		"apps/*"
 	],
 	"scripts": {
+		"eval:indexes": "tsx apps/api/scripts/run-index-evaluation.ts",
 		"lint": "eslint .",
 		"test": "vitest run",
 		"test:all": "node scripts/test-all.ts",

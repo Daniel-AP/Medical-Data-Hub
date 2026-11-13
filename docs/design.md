@@ -1029,4 +1029,4 @@ Separately verify equivalent results, current-day filtering, missing units, mixe
 
 Prime the cache, commit a booking, cancellation, or rescheduling, and consult again before expiry. Check that occupation and released time match PostgreSQL, including both ends of a move (`I7`, `I8`).
 
-Agree the performance report structure before evaluation and create `docs/performance-report.md` when evaluation begins. Record cache measurements and index evidence in separate sections and link the report from the [test coverage table](test-report.md). These checks and measurements are planned evidence.
+Agree each evaluation report's structure before recording results. Record index evidence in [index-evaluation.md](index-evaluation.md) and cache measurements separately. These checks and measurements are planned evidence.
