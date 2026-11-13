@@ -173,7 +173,7 @@ RETURNING professional_id AS "professionalId", service_id AS "serviceId", is_act
 
 ## Existing indexes
 
-These measurements use only the indexes created by the migrations
+These measurements use the indexes in place before the availability index migration
 
 ### Read service and clinic settings
 
@@ -708,4 +708,4 @@ The set adds 864 KiB, about 86% less than the end-time set. In this run, it redu
 
 The start-time set is faster for one professional, while the smallest set is faster for multiple professionals in the combined tests. This recommendation favors the smaller indexes and their measured reduction in rows read. It does not claim the smallest set wins every timing comparison
 
-These are recommendations for the tested data and queries.
+The selected indexes are defined in the [availability index migration](../apps/api/prisma/migrations/20261112000000_add_availability_indexes/migration.sql)

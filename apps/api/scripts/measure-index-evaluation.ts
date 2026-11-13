@@ -50,6 +50,7 @@ const indexes = {
 	schedules: { name: "professional_schedules_idx", table: "professional_schedules", columns: "clinic_id, professional_id", predicate: "" },
 	associations: { name: "professional_services_active_idx", table: "professional_services", columns: "clinic_id, service_id, professional_id", predicate: " WHERE is_active" },
 };
+const selectedIndexes: (keyof typeof indexes)[] = ["appointments-professional", "blocks-professional", "schedules"];
 const configurations: { name: string; indexes: (keyof typeof indexes)[]; reads: string[]; writes: string[] }[] = [
 	{ name: "existing-indexes", indexes: [], reads: ["metadata", "professionals", "schedules", "occupation"], writes: ["insert-appointment", "cancel-appointment", "insert-block", "replace-schedules", "deactivate-association"] },
 	...(["appointments-end", "appointments-start", "appointments-professional"] as const).map((name) => ({ name, indexes: [name], reads: ["occupation"], writes: ["insert-appointment", "cancel-appointment"] })),
@@ -58,7 +59,7 @@ const configurations: { name: string; indexes: (keyof typeof indexes)[]; reads: 
 	{ name: "associations", indexes: ["associations"], reads: ["professionals"], writes: ["deactivate-association"] },
 	{ name: "combined-end", indexes: ["appointments-end", "blocks-end", "schedules", "associations"], reads: ["metadata", "professionals", "schedules", "occupation"], writes: ["insert-appointment", "cancel-appointment", "insert-block", "replace-schedules", "deactivate-association"] },
 	{ name: "combined-start", indexes: ["appointments-start", "blocks-professional", "schedules"], reads: ["metadata", "professionals", "schedules", "occupation"], writes: ["insert-appointment", "cancel-appointment", "insert-block", "replace-schedules"] },
-	{ name: "combined-professional", indexes: ["appointments-professional", "blocks-professional", "schedules"], reads: ["metadata", "professionals", "schedules", "occupation"], writes: ["insert-appointment", "cancel-appointment", "insert-block", "replace-schedules"] },
+	{ name: "combined-professional", indexes: selectedIndexes, reads: ["metadata", "professionals", "schedules", "occupation"], writes: ["insert-appointment", "cancel-appointment", "insert-block", "replace-schedules"] },
 ];
 
 const measureQuery = async (configuration: string, indexSizes: IndexSize[], query: EvaluationQuery) => {
@@ -145,6 +146,12 @@ const readFixtureCounts = async () => {
 try {
 
 	await setup.connect();
+
+	// Compare against the indexes that existed before the availability migration
+	for(const key of selectedIndexes) {
+		await setup.query(`DROP INDEX public.${indexes[key].name}`);
+	}
+
 	const counts = await readFixtureCounts();
 	const fixture = await runAuthorizedTransaction(reception, { name: "readDefinitiveAvailability" }, async (transaction, actor) => {
 

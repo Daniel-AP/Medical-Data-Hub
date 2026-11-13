@@ -995,18 +995,18 @@ Selective reads may benefit from additional indexes. Each index also adds storag
 
 ### Design Decisions
 
-Evaluate these non-unique B-tree candidates. Start without included columns and reuse existing primary and unique keys for metadata and identifier joins.
+Use the three non-unique B-tree indexes selected by the [index evaluation](index-evaluation.md), without included columns. Reuse existing primary and unique keys for metadata and identifier joins.
 
-- **IC1 for AQ4.** Appointments by `(clinic_id, professional_id, end_at)`, restricted to `reserved`
-- **IC2 for AQ5.** Blocks by `(clinic_id, professional_id, end_at)`
+- **IC1 for AQ4.** Appointments by `(clinic_id, professional_id)`, restricted to `reserved`
+- **IC2 for AQ5.** Blocks by `(clinic_id, professional_id)`
 - **IC3 for AQ3.** Schedules by `(clinic_id, professional_id)` for complete weeks
-- **IC4 for AQ2.** Associations by `(clinic_id, service_id, professional_id)`, restricted to active rows
+- **IC4 for AQ2.** Keep the existing association indexes. The active-row candidate was not used in the measured plans
 
-For occupation, compare filtering on the end after the window start with the alternative orientation by start. Apply the other overlap bound separately. Check partial-index eligibility under the real prepared queries. GiST ranges and covering indexes remain alternatives with different predicate, extension, storage, and maintenance costs.
+The start-time and end-time variants read the same appointment and block candidates as the smaller indexes. Their time columns did not narrow the measured scans. Check time overlap after reading candidates. GiST ranges and covering indexes were not tested.
 
 Compare the baseline, individual candidates, and combined set with equivalent fixtures, parameters, statistics, operating profiles, and RLS. Keep integrity indexes and let the planner choose. Inspect actual plans with `EXPLAIN (ANALYZE, BUFFERS, SETTINGS, TIMING OFF, FORMAT JSON)`. Compare row estimates, filters, loops, buffers, timing, index sizes, and representative write costs. Include professional dates, service ranges, long blocks, historical reservations, and different selectivity. A sequential scan may be appropriate.
 
-Keep only indexes supported by the evidence. Report plans, environment, revision, and commands in the index section of the performance report. SQL plan times and API latency measure different scopes.
+The [index evaluation](index-evaluation.md) records plans, times, sizes and write measurements for the individual indexes and combined sets. SQL plan times and API latency measure different scopes.
 
 ## Cache Evaluation and Evidence Plan
 
