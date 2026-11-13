@@ -1,6 +1,23 @@
-import type { RequestHandler } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import { readAvailability } from "../database/availability.js";
 import { isCalendarDate, isUuid } from "../validation.js";
+
+const measurementEnabled = process.env.AVAILABILITY_MEASUREMENT_ENABLED === "true";
+
+const sendAvailability = async (request: Request, response: Response, query: Parameters<typeof readAvailability>[1]) => {
+
+	const mode = measurementEnabled ? request.get("Availability-Mode") ?? "cached" : "cached";
+	if(mode !== "direct" && mode !== "cached") {
+		throw Object.assign(new Error("Invalid availability mode"), { status: 400 });
+	}
+	const availability = await readAvailability(request.authentication!, query, mode === "cached");
+	if(measurementEnabled) {
+		const { acceptedUnits, calculatedUnits } = availability;
+		response.set("Availability-Cache", `mode=${mode}, accepted=${acceptedUnits}, calculated=${calculatedUnits}`);
+	}
+	response.set("Cache-Control", "no-store").json(availability.response);
+
+};
 
 export const readProfessionalAvailabilityHandler: RequestHandler = async (request, response) => {
 
@@ -11,8 +28,7 @@ export const readProfessionalAvailabilityHandler: RequestHandler = async (reques
 		throw Object.assign(new Error("Invalid professional availability request"), { status: 400 });
 	}
 
-	const availability = await readAvailability(request.authentication!, { professionalId, serviceId, date });
-	response.set("Cache-Control", "no-store").json(availability);
+	await sendAvailability(request, response, { professionalId, serviceId, date });
 
 };
 
@@ -28,7 +44,6 @@ export const readServiceAvailabilityHandler: RequestHandler = async (request, re
 		throw Object.assign(new Error("Availability range exceeds 31 dates"), { status: 400 });
 	}
 
-	const availability = await readAvailability(request.authentication!, { serviceId, from, to });
-	response.set("Cache-Control", "no-store").json(availability);
+	await sendAvailability(request, response, { serviceId, from, to });
 
 };

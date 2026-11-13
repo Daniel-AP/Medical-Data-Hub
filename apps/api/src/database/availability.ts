@@ -55,7 +55,7 @@ const readAvailabilityScope = async (transaction: TransactionClient, clinicId: s
 };
 
 const readAvailabilitySnapshot = async (
-	transaction: TransactionClient, clinicId: string, query: AvailabilityQuery, now: Date, cached: Map<string, string | null>,
+	transaction: TransactionClient, clinicId: string, query: AvailabilityQuery, now: Date, cached?: Map<string, string | null>,
 ) => {
 
 	const { scope, calendar, professionals: eligibility } = await readAvailabilityScope(transaction, clinicId, query);
@@ -76,9 +76,13 @@ const readAvailabilitySnapshot = async (
 
 	}
 
+	let acceptedUnits = 0;
 	const professionals = eligibility.filter(({ eligible }) => eligible).map(({ professionalId }) => {
 
 		const units: AvailabilityUnit[] = [];
+		if(!cached) {
+			return { professionalId, units, calendar };
+		}
 		const missingDates = new Map<number, string>();
 		for(const [day, localDate] of calendar.dates) {
 
@@ -86,6 +90,7 @@ const readAvailabilitySnapshot = async (
 			const unit = parseAvailabilityUnit(cached.get(getAvailabilityKey(unitScope)) ?? null, unitScope);
 			if(unit) {
 				units.push(unit);
+				acceptedUnits++;
 			} else {
 				missingDates.set(day, localDate);
 			}
@@ -132,7 +137,7 @@ const readAvailabilitySnapshot = async (
 
 	}
 
-	return { ...scope, timeReference, dates: [...calendar.dates.values()], professionals, calculatedUnits };
+	return { ...scope, timeReference, dates: [...calendar.dates.values()], professionals, acceptedUnits, calculatedUnits };
 
 };
 
@@ -168,10 +173,9 @@ const buildAvailabilityResponse = (query: AvailabilityQuery, snapshot: Awaited<R
 
 };
 
-export const readAvailability = async (authentication: Authentication, query: AvailabilityQuery) => {
+const prepareAvailabilityCache = async (authentication: Authentication, query: AvailabilityQuery) => {
 
 	const scopes = await runAuthorizedTransaction(authentication, { name: "prepareAvailability" }, async (transaction, actor) => {
-
 		const { scope, calendar, professionals } = await readAvailabilityScope(transaction, actor.clinicId!, query);
 
 		return professionals.filter(({ eligible }) => eligible).flatMap(({ professionalId }) => {
@@ -179,14 +183,23 @@ export const readAvailability = async (authentication: Authentication, query: Av
 		});
 
 	});
-	const cached = await readAvailabilityCache(scopes);
-	const { response, calculatedUnits } = await runAuthorizedTransaction(authentication, { name: "readDefinitiveAvailability" }, async (transaction, actor) => {
+
+	return readAvailabilityCache(scopes);
+
+};
+
+export const readAvailability = async (authentication: Authentication, query: AvailabilityQuery, useCache: boolean) => {
+
+	const cached = useCache ? await prepareAvailabilityCache(authentication, query) : undefined;
+	const { response, acceptedUnits, calculatedUnits } = await runAuthorizedTransaction(authentication, { name: "readDefinitiveAvailability" }, async (transaction, actor) => {
 		const snapshot = await readAvailabilitySnapshot(transaction, actor.clinicId!, query, new Date(), cached);
 
-		return { response: buildAvailabilityResponse(query, snapshot), calculatedUnits: snapshot.calculatedUnits };
+		return { response: buildAvailabilityResponse(query, snapshot), acceptedUnits: snapshot.acceptedUnits, calculatedUnits: snapshot.calculatedUnits };
 	});
-	await publishAvailabilityCache(calculatedUnits);
+	if(useCache) {
+		await publishAvailabilityCache(calculatedUnits);
+	}
 
-	return response;
+	return { response, acceptedUnits, calculatedUnits: calculatedUnits.length };
 
 };

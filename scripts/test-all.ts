@@ -1,11 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
-import { createServer } from "node:net";
-import type { AddressInfo } from "node:net";
-import { parseEnv, promisify } from "node:util";
-import { getTestComposeArguments } from "./test-compose.ts";
+import { existsSync } from "node:fs";
+import { promisify } from "node:util";
+import { getTestComposeArguments, getTestComposeEnvironment, usePublishedAddress } from "./test-compose.ts";
 import { signInTestAdministrator, signInTestUser } from "./test-keycloak.ts";
 
 type ComposeService = { environment: Record<string, string> };
@@ -36,26 +33,6 @@ const runVitest = (env: NodeJS.ProcessEnv, config?: string) => {
 	const configArguments = config ? ["--config", config] : [];
 
 	return run(process.execPath, ["node_modules/vitest/vitest.mjs", "run", ...configArguments], env, signal);
-};
-
-const getKeycloakPort = async () => {
-
-	const server = createServer();
-	server.listen(0, "127.0.0.1");
-	await once(server, "listening");
-	const { port } = server.address() as AddressInfo;
-	server.close();
-	await once(server, "close");
-
-	return port;
-
-};
-
-const usePublishedAddress = (connectionUrl: string, address: string) => {
-	const url = new URL(connectionUrl);
-	url.host = address;
-
-	return url.href;
 };
 
 const getHttpEnvironment = async (issuer: string, apiUrl: string, setupUrl: string, redisUrl: string) => {
@@ -107,16 +84,7 @@ const runComposeTests = async () => {
 
 	const project = "mdh-test-"+randomUUID();
 	const composeArguments = getTestComposeArguments(project);
-	const keycloakPort = await getKeycloakPort();
-	const keycloakUrl = `http://localhost:${keycloakPort}`;
-	const issuer = keycloakUrl+"/realms/medical-data-hub";
-	const composeEnv = { ...process.env };
-	for(const key of Object.keys(parseEnv(readFileSync(".env.example", "utf8")))) {
-		delete composeEnv[key];
-	}
-	Object.assign(composeEnv, {
-		KC_HOSTNAME: keycloakUrl, KEYCLOAK_ISSUER: issuer, KEYCLOAK_TEST_PORT: String(keycloakPort),
-	});
+	const { env: composeEnv, issuer, keycloakUrl } = await getTestComposeEnvironment();
 
 	const readCompose = async (...args: string[]) => {
 		const { stdout } = await capture("docker", [...composeArguments, ...args], { env: composeEnv, signal });
