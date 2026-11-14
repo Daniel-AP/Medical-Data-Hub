@@ -569,8 +569,8 @@ A booking can enter hours being removed. Two complete-week replacements can also
 
 ### Transaction Design
 
-1. Use `READ COMMITTED`. Lock the same-clinic professional with `FOR NO KEY UPDATE`, check the actor's permission, and read the current week
-2. Validate the complete proposed week, including interval bounds and ownership of referenced schedule rows. Use clinic-local time and allow adjacent intervals to provide continuous coverage
+1. Use `READ COMMITTED`. Lock the same-clinic professional with `FOR NO KEY UPDATE` and check the actor's permission
+2. Validate the complete proposed week, including interval bounds. Use clinic-local time and allow adjacent intervals to provide continuous coverage
 3. Query all current reservations for that professional, including past appointments still in `reserved`. Reject and report appointments that lose any coverage. Otherwise replace the week atomically
 
 The professional lock coordinates with booking and rescheduling even when the week has no rows. Cancellation and outcomes only remove reservations, so no appointment locks are needed. A still-uncommitted cancellation can cause a conservative rejection. The later successful replacement wins without an original-week check.
@@ -653,7 +653,7 @@ Application-generated events carry authenticated attribution. The single transac
 
 ### Audit Record Query
 
-Clinic administrators can read audit metadata for their own clinic (`RF19`). Combine optional user, patient, and date filters. The lower bound is inclusive and the upper bound exclusive. Sort by event time descending, then by event identifier descending. A valid query may return no records. See the [HTTP contract](../README.md#audit-api).
+Clinic administrators can read audit metadata for their own clinic (`RF19`). Combine optional user, patient, and date filters. The lower bound is inclusive and the upper bound exclusive. Sort by event time descending, then by event identifier descending. A valid query may return no records.
 
 ## Clinic and User Management Consistency
 
@@ -674,11 +674,11 @@ Shared locks allow concurrent work by an authorized user and make deactivation w
 
 ### Clinic Registration Endpoint
 
-A platform administrator registers a clinic, its first active administrator, and its initial availability version atomically in PostgreSQL. The administrator must have an existing provider identity. Identity uniqueness rejects duplicates without leaving a partial clinic. Return the new clinic and administrator identifiers after both confirmations. See the [HTTP contract](../README.md#clinic-api).
+A platform administrator registers a clinic, its first active administrator, and its initial availability version atomically in PostgreSQL. The administrator must have an existing provider identity. Identity uniqueness rejects duplicates without leaving a partial clinic. Return the new clinic and administrator identifiers after both confirmations.
 
 ### Clinic User Registration Endpoint
 
-A clinic administrator registers an active user with an existing provider identity and a clinic role. Derive the clinic from locked authorization. Reject duplicate identities across clinics without disclosing their existing clinic or modifying their association. Return the local user identifier after both confirmations. See the [HTTP contract](../README.md#clinic-api).
+A clinic administrator registers an active user with an existing provider identity and a clinic role. Derive the clinic from locked authorization. Reject duplicate identities across clinics without disclosing their existing clinic or modifying their association. Return the local user identifier after both confirmations.
 
 ## Consistent Concurrent Queries
 
@@ -729,7 +729,7 @@ Deleting a cache entry after SQL commit leaves a failure gap. A late producer ca
 
 ### Transaction Design
 
-- **Writers.** Create one version row per clinic at registration with value zero. Increment it atomically once per transaction that changes an availability input, after domain writes and audit events and before commit. Cover bookings, rescheduling, departures from `reserved`, schedules, blocks, catalog, professional profiles and specialties, associations, and actual role or activity changes for users with a professional profile. Contact, note, and audit-only writes do not advance it. A missing row or failed increment aborts the write. Role synchronization follows the increment when required
+- **Writers.** Create one version row per clinic at registration with value zero. Increment it atomically once per transaction that changes an availability input, after domain writes and audit events and before commit. Cover bookings, rescheduling, departures from `reserved`, schedules, blocks, service duration or required specialty changes, association creation or activity changes, and actual role or activity changes for users with a professional profile. Contact, note, and audit-only writes do not advance it. A missing row or failed increment aborts the write. Role synchronization follows the increment when required
 - **Prepare.** Resolve the clinic, candidate version, and candidate units in an authorized SQL phase. Confirm it before one Redis lookup outside SQL. Treat missing, unreadable, malformed, and mismatched entries as misses
 - **Validate and calculate.** Reauthorize in a separate definitive SQL phase. Read the version, final eligibility, and calculation inputs in one snapshot, even if preparation found no candidates. Accept candidates only if scope, format, and exact version match. Include newly eligible professionals and exclude ineligible ones. Calculate missing or rejected units in that snapshot. A version change triggers calculation without another Redis lookup
 - **Respond.** Apply the shared future-start filter to complete daily units, using the clock captured after authorization. Materialize the response and publishable unfiltered units before commit. Failed PostgreSQL validation prevents serving cached data. Redis failure leaves a confirmed PostgreSQL result usable
@@ -753,7 +753,7 @@ A failed statement may depend on stale decisions from earlier in the transaction
 - **Clean up.** Roll back unconfirmed work when the connection is usable and discard provisional results. Retire a connection when its state cannot be established. A lost acknowledgement or a closed connection alone cannot prove rollback
 - **Reconcile.** Never replay an indeterminate commit, an already confirmed phase, or a transaction that dispatched a provider-changing request. Report uncertain outcomes and use authorized state inspection and diagnostics for manual reconciliation. There are no idempotency keys or automatic repair. Exclude credentials, tokens, contact data, and note content from diagnostics
 
-An empty inspection can miss work still in progress. A matching record alone cannot identify the request that created it. Preserve uncertainty until there is evidence of the outcome. See the [shared HTTP responses](../README.md#shared-error-responses).
+An empty inspection can miss work still in progress. A matching record alone cannot identify the request that created it. Preserve uncertainty until there is evidence of the outcome.
 
 # 6. Identity, Security, and Auditing
 
@@ -773,7 +773,7 @@ Local validation avoids a provider call on each request. Use short-lived tokens 
 
 Use Keycloak RP-Initiated Logout for the current session. A valid access token authenticates the request. Verify the ID token's signature and issuer, match its audience and authorized party to the client, and match its subject and session to the access token. An expired ID token can serve as a logout hint.
 
-The client opens the provider URL to finish logout and discards its tokens. The closed session cannot refresh them. Other sessions remain active, and requests that already passed validation can finish. See the [HTTP contract](../README.md#session-api).
+The client opens the provider URL to finish logout and discards its tokens. The closed session cannot refresh them. Other sessions remain active, and requests that already passed validation can finish.
 
 ## PostgreSQL Roles and Restricted Functions
 
@@ -1016,7 +1016,7 @@ A useful comparison holds authorization, data, and request scope constant. Funct
 
 ### Design Decisions
 
-Compare complete API requests using direct PostgreSQL calculation with requests using valid Redis entries and definitive PostgreSQL validation. Use the same reception account and SQL profile, fixtures, indexes, parameters, and future date anchor. Use synthetic data with at least three clinics, several professionals per clinic, and appointments across time. Record the selected clinic, service, and eligible professional count.
+Compare complete API requests using TypeScript calculation from PostgreSQL inputs with requests using valid Redis entries and definitive PostgreSQL validation. Use the same reception account and SQL profile, fixtures, indexes, parameters, and future date anchor. Use synthetic data with at least three clinics, several professionals per clinic, and appointments across time. Record the selected clinic, service, and eligible professional count.
 
 - **CW1.** Query one eligible professional and one future date (`RF7`)
 - **CW2.** Query one service across seven future dates and all eligible professionals (`RF8`)
@@ -1029,4 +1029,4 @@ Separately verify equivalent results, current-day filtering, missing units, mixe
 
 Prime the cache, commit a booking, cancellation, or rescheduling, and consult again before expiry. Check that occupation and released time match PostgreSQL, including both ends of a move (`I7`, `I8`).
 
-Agree each evaluation report's structure before recording results. Record index evidence in [index-evaluation.md](index-evaluation.md) and cache measurements separately. These checks and measurements are planned evidence.
+Agree each evaluation report's structure before recording results. Index evidence is recorded in [index-evaluation.md](index-evaluation.md) and cache measurements in [performance-report.md](performance-report.md#cache-measurements).
