@@ -18,7 +18,7 @@ Booking and rescheduling accept future whole-minute starts. Intervals include th
 
 Weekly schedule edits must preserve full coverage for every reserved appointment. A block must avoid every reserved appointment. Report conflicts and leave the schedule and appointments unchanged so the actor can resolve them before retrying (`RF5`, `I3`).
 
-The block rule differs from `RF6`, which calls for creating a block before resolving its appointments. The current design avoids pending blocks and extra appointment states, but new bookings can enter before a retry. This discrepancy remains unresolved.
+The block rule differs from `RF6`, which calls for creating a block before resolving its appointments. The current design avoids pending blocks and extra appointment states, but new bookings can enter before a retry. 
 
 # 2. Tech Stack
 
@@ -528,7 +528,7 @@ Two transactions can both see an empty interval. Locking matching appointments c
 
 For example, two requests for tomorrow's last 10:00 slot serialize on the professional row. The second checks again and sees the winner's reservation. Acceptance requires a reproducible race with exactly one winner, plus a race for the same patient across professionals.
 
-Under `READ COMMITTED`, each post-lock statement sees reservations committed during the wait. Professional and patient locks allow unrelated bookings to proceed, though the version row can still contend. A shared professional or patient serializes bookings even across dates. `SERIALIZABLE` would add conflict monitoring and retries. Advisory locks would require a separate key convention. The selected row locks reuse existing entities and depend on every agenda writer following the protocol.
+Under `READ COMMITTED`, each post-lock statement sees reservations committed during the wait. Professional and patient locks allow unrelated bookings to proceed, though the version row can still contend. A shared professional or patient serializes bookings even across dates. 
 
 ## Atomic Rescheduling
 
@@ -836,53 +836,7 @@ Only clinic administrators may read audit metadata in their clinic. All clinic p
 
 Audit inserts provide actor, clinic, patient, resource, optional appointment, and action. PostgreSQL supplies the event identifier and timestamp. Insert-only profiles do not retrieve the inserted row. The engine rejects mutation of committed events.
 
-# 7. Availability, Caching, and Indexes
-
-## Availability Inputs and Request Scope
-
-### Design Problem
-
-Availability depends on service duration and professional eligibility. An invalid selection must be distinguishable from a valid selection with no free time (`RF7`, `RF8`).
-
-### Design Decisions
-
-- **Professional query.** Supply a professional, service, and one clinic-local date. Reject an incompatible pair
-- **Service query.** Supply a service and an inclusive clinic-local date range. Evaluate only eligible professionals
-- **Scope.** Derive the clinic from protected authorization. Reject missing or inaccessible required resources. Read the duration from PostgreSQL. An eligible professional has an active user with the professional role, an active association, and the specialty required by the service
-- **Dates.** Require valid calendar dates, an ordered range, and a start date no earlier than today in the clinic. For today, keep starts strictly after the common time reference
-- **Meaning.** Inactive services remain consultable. Valid queries may return no starts. Failures surface as errors. Consultation neither evaluates patient conflicts nor grants a booking
-
-### HTTP Contract
-
-| Requirement | Method and path | Required query parameters | Successful response |
-| --- | --- | --- | --- |
-| RF7 | `GET /professionals/:professionalId/availability` | `serviceId`, `date` | `{ professionalId, serviceId, date, starts }` |
-| RF8 | `GET /services/:serviceId/availability` | `from`, `to` | `{ serviceId, dates: [{ date, professionals: [{ professionalId, starts }] }] }` |
-
-Identifiers are UUIDs. Dates use `YYYY-MM-DD` in the authorized clinic's time zone. Clinic administrators, reception, and healthcare professionals can query availability within their clinic. Both routes accept inactive services. Successful responses use `Cache-Control: no-store`.
-
-Each `starts` array contains ISO 8601 UTC instants aligned to whole minutes, in ascending instant order. RF7 returns an empty `starts` array when the eligible professional has no available starts. RF8 returns every date in the inclusive range in ascending order, with eligible professionals that have available starts ordered by identifier. A date without available starts has an empty `professionals` array.
-
-| Status | Condition |
-| --- | --- |
-| `200` | The query is valid, including an empty result. |
-| `400` | An identifier or date is malformed, a query parameter is missing, repeated, or unrecognized, the first date precedes today in the clinic, or the range is reversed or exceeds 31 dates. |
-| `401` | The access token is missing or invalid. |
-| `403` | Token roles or protected local authorization deny the operation. |
-| `404` | A required service or professional is missing or outside the authorized clinic. |
-| `409` | RF7 selects an in-clinic professional who is ineligible for the selected in-clinic service. |
-| `500` | An internal failure occurs. An unconfirmed commit carries `OPERATION_OUTCOME_UNKNOWN`. |
-| `503` | Authentication or the database is temporarily unavailable under the shared error classification. |
-
-### Compose Integration Tests
-
-Use a disposable Compose project with the seeded Costa Rica clinic. Set `AVAILABILITY_TEST_API_URL`, `AVAILABILITY_TEST_DATABASE_SETUP_URL`, and `AVAILABILITY_TEST_REDIS_URL` to the API, PostgreSQL setup, and Redis addresses reachable from the test runner. Use the API's Redis instance for cache assertions and controlled timeouts. The setup connection creates and removes synthetic fixtures and observes the authorization lock wait.
-
-Supply fresh Keycloak access tokens in `AVAILABILITY_TEST_ADMIN_TOKEN`, `AVAILABILITY_TEST_RECEPTION_TOKEN`, and `AVAILABILITY_TEST_PROFESSIONAL_TOKEN` for users of that clinic. Set `AVAILABILITY_TEST_PLATFORM_TOKEN` for a platform administrator.
-
-```sh
-npm exec -- vitest run --config vitest-http.config.ts apps/api/tests/routes/availability.integration.test.ts
-```
+# 7. Availability and Caching
 
 ## Time Zones and Interval Boundaries
 
@@ -916,8 +870,6 @@ Independent schedule checks can miss coverage supplied by adjacent intervals. Oc
 For example, a 30-minute service in a free interval from 09:00 to 10:00 has starts from 09:00 through 09:30, one minute apart.
 
 TypeScript keeps interval logic reusable and testable. Merging intervals avoids repeating checks for every start. SQL range calculations would transfer less input but put more logic in specialized queries. Compare performance before preferring either on speed.
-
-Run the calculation and shared schedule coverage unit tests with `npm test -- apps/api/tests/schedules`.
 
 ## Service Availability Across Date Ranges
 
@@ -986,47 +938,3 @@ Use parameterized batched queries under the definitive `REPEATABLE READ` snapsho
 For each real interval on a requested date, build a search window from its first aligned start through its last aligned start plus the service duration. Skip intervals with no aligned start. Merge adjacent or overlapping windows per professional. Use an existence check with half-open overlap predicates so a row matching several windows appears only once.
 
 Separate metadata from eligibility to make empty results explicit. Complete weeks simplify coverage across dates at the cost of reading some unused days. Verify plans under the actual operating profiles.
-
-## Index Selection and Query Plans
-
-### Design Problem
-
-Selective reads may benefit from additional indexes. Each index also adds storage and write maintenance, so selection requires plan evidence.
-
-### Design Decisions
-
-Use the three non-unique B-tree indexes selected by the [index evaluation](index-evaluation.md), without included columns. Reuse existing primary and unique keys for metadata and identifier joins.
-
-- **IC1 for AQ4.** Appointments by `(clinic_id, professional_id)`, restricted to `reserved`
-- **IC2 for AQ5.** Blocks by `(clinic_id, professional_id)`
-- **IC3 for AQ3.** Schedules by `(clinic_id, professional_id)` for complete weeks
-- **IC4 for AQ2.** Keep the existing association indexes. The active-row candidate was not used in the measured plans
-
-The start-time and end-time variants read the same appointment and block candidates as the smaller indexes. Their time columns did not narrow the measured scans. Check time overlap after reading candidates. GiST ranges and covering indexes were not tested.
-
-Compare the baseline, individual candidates, and combined set with equivalent fixtures, parameters, statistics, operating profiles, and RLS. Keep integrity indexes and let the planner choose. Inspect actual plans with `EXPLAIN (ANALYZE, BUFFERS, SETTINGS, TIMING OFF, FORMAT JSON)`. Compare row estimates, filters, loops, buffers, timing, index sizes, and representative write costs. Include professional dates, service ranges, long blocks, historical reservations, and different selectivity. A sequential scan may be appropriate.
-
-The [index evaluation](index-evaluation.md) records plans, times, sizes and write measurements for the individual indexes and combined sets. SQL plan times and API latency measure different scopes.
-
-## Cache Evaluation and Evidence Plan
-
-### Design Problem
-
-A useful comparison holds authorization, data, and request scope constant. Functional coherence needs separate evidence from latency.
-
-### Design Decisions
-
-Compare complete API requests using TypeScript calculation from PostgreSQL inputs with requests using valid Redis entries and definitive PostgreSQL validation. Use the same reception account and SQL profile, fixtures, indexes, parameters, and future date anchor. Use synthetic data with at least three clinics, several professionals per clinic, and appointments across time. Record the selected clinic, service, and eligible professional count.
-
-- **CW1.** Query one eligible professional and one future date (`RF7`)
-- **CW2.** Query one service across seven future dates and all eligible professionals (`RF8`)
-
-Warm up each mode three times per workload. Run ten measured pairs per workload sequentially, alternating which mode goes first, for 40 measured requests. Populate and verify cache entries before timing. Bypass Redis in the direct mode. Keep domain data fixed.
-
-Measure with a monotonic clock from submission through complete response receipt. Record duration, status, cache use, and response equivalence. Report mean and median by workload and mode. Keep errors and mismatches in the results. Record revision, service versions, fixtures, indexes, parameters, and commands for reproduction. This is a small latency comparison. Load testing is outside its scope.
-
-Separately verify equivalent results, current-day filtering, missing units, mixed hits and misses, malformed JSON, invalid field types, mismatched metadata, invalid starts, and oversized units. Check that extra fields are ignored and valid starts are sorted and deduplicated. Exercise Redis outages and lookup and publication timeouts. Also test version changes before definitive validation, late publication under older keys, and refusal to use candidates when PostgreSQL validation fails.
-
-Prime the cache, commit a booking, cancellation, or rescheduling, and consult again before expiry. Check that occupation and released time match PostgreSQL, including both ends of a move (`I7`, `I8`).
-
-Agree each evaluation report's structure before recording results. Index evidence is recorded in [index-evaluation.md](index-evaluation.md) and cache measurements in [performance-report.md](performance-report.md#cache-measurements).
