@@ -1,0 +1,102 @@
+x-spark: &spark
+    build: ./infra/analytics/spark
+    volumes:
+        - analytics-warehouse:/warehouse
+    depends_on:
+        hive-metastore:
+            condition: service_healthy
+
+services:
+    hive-postgres:
+        image: postgres:18.6
+        environment:
+            POSTGRES_DB: hive_metastore
+            POSTGRES_USER: hive
+            POSTGRES_PASSWORD: ${HIVE_METASTORE_DB_PASSWORD:?Set HIVE_METASTORE_DB_PASSWORD}
+        volumes:
+            - hive-postgres-data:/var/lib/postgresql
+        healthcheck:
+            test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "hive", "-d", "hive_metastore"]
+            interval: 5s
+            timeout: 5s
+            retries: 12
+
+    hive-metastore:
+        build: ./infra/analytics/hive
+        environment:
+            SERVICE_NAME: metastore
+            DB_DRIVER: postgres
+            HIVE_CUSTOM_CONF_DIR: /opt/hive-custom-conf
+            HIVE_METASTORE_DB_PASSWORD: ${HIVE_METASTORE_DB_PASSWORD:?Set HIVE_METASTORE_DB_PASSWORD}
+        volumes:
+            - analytics-warehouse:/warehouse
+        depends_on:
+            hive-postgres:
+                condition: service_healthy
+        healthcheck:
+            test: ["CMD", "bash", "-ec", "true >/dev/tcp/127.0.0.1/9083"]
+            interval: 5s
+            timeout: 5s
+            retries: 12
+            start_period: 30s
+
+    spark-thrift:
+        <<: *spark
+        environment:
+            SPARK_NO_DAEMONIZE: "true"
+            HIVE_SERVER2_THRIFT_BIND_HOST: "0.0.0.0"
+        command:
+            - /opt/spark/sbin/start-thriftserver.sh
+            - --hiveconf
+            - hive.server2.enable.doAs=false
+        healthcheck:
+            test: ["CMD", "bash", "-ec", "true >/dev/tcp/127.0.0.1/10000"]
+            interval: 5s
+            timeout: 5s
+            retries: 24
+            start_period: 30s
+
+    spark-job:
+        <<: *spark
+        profiles: ["jobs"]
+        entrypoint: ["/opt/spark/bin/spark-submit"]
+
+    superset:
+        build: ./infra/analytics/superset
+        environment:
+            SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?Set SUPERSET_SECRET_KEY}
+            SPARK_SQL_URI: hive://superset@spark-thrift:10000/default
+        command:
+            - bash
+            - -ec
+            - |
+                superset db upgrade
+                superset set-database-uri --database_name "Spark SQL" --uri "$$SPARK_SQL_URI"
+                exec /app/docker/entrypoints/run-server.sh
+        volumes:
+            - superset-data:/app/superset_home
+        depends_on:
+            spark-thrift:
+                condition: service_healthy
+
+    airflow:
+        image: apache/airflow:slim-3.4.0
+        command: ["standalone"]
+        environment:
+            AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+            AIRFLOW__CORE__PARALLELISM: "2"
+            AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: ""
+        volumes:
+            - airflow-data:/opt/airflow
+        healthcheck:
+            test: ["CMD", "airflow", "jobs", "check", "--job-type", "SchedulerJob", "--local"]
+            interval: 10s
+            timeout: 10s
+            retries: 12
+            start_period: 30s
+
+volumes:
+    analytics-warehouse:
+    hive-postgres-data:
+    superset-data:
+    airflow-data:
